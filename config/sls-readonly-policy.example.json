@@ -1,0 +1,25 @@
+{
+  "Version": "1",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "log:GetProject"
+      ],
+      "Resource": [
+        "acs:log:<region-id>:<account-id>:project/<project-name>"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "log:GetLogStore",
+        "log:GetIndex",
+        "log:GetLogStoreLogs"
+      ],
+      "Resource": [
+        "acs:log:<region-id>:<account-id>:project/<project-name>/logstore/<logstore-name>"
+      ]
+    }
+  ]
+}

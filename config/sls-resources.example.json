@@ -1,0 +1,42 @@
+{
+  "version": "2026-08-19.1",
+  "resources": [
+    {
+      "id": "order-service-prod",
+      "service": "order-service",
+      "environment": "prod",
+      "endpoint": "https://cn-hangzhou.log.aliyuncs.com",
+      "project": "replace-with-sls-project",
+      "logstore": "replace-with-logstore",
+      "template_version": "error-analysis-v2",
+      "selectors": [
+        {
+          "field": "service_name",
+          "value": "order-service"
+        },
+        {
+          "field": "environment",
+          "value": "prod"
+        }
+      ],
+      "error_selector": {
+        "field": "level",
+        "value": "ERROR"
+      },
+      "error_field": "error_code",
+      "instance_field": "pod_name"
+    }
+  ],
+  "bindings": [
+    {
+      "principal": {
+        "app_id": "replace-with-feishu-app-id",
+        "tenant_key": "replace-with-feishu-tenant-key",
+        "user_id": "replace-with-feishu-open-id"
+      },
+      "resource_ids": [
+        "order-service-prod"
+      ]
+    }
+  ]
+}

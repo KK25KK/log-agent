@@ -1,0 +1,11 @@
+.env
+config/sls-resources.json
+config/change-catalog.json
+bin/
+*.exe
+data/
+*.db
+*.db-shm
+*.db-wal
+coverage.out
+references/

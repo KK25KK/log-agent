@@ -1,0 +1,49 @@
+- iframe [active] [ref=e2]:
+  - generic [ref=f1e2]:
+    - generic [ref=f1e3]:
+      - generic [ref=f1e4]:
+        - heading "SLS 日志 Agent：从查询工具到可信调查系统" [level=2] [ref=f1e5]
+        - paragraph [ref=f1e6]: 模型负责理解、规划和解释；程序负责权限、查询、计算和审计。
+      - tablist "日志 Agent 架构视图" [ref=f1e7]:
+        - tab "总体架构" [ref=f1e8] [cursor=pointer]
+        - tab "调查主链路" [ref=f1e9] [cursor=pointer]
+        - tab "开发路线与亮点" [active] [selected] [ref=f1e10] [cursor=pointer]
+    - tabpanel [ref=f1e73]:
+      - generic "六周最小可用版本路线" [ref=f1e74]:
+        - generic [ref=f1e75]:
+          - heading "第 1 周" [level=3] [ref=f1e76]
+          - paragraph [ref=f1e77]:
+            - strong [ref=f1e78]: 底座：
+            - text: 字段规范、资源目录、RAM / STS、历史事故样本
+          - paragraph [ref=f1e79]: 退出条件：能准确解析服务到 LogStore
+        - generic [ref=f1e80]:
+          - heading "第 2 周" [level=3] [ref=f1e81]
+          - paragraph [ref=f1e82]:
+            - strong [ref=f1e83]: 工具：
+            - text: 复用官方 Query Skill / MCP，增加 QuerySpec 校验网关
+          - paragraph [ref=f1e84]: 退出条件：所有查询只读、限时、限量、可审计
+        - generic [ref=f1e85]:
+          - heading "第 3–4 周" [level=3] [ref=f1e86]
+          - paragraph [ref=f1e87]:
+            - strong [ref=f1e88]: 诊断：
+            - text: 四类固定工作流、基线对比、证据引用、模型报告
+          - paragraph [ref=f1e89]: 退出条件：历史事故 Top-3 候选可评测
+        - generic [ref=f1e90]:
+          - heading "第 5–6 周" [level=3] [ref=f1e91]
+          - paragraph [ref=f1e92]:
+            - strong [ref=f1e93]: 上线：
+            - text: 越权与注入测试、失败恢复、只读灰度、反馈闭环
+          - paragraph [ref=f1e94]: 退出条件：无越权、无无证据强结论
+      - generic "优先亮点" [ref=f1e95]:
+        - generic [ref=f1e96]:
+          - strong [ref=f1e97]: 证据链回答
+          - text: 指标：关键结论证据覆盖率 100%，支持一键复跑
+        - generic [ref=f1e98]:
+          - strong [ref=f1e99]: Schema-aware 查询编译器
+          - text: 指标：字段幻觉拦截率、查询一次成功率、扫描量下降
+        - generic [ref=f1e100]:
+          - strong [ref=f1e101]: 发布前后 + 对照组验证
+          - text: 指标：Top-3 根因命中率、错误归因率、MTTI
+        - generic [ref=f1e102]:
+          - strong [ref=f1e103]: 日志质量医生
+          - text: 指标：缺失 Trace ID、字段漂移、未建索引问题关闭率

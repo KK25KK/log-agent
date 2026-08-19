@@ -1,0 +1,52 @@
+- iframe [ref=e2]:
+  - generic [ref=f1e2]:
+    - heading "日志 Agent：Go + 飞书 + Eino" [level=1] [ref=f1e3]
+    - tablist "方案视图" [ref=f1e4]:
+      - tab "架构总览" [selected] [ref=f1e5] [cursor=pointer]
+      - tab "Eino 决策" [ref=f1e6] [cursor=pointer]
+      - tab "里程碑" [ref=f1e7] [cursor=pointer]
+    - tabpanel [ref=f1e8]:
+      - generic [ref=f1e9]:
+        - generic [ref=f1e10]:
+          - generic [ref=f1e11]: 首个场景
+          - generic [ref=f1e12]: 错误突增调查
+        - generic [ref=f1e13]:
+          - generic [ref=f1e14]: 生产权限
+          - generic [ref=f1e15]: 只读
+        - generic [ref=f1e16]:
+          - generic [ref=f1e17]: 总体周期
+          - generic [ref=f1e18]: 8–12 周
+      - generic "日志 Agent 主链路：飞书入口到阿里云 SLS，再返回调查报告" [ref=f1e19]:
+        - generic [ref=f1e20]:
+          - strong [ref=f1e21]: 飞书入口
+          - generic [ref=f1e22]: 长连接 · message_id 去重 · 3 秒内持久化
+        - generic [ref=f1e23]: ↓
+        - generic [ref=f1e24]:
+          - strong [ref=f1e25]: Durable Inbox · Job · Outbox
+          - generic [ref=f1e26]: 任务租约 · 重试 · 取消 · 通知幂等
+        - generic [ref=f1e27]: ↓
+        - generic [ref=f1e28]:
+          - strong [ref=f1e29]: Investigation Worker
+          - generic [ref=f1e30]: Go 业务层 + Eino 调查 Graph
+          - generic [ref=f1e31]: Scope → Baseline → Drilldown → Correlate → Verify → Report
+        - generic [ref=f1e32]: ↓
+        - generic [ref=f1e33]:
+          - strong [ref=f1e34]: SLS Tool Policy Gateway
+          - generic [ref=f1e35]: ACL · Schema · QuerySpec · 预算 · 脱敏 · 审计
+        - generic [ref=f1e36]: ↓
+        - generic [ref=f1e37]:
+          - strong [ref=f1e38]: 阿里云 SLS
+          - generic [ref=f1e39]: Go SDK 为核心路径 · 官方 MCP 用于 PoC 与扩展
+      - generic [ref=f1e40]:
+        - generic [ref=f1e41]:
+          - heading "Eino 负责" [level=2] [ref=f1e42]
+          - list [ref=f1e43]:
+            - listitem [ref=f1e44]: 对话理解和有限工具选择
+            - listitem [ref=f1e45]: 确定性 Workflow / Graph
+            - listitem [ref=f1e46]: Tool Schema、Callback、短期中断恢复
+        - generic [ref=f1e47]:
+          - heading "自有 Go 层负责" [level=2] [ref=f1e48]
+          - list [ref=f1e49]:
+            - listitem [ref=f1e50]: 权限、云凭证和查询预算
+            - listitem [ref=f1e51]: 任务可靠性、证据与审计
+            - listitem [ref=f1e52]: 飞书会话、幂等与消息投递

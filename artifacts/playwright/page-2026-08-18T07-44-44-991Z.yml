@@ -1,0 +1,54 @@
+- iframe [ref=e2]:
+  - generic [ref=f1e2]:
+    - generic [ref=f1e3]:
+      - generic [ref=f1e4]:
+        - heading "SLS 日志 Agent：从查询工具到可信调查系统" [level=2] [ref=f1e5]
+        - paragraph [ref=f1e6]: 模型负责理解、规划和解释；程序负责权限、查询、计算和审计。
+      - tablist "日志 Agent 架构视图" [ref=f1e7]:
+        - tab "总体架构" [selected] [ref=f1e8] [cursor=pointer]
+        - tab "调查主链路" [ref=f1e9] [cursor=pointer]
+        - tab "开发路线与亮点" [ref=f1e10] [cursor=pointer]
+    - tabpanel [ref=f1e11]:
+      - generic "三条横向能力轨道" [ref=f1e12]:
+        - generic [ref=f1e13]:
+          - strong [ref=f1e14]: 知识轨
+          - text: 资源目录、字段字典、服务拓扑、Runbook、发布与历史事故
+        - generic [ref=f1e15]:
+          - strong [ref=f1e16]: 治理轨
+          - text: RAM / STS、字段脱敏、查询预算、审批、幂等与审计
+        - generic [ref=f1e17]:
+          - strong [ref=f1e18]: 证据轨
+          - text: 查询、时间窗、完整性、样本、扫描量、结果哈希与置信度
+      - generic "日志 Agent 核心模块流向" [ref=f1e19]:
+        - button "入口与触发 问答 / 告警 / 消费组" [ref=f1e20] [cursor=pointer]:
+          - strong [ref=f1e21]: 入口与触发
+          - generic [ref=f1e22]: 问答 / 告警 / 消费组
+        - generic [ref=f1e23]: →
+        - button "调查会话 身份、范围、状态恢复" [ref=f1e24] [cursor=pointer]:
+          - strong [ref=f1e25]: 调查会话
+          - generic [ref=f1e26]: 身份、范围、状态恢复
+        - generic [ref=f1e27]: →
+        - button "Agent 编排器 计划、假设、验证、停止" [pressed] [ref=f1e28] [cursor=pointer]:
+          - strong [ref=f1e29]: Agent 编排器
+          - generic [ref=f1e30]: 计划、假设、验证、停止
+        - generic [ref=f1e31]: →
+        - button "确定性工具网关 Schema 校验、编译、限流" [ref=f1e32] [cursor=pointer]:
+          - strong [ref=f1e33]: 确定性工具网关
+          - generic [ref=f1e34]: Schema 校验、编译、限流
+        - generic [ref=f1e35]: →
+        - button "数据与系统 SLS / Trace / CMDB / 发布" [ref=f1e36] [cursor=pointer]:
+          - strong [ref=f1e37]: 数据与系统
+          - generic [ref=f1e38]: SLS / Trace / CMDB / 发布
+      - generic [ref=f1e39]:
+        - strong [ref=f1e40]: Agent 编排器：
+        - text: 用显式状态机管理 SCOPE → DISCOVER → BASELINE → DRILLDOWN → CORRELATE → VERIFY → REPORT，并设置查询次数、时间、成本和停止条件。
+      - generic "系统输出" [ref=f1e41]:
+        - generic [ref=f1e42]:
+          - strong [ref=f1e43]: 事实
+          - text: 由完整查询或确定性计算直接支持
+        - generic [ref=f1e44]:
+          - strong [ref=f1e45]: 推断
+          - text: 附支持证据、反证与置信度
+        - generic [ref=f1e46]:
+          - strong [ref=f1e47]: 建议动作
+          - text: 预览风险；写操作审批后执行并验证

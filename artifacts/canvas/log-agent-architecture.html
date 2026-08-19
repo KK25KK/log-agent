@@ -1,0 +1,285 @@
+<div id="log-agent-architecture">
+  <style>
+    #log-agent-architecture {
+      color: var(--foreground);
+      font-size: var(--font-size-base);
+      width: 100%;
+    }
+    #log-agent-architecture * { box-sizing: border-box; }
+    #log-agent-architecture .la-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-bottom: 14px;
+    }
+    #log-agent-architecture .la-head h2 { margin: 0; }
+    #log-agent-architecture .la-tabs { display: flex; flex-wrap: wrap; gap: 8px; }
+    #log-agent-architecture [data-panel][hidden] { display: none; }
+    #log-agent-architecture .la-kicker {
+      color: var(--muted-foreground);
+      margin: 4px 0 0;
+    }
+    #log-agent-architecture .la-rail {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      margin: 12px 0;
+    }
+    #log-agent-architecture .la-rail-block {
+      padding: 10px 12px;
+      border-left: 3px solid var(--viz-series-1);
+      background: color-mix(in srgb, var(--viz-series-1) 8%, transparent);
+    }
+    #log-agent-architecture .la-rail-block strong { display: block; margin-bottom: 4px; }
+    #log-agent-architecture .la-rail-block span { color: var(--muted-foreground); }
+    #log-agent-architecture .la-flow {
+      display: grid;
+      grid-template-columns: minmax(118px, 0.8fr) 28px minmax(130px, 1fr) 28px minmax(140px, 1fr) 28px minmax(130px, 1fr) 28px minmax(130px, 1fr);
+      align-items: stretch;
+      gap: 6px;
+      margin: 14px 0;
+    }
+    #log-agent-architecture .la-arrow {
+      display: grid;
+      place-items: center;
+      color: var(--muted-foreground);
+      font-weight: 500;
+    }
+    #log-agent-architecture .la-node {
+      width: 100%;
+      min-height: 68px;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      justify-content: center;
+      text-align: left;
+      gap: 4px;
+      padding: 10px 12px;
+      color: var(--foreground);
+      background: color-mix(in srgb, var(--viz-series-1) 10%, transparent);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    #log-agent-architecture .la-node:hover,
+    #log-agent-architecture .la-node[aria-pressed="true"] {
+      background: color-mix(in srgb, var(--accent) 26%, transparent);
+      border-color: var(--accent);
+    }
+    #log-agent-architecture .la-node small { color: var(--muted-foreground); }
+    #log-agent-architecture .la-detail {
+      min-height: 48px;
+      padding: 10px 12px;
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+      color: var(--foreground);
+    }
+    #log-agent-architecture .la-detail strong { color: var(--viz-series-1); }
+    #log-agent-architecture .la-result {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 12px;
+    }
+    #log-agent-architecture .la-result > div {
+      padding: 10px 12px;
+      border-top: 2px solid var(--viz-series-1);
+    }
+    #log-agent-architecture .la-result strong { display: block; margin-bottom: 3px; }
+    #log-agent-architecture .la-result span { color: var(--muted-foreground); }
+    #log-agent-architecture .la-steps {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(92px, 1fr));
+      gap: 8px;
+      align-items: start;
+      margin-top: 16px;
+    }
+    #log-agent-architecture .la-step { position: relative; padding-top: 15px; }
+    #log-agent-architecture .la-step::before {
+      content: "";
+      position: absolute;
+      top: 4px;
+      left: 0;
+      right: -8px;
+      height: 2px;
+      background: var(--border);
+    }
+    #log-agent-architecture .la-step:last-child::before { right: 50%; }
+    #log-agent-architecture .la-dot {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--viz-series-1);
+    }
+    #log-agent-architecture .la-step strong { display: block; margin-bottom: 5px; }
+    #log-agent-architecture .la-step span { color: var(--muted-foreground); }
+    #log-agent-architecture .la-gates {
+      margin-top: 18px;
+      padding: 10px 12px;
+      background: color-mix(in srgb, var(--accent) 13%, transparent);
+      border-left: 3px solid var(--accent);
+    }
+    #log-agent-architecture .la-phases {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin: 14px 0 18px;
+    }
+    #log-agent-architecture .la-phase {
+      border-top: 3px solid var(--viz-series-1);
+      padding-top: 10px;
+    }
+    #log-agent-architecture .la-phase h3 { margin: 0 0 6px; }
+    #log-agent-architecture .la-phase p { margin: 4px 0; color: var(--muted-foreground); }
+    #log-agent-architecture .la-phase strong { color: var(--foreground); }
+    #log-agent-architecture .la-highlights {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+    #log-agent-architecture .la-highlight {
+      padding: 10px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    #log-agent-architecture .la-highlight strong { display: block; margin-bottom: 4px; }
+    #log-agent-architecture .la-highlight span { color: var(--muted-foreground); }
+    @media (max-width: 760px) {
+      #log-agent-architecture .la-flow {
+        grid-template-columns: 1fr;
+      }
+      #log-agent-architecture .la-arrow { transform: rotate(90deg); min-height: 18px; }
+      #log-agent-architecture .la-rail,
+      #log-agent-architecture .la-result,
+      #log-agent-architecture .la-phases,
+      #log-agent-architecture .la-highlights { grid-template-columns: 1fr; }
+      #log-agent-architecture .la-steps { grid-template-columns: 1fr; }
+      #log-agent-architecture .la-step { padding: 0 0 0 20px; }
+      #log-agent-architecture .la-step::before {
+        top: 0;
+        bottom: -8px;
+        left: 4px;
+        right: auto;
+        width: 2px;
+        height: auto;
+      }
+      #log-agent-architecture .la-step:last-child::before { bottom: 50%; right: auto; }
+    }
+  </style>
+
+  <div class="la-head">
+    <div>
+      <h2>SLS 日志 Agent：从查询工具到可信调查系统</h2>
+      <p class="la-kicker">模型负责理解、规划和解释；程序负责权限、查询、计算和审计。</p>
+    </div>
+    <div class="la-tabs" role="tablist" aria-label="日志 Agent 架构视图">
+      <button type="button" class="btn btn-primary" role="tab" aria-selected="true" aria-controls="la-panel-architecture" data-tab="architecture">总体架构</button>
+      <button type="button" class="btn" role="tab" aria-selected="false" aria-controls="la-panel-flow" data-tab="flow">调查主链路</button>
+      <button type="button" class="btn" role="tab" aria-selected="false" aria-controls="la-panel-roadmap" data-tab="roadmap">开发路线与亮点</button>
+    </div>
+  </div>
+
+  <section id="la-panel-architecture" data-panel="architecture" role="tabpanel">
+    <div class="la-rail" aria-label="三条横向能力轨道">
+      <div class="la-rail-block"><strong>知识轨</strong><span>资源目录、字段字典、服务拓扑、Runbook、发布与历史事故</span></div>
+      <div class="la-rail-block"><strong>治理轨</strong><span>RAM / STS、字段脱敏、查询预算、审批、幂等与审计</span></div>
+      <div class="la-rail-block"><strong>证据轨</strong><span>查询、时间窗、完整性、样本、扫描量、结果哈希与置信度</span></div>
+    </div>
+
+    <div class="la-flow" aria-label="日志 Agent 核心模块流向">
+      <button type="button" class="la-node" data-module="trigger" aria-pressed="false"><strong>入口与触发</strong><small>问答 / 告警 / 消费组</small></button>
+      <div class="la-arrow" aria-hidden="true">→</div>
+      <button type="button" class="la-node" data-module="session" aria-pressed="false"><strong>调查会话</strong><small>身份、范围、状态恢复</small></button>
+      <div class="la-arrow" aria-hidden="true">→</div>
+      <button type="button" class="la-node" data-module="orchestrator" aria-pressed="true"><strong>Agent 编排器</strong><small>计划、假设、验证、停止</small></button>
+      <div class="la-arrow" aria-hidden="true">→</div>
+      <button type="button" class="la-node" data-module="gateway" aria-pressed="false"><strong>确定性工具网关</strong><small>Schema 校验、编译、限流</small></button>
+      <div class="la-arrow" aria-hidden="true">→</div>
+      <button type="button" class="la-node" data-module="sources" aria-pressed="false"><strong>数据与系统</strong><small>SLS / Trace / CMDB / 发布</small></button>
+    </div>
+
+    <div class="la-detail" aria-live="polite"><strong>Agent 编排器：</strong><span data-detail>用显式状态机管理 SCOPE → DISCOVER → BASELINE → DRILLDOWN → CORRELATE → VERIFY → REPORT，并设置查询次数、时间、成本和停止条件。</span></div>
+
+    <div class="la-result" aria-label="系统输出">
+      <div><strong>事实</strong><span>由完整查询或确定性计算直接支持</span></div>
+      <div><strong>推断</strong><span>附支持证据、反证与置信度</span></div>
+      <div><strong>建议动作</strong><span>预览风险；写操作审批后执行并验证</span></div>
+    </div>
+  </section>
+
+  <section id="la-panel-flow" data-panel="flow" role="tabpanel" hidden>
+    <div class="la-steps" aria-label="一次故障调查的七个步骤">
+      <div class="la-step"><i class="la-dot" aria-hidden="true"></i><strong>1. 定界</strong><span>确认服务、环境、时间窗与访问范围</span></div>
+      <div class="la-step"><i class="la-dot" aria-hidden="true"></i><strong>2. 发现</strong><span>读取 Project、LogStore、索引与字段类型</span></div>
+      <div class="la-step"><i class="la-dot" aria-hidden="true"></i><strong>3. 基线</strong><span>判断是否真异常并定位拐点</span></div>
+      <div class="la-step"><i class="la-dot" aria-hidden="true"></i><strong>4. 下钻</strong><span>按版本、Pod、错误码、接口找贡献维度</span></div>
+      <div class="la-step"><i class="la-dot" aria-hidden="true"></i><strong>5. 关联</strong><span>串联上下文、Trace、发布与配置变更</span></div>
+      <div class="la-step"><i class="la-dot" aria-hidden="true"></i><strong>6. 验证</strong><span>比较正常组并主动寻找反证</span></div>
+      <div class="la-step"><i class="la-dot" aria-hidden="true"></i><strong>7. 报告</strong><span>结论、证据、缺口、建议与复跑入口</span></div>
+    </div>
+    <div class="la-gates"><strong>硬门槛：</strong>结果不完整、字段不存在、时间窗过大、权限不足或证据冲突时，Agent 必须缩窗、换策略、降置信度或请人确认，不能直接下根因结论。</div>
+  </section>
+
+  <section id="la-panel-roadmap" data-panel="roadmap" role="tabpanel" hidden>
+    <div class="la-phases" aria-label="六周最小可用版本路线">
+      <div class="la-phase"><h3>第 1 周</h3><p><strong>底座：</strong>字段规范、资源目录、RAM / STS、历史事故样本</p><p>退出条件：能准确解析服务到 LogStore</p></div>
+      <div class="la-phase"><h3>第 2 周</h3><p><strong>工具：</strong>复用官方 Query Skill / MCP，增加 QuerySpec 校验网关</p><p>退出条件：所有查询只读、限时、限量、可审计</p></div>
+      <div class="la-phase"><h3>第 3–4 周</h3><p><strong>诊断：</strong>四类固定工作流、基线对比、证据引用、模型报告</p><p>退出条件：历史事故 Top-3 候选可评测</p></div>
+      <div class="la-phase"><h3>第 5–6 周</h3><p><strong>上线：</strong>越权与注入测试、失败恢复、只读灰度、反馈闭环</p><p>退出条件：无越权、无无证据强结论</p></div>
+    </div>
+
+    <div class="la-highlights" aria-label="优先亮点">
+      <div class="la-highlight"><strong>证据链回答</strong><span>指标：关键结论证据覆盖率 100%，支持一键复跑</span></div>
+      <div class="la-highlight"><strong>Schema-aware 查询编译器</strong><span>指标：字段幻觉拦截率、查询一次成功率、扫描量下降</span></div>
+      <div class="la-highlight"><strong>发布前后 + 对照组验证</strong><span>指标：Top-3 根因命中率、错误归因率、MTTI</span></div>
+      <div class="la-highlight"><strong>日志质量医生</strong><span>指标：缺失 Trace ID、字段漂移、未建索引问题关闭率</span></div>
+    </div>
+  </section>
+
+  <script>
+    (() => {
+      const root = document.getElementById('log-agent-architecture');
+      if (!root) return;
+
+      const details = {
+        trigger: '接收研发问答、SLS 告警 Webhook 或 ConsumerGroup 秒级事件；入口只做认证、限流和标准化，不直接访问 SLS。',
+        session: '保存问题、访问上下文、调查计划、检查点和预算；任务中断后可恢复，重复触发可按事故指纹合并。',
+        orchestrator: '用显式状态机管理 SCOPE → DISCOVER → BASELINE → DRILLDOWN → CORRELATE → VERIFY → REPORT，并设置查询次数、时间、成本和停止条件。',
+        gateway: '模型只提交结构化 QuerySpec；网关读取索引、校验字段与权限、编译 SLS 查询、执行分页/重试，并标注 Complete 或 Incomplete。',
+        sources: 'SLS 提供日志主证据；Trace、指标、发布、配置、K8s 和 CMDB 用于建立时间线、影响面与候选根因，不把时间相关直接当成因果。'
+      };
+
+      const tabs = Array.from(root.querySelectorAll('[data-tab]'));
+      const panels = Array.from(root.querySelectorAll('[data-panel]'));
+      tabs.forEach((tab) => {
+        tab.addEventListener('click', () => {
+          const selected = tab.getAttribute('data-tab');
+          tabs.forEach((item) => {
+            const active = item === tab;
+            item.setAttribute('aria-selected', active ? 'true' : 'false');
+            item.classList.toggle('btn-primary', active);
+          });
+          panels.forEach((panel) => {
+            panel.hidden = panel.getAttribute('data-panel') !== selected;
+          });
+        });
+      });
+
+      const moduleButtons = Array.from(root.querySelectorAll('[data-module]'));
+      const detail = root.querySelector('[data-detail]');
+      moduleButtons.forEach((button) => {
+        button.addEventListener('click', () => {
+          const key = button.getAttribute('data-module');
+          moduleButtons.forEach((item) => item.setAttribute('aria-pressed', item === button ? 'true' : 'false'));
+          if (detail && key && details[key]) detail.textContent = details[key];
+          const strong = detail ? detail.previousElementSibling : null;
+          if (strong) strong.textContent = `${button.querySelector('strong')?.textContent || '模块'}：`;
+        });
+      });
+    })();
+  </script>
+</div>

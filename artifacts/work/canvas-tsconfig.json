@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "paths": {
+      "cursor/canvas": [
+        "C:/Users/kuangenji/.cursor/skills-cursor/canvas/sdk/index.d.ts"
+      ]
+    },
+    "typeRoots": [
+      "C:/Users/kuangenji/.cursor/projects/C-Users-KUANGE-1-AppData-Local-Temp-0c956c80-a303-4704-ac4c-6e6113269116/canvases/node_modules/@types"
+    ]
+  },
+  "files": [
+    "../canvas/sls-log-agent-architecture.canvas.tsx"
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "version": "2026-08-19.1",
+  "events": [
+    {
+      "id": "chg_order_release_v2",
+      "resource_id": "order-service-prod",
+      "kind": "RELEASE",
+      "started_at": "2026-08-19T09:55:00Z",
+      "completed_at": "2026-08-19T09:58:00Z",
+      "from_version": "v1",
+      "to_version": "v2",
+      "owner": "order-team",
+      "summary": "Example only: replace with an approved governance change record",
+      "affected_instances": [
+        "order-pod-a"
+      ],
+      "affected_instances_complete": true
+    }
+  ]
+}

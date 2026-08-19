@@ -1,0 +1,733 @@
+package eino
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"logagent/internal/domain"
+)
+
+type fakeExecutor struct {
+	incomplete bool
+	err        error
+	got        []domain.QuerySpec
+	results    map[string]domain.QueryResult
+}
+
+type fakeChangeSource struct {
+	set domain.ChangeSet
+	err error
+	got []domain.ChangeQuery
+}
+
+type cancellingChangeSource struct {
+	cancel context.CancelFunc
+}
+
+func (s cancellingChangeSource) List(_ context.Context, _ domain.ChangeQuery) (domain.ChangeSet, error) {
+	s.cancel()
+	return domain.ChangeSet{}, context.Canceled
+}
+
+func (f *fakeChangeSource) List(_ context.Context, query domain.ChangeQuery) (domain.ChangeSet, error) {
+	f.got = append(f.got, query)
+	if f.err != nil {
+		return domain.ChangeSet{}, f.err
+	}
+	return f.set, nil
+}
+
+func (f *fakeExecutor) Execute(_ context.Context, spec domain.QuerySpec) (domain.QueryResult, error) {
+	f.got = append(f.got, spec)
+	if f.err != nil {
+		return domain.QueryResult{}, f.err
+	}
+	if result, exists := f.results[spec.Name]; exists {
+		return result, nil
+	}
+	result := fakeAnalysisResult(spec.Name)
+	result.Complete = !f.incomplete
+	if f.incomplete {
+		result.Progress = "Incomplete"
+		result.ErrorPatternsExhaustive = false
+		result.InstancesExhaustive = false
+	}
+	return result, nil
+}
+
+func TestEngineDoesNotCalculateRatioFromZeroBaseline(t *testing.T) {
+	start := time.Date(2026, 8, 18, 10, 0, 0, 0, time.UTC)
+	executor := &fakeExecutor{results: map[string]domain.QueryResult{
+		"current": analysisResult("current", 20,
+			[]domain.CountBucket{{Label: "timeout", Count: 15}, {Label: "other", Count: 5}},
+			[]domain.CountBucket{{Label: "pod-a", Count: 20}},
+		),
+		"baseline": analysisResult("baseline", 0, nil, nil),
+	}}
+	engine, err := New(context.Background(), executor, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, report, err := engine.Run(context.Background(), "inv_test", domain.InvestigationRequest{
+		Service: "order-service", Environment: "prod", StartTime: start, EndTime: start.Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Outcome != "data_insufficient" || report.Findings[0].Conclusive {
+		t.Fatalf("zero baseline produced a conclusive ratio: %#v", report)
+	}
+}
+
+func TestEngineRejectsUntraceableQueryResult(t *testing.T) {
+	start := time.Date(2026, 8, 18, 10, 0, 0, 0, time.UTC)
+	invalid := fakeAnalysisResult("current")
+	invalid.QueryID = ""
+	executor := &fakeExecutor{results: map[string]domain.QueryResult{"current": invalid}}
+	engine, err := New(context.Background(), executor, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = engine.Run(context.Background(), "inv_test", domain.InvestigationRequest{
+		Service: "order-service", Environment: "prod", StartTime: start, EndTime: start.Add(time.Minute),
+	})
+	if err == nil {
+		t.Fatal("want invalid query result error")
+	}
+}
+
+func TestEngineBuildsEvidenceBackedSpikeReport(t *testing.T) {
+	start := time.Date(2026, 8, 18, 10, 0, 0, 0, time.UTC)
+	generatedAt := start.Add(time.Hour)
+	executor := &fakeExecutor{}
+	engine, err := New(context.Background(), executor, func() time.Time { return generatedAt })
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	evidence, report, err := engine.Run(context.Background(), "inv_test", domain.InvestigationRequest{
+		Service:     "order-service",
+		Environment: "prod",
+		StartTime:   start,
+		EndTime:     start.Add(30 * time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(executor.got) != 2 || executor.got[0].Name != "current" || executor.got[1].Name != "baseline" {
+		t.Fatalf("unexpected queries: %#v", executor.got)
+	}
+	if len(evidence) != 2 || report.Outcome != "spike_detected" {
+		t.Fatalf("unexpected output: evidence=%#v report=%#v", evidence, report)
+	}
+	if !report.Findings[0].Conclusive || len(report.Findings[0].EvidenceIDs) != 2 {
+		t.Fatalf("finding is not evidence backed: %#v", report.Findings[0])
+	}
+	if len(report.Findings) < 4 || len(report.Recommendations) == 0 {
+		t.Fatalf("M2 analysis was not included: %#v", report)
+	}
+	assertReportReferencesExistingEvidence(t, report)
+	codes := findingCodes(report.Findings)
+	for _, code := range []string{"error_spike", "error_pattern_share", "new_error_pattern", "instance_distribution"} {
+		if !codes[code] {
+			t.Fatalf("finding code %q missing from %#v", code, report.Findings)
+		}
+	}
+	if !report.GeneratedAt.Equal(generatedAt) {
+		t.Fatalf("unexpected generated time: %v", report.GeneratedAt)
+	}
+}
+
+func TestEngineKeepsBoundedBaselineAbsenceAsCandidate(t *testing.T) {
+	start := time.Date(2026, 8, 18, 10, 0, 0, 0, time.UTC)
+	current := analysisResult("current", 100,
+		[]domain.CountBucket{{Label: "new-pattern", Count: 60}, {Label: "known", Count: 40}},
+		[]domain.CountBucket{{Label: "pod-a", Count: 100}},
+	)
+	baseline := analysisResult("baseline", 50,
+		[]domain.CountBucket{{Label: "known", Count: 30}},
+		[]domain.CountBucket{{Label: "pod-b", Count: 50}},
+	)
+	baseline.ErrorPatternsExhaustive = false
+	executor := &fakeExecutor{results: map[string]domain.QueryResult{"current": current, "baseline": baseline}}
+	engine, err := New(context.Background(), executor, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, report, err := engine.Run(context.Background(), "inv_test", domain.InvestigationRequest{
+		Service: "order-service", Environment: "prod", StartTime: start, EndTime: start.Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, finding := range report.Findings {
+		if finding.Code == "new_error_pattern" {
+			t.Fatalf("bounded baseline absence was promoted to confirmed newness: %#v", report.Findings)
+		}
+		if finding.Code == "new_error_pattern_candidate" && finding.Conclusive {
+			t.Fatalf("candidate became conclusive: %#v", finding)
+		}
+	}
+}
+
+func TestEngineDoesNotConfirmNewnessForRedactedLabels(t *testing.T) {
+	start := time.Date(2026, 8, 18, 10, 0, 0, 0, time.UTC)
+	current := analysisResult("current", 100,
+		[]domain.CountBucket{{Label: "[REDACTED_IP]", Count: 100, Redacted: true}},
+		[]domain.CountBucket{{Label: "pod-a", Count: 100}},
+	)
+	baseline := analysisResult("baseline", 20,
+		[]domain.CountBucket{{Label: "known", Count: 20}},
+		[]domain.CountBucket{{Label: "pod-b", Count: 20}},
+	)
+	executor := &fakeExecutor{results: map[string]domain.QueryResult{"current": current, "baseline": baseline}}
+	engine, err := New(context.Background(), executor, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, report, err := engine.Run(context.Background(), "inv_test", domain.InvestigationRequest{
+		Service: "order-service", Environment: "prod", StartTime: start, EndTime: start.Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if findingCodes(report.Findings)["new_error_pattern"] {
+		t.Fatalf("redacted label was used to confirm newness: %#v", report.Findings)
+	}
+}
+
+func TestEngineDoesNotConcludeFromIncompleteEvidence(t *testing.T) {
+	start := time.Date(2026, 8, 18, 10, 0, 0, 0, time.UTC)
+	engine, err := New(context.Background(), &fakeExecutor{incomplete: true}, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, report, err := engine.Run(context.Background(), "inv_test", domain.InvestigationRequest{
+		Service: "order-service", Environment: "prod", StartTime: start, EndTime: start.Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Outcome != "data_insufficient" || report.Findings[0].Conclusive || report.Findings[0].Confidence != 0 {
+		t.Fatalf("incomplete evidence produced a conclusion: %#v", report)
+	}
+}
+
+func TestEnginePropagatesExecutorError(t *testing.T) {
+	slsErr := errors.New("SLS unavailable")
+	engine, err := New(context.Background(), &fakeExecutor{err: slsErr}, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	_, _, err = engine.Run(context.Background(), "inv_test", domain.InvestigationRequest{
+		Service: "order-service", Environment: "prod", StartTime: start, EndTime: start.Add(time.Minute),
+	})
+	if !errors.Is(err, slsErr) {
+		t.Fatalf("want wrapped SLS error, got %v", err)
+	}
+}
+
+func TestEngineBuildsSupportedChangeCorrelationWithoutMoreSLSQueries(t *testing.T) {
+	start := time.Date(2026, 8, 18, 10, 0, 0, 0, time.UTC)
+	executor := &fakeExecutor{results: causeAnalysisResults()}
+	source := &fakeChangeSource{set: domain.ChangeSet{
+		SourceVersion: "change-catalog-v1",
+		Complete:      true,
+		Events: []domain.ChangeEvent{{
+			ID:                        "chg-release-42",
+			ResourceID:                "res-order-prod",
+			Kind:                      domain.ChangeKindRelease,
+			StartedAt:                 start.Add(-10 * time.Minute),
+			CompletedAt:               start.Add(-5 * time.Minute),
+			FromVersion:               "v41",
+			ToVersion:                 "v42",
+			Owner:                     "order-team",
+			Summary:                   "release v42",
+			AffectedInstances:         []string{"order-pod-a"},
+			AffectedInstancesComplete: true,
+		}},
+	}}
+	engine, err := New(context.Background(), executor, time.Now, WithChangeSource(source))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	evidence, report, err := engine.Run(context.Background(), "inv_supported", domain.InvestigationRequest{
+		Service: "order-service", Environment: "prod", StartTime: start, EndTime: start.Add(30 * time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(executor.got) != 2 {
+		t.Fatalf("cause enrichment issued extra logical SLS queries: got %d", len(executor.got))
+	}
+	providerCalls := 0
+	for _, item := range evidence {
+		providerCalls += item.APICalls
+	}
+	if providerCalls != 2*domain.ErrorAnalysisAPICalls {
+		t.Fatalf("provider calls=%d, want %d", providerCalls, 2*domain.ErrorAnalysisAPICalls)
+	}
+	if len(source.got) != 1 {
+		t.Fatalf("change source calls = %d, want 1", len(source.got))
+	}
+	query := source.got[0]
+	if query.ResourceID != "res-order-prod" || !query.StartTime.Equal(start.Add(-30*time.Minute)) || !query.EndTime.Equal(start.Add(30*time.Minute)) || query.Limit != domain.MaxChangeEvents {
+		t.Fatalf("change query was not derived from evidence: %#v", query)
+	}
+	analysis := report.CauseAnalysis
+	if analysis == nil || analysis.Status != domain.CauseAnalysisComplete || len(analysis.Hypotheses) != 1 || len(analysis.Ledger) != 7 {
+		t.Fatalf("unexpected cause analysis: %#v", analysis)
+	}
+	hypothesis := analysis.Hypotheses[0]
+	if hypothesis.Verdict != domain.CauseVerdictSupportedCandidate || hypothesis.Confidence != domain.CauseConfidenceCap || hypothesis.ConfidenceMethod != domain.CauseConfidenceMethod {
+		t.Fatalf("unexpected supported hypothesis: %#v", hypothesis)
+	}
+	if len(hypothesis.SupportEntryIDs) != 4 || len(hypothesis.CounterEntryIDs) != 3 || len(hypothesis.Limitations) < 2 {
+		t.Fatalf("hypothesis is missing its ledger contract: %#v", hypothesis)
+	}
+	for _, code := range []string{"error_spike", "temporal_precedence", "affected_instance_concentration", "baseline_shift"} {
+		entry := ledgerByCode(t, analysis.Ledger, code)
+		if entry.Role != domain.EvidenceTestSupport || entry.Result != domain.EvidenceTestPass {
+			t.Fatalf("support test %q did not pass: %#v", code, entry)
+		}
+	}
+	for _, code := range []string{"no_instance_overlap", "preexisting_concentration", "confounding_changes"} {
+		entry := ledgerByCode(t, analysis.Ledger, code)
+		if entry.Role != domain.EvidenceTestCounter || entry.Result != domain.EvidenceTestFail {
+			t.Fatalf("counter test %q was not tested and absent: %#v", code, entry)
+		}
+	}
+
+	_, secondReport, err := engine.Run(context.Background(), "inv_supported", domain.InvestigationRequest{
+		Service: "order-service", Environment: "prod", StartTime: start, EndTime: start.Add(30 * time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secondReport.CauseAnalysis.Hypotheses[0].ID != hypothesis.ID || secondReport.CauseAnalysis.Ledger[0].ID != analysis.Ledger[0].ID {
+		t.Fatalf("cause IDs are not stable across equivalent runs")
+	}
+}
+
+func TestEngineRefutesChangeWithCompleteZeroInstanceOverlap(t *testing.T) {
+	start := time.Date(2026, 8, 18, 10, 0, 0, 0, time.UTC)
+	source := &fakeChangeSource{set: domain.ChangeSet{
+		SourceVersion: "change-catalog-v1",
+		Complete:      true,
+		Events: []domain.ChangeEvent{{
+			ID:                        "chg-unrelated",
+			ResourceID:                "res-order-prod",
+			Kind:                      domain.ChangeKindConfig,
+			StartedAt:                 start.Add(-10 * time.Minute),
+			CompletedAt:               start.Add(-5 * time.Minute),
+			Owner:                     "platform-team",
+			Summary:                   "unrelated config",
+			AffectedInstances:         []string{"other-pod"},
+			AffectedInstancesComplete: true,
+		}},
+	}}
+	engine, err := New(context.Background(), &fakeExecutor{results: causeAnalysisResults()}, time.Now, WithChangeSource(source))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, report, err := engine.Run(context.Background(), "inv_refuted", domain.InvestigationRequest{
+		Service: "order-service", Environment: "prod", StartTime: start, EndTime: start.Add(30 * time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	analysis := report.CauseAnalysis
+	if analysis == nil || analysis.Status != domain.CauseAnalysisComplete || analysis.Hypotheses[0].Verdict != domain.CauseVerdictRefuted {
+		t.Fatalf("zero overlap was not a complete refutation: %#v", analysis)
+	}
+	if analysis.Hypotheses[0].Confidence != 0.05 {
+		t.Fatalf("refuted confidence=%v, want deterministic 0.05", analysis.Hypotheses[0].Confidence)
+	}
+	entry := ledgerByCode(t, analysis.Ledger, "no_instance_overlap")
+	if entry.Result != domain.EvidenceTestPass {
+		t.Fatalf("zero-overlap counter-test = %#v", entry)
+	}
+}
+
+func TestTemporalPrecedenceRequiresCompletionBeforeCurrentWindow(t *testing.T) {
+	currentStart := time.Date(2026, 8, 19, 10, 0, 0, 0, time.UTC)
+	baseline := domain.Evidence{StartTime: currentStart.Add(-30 * time.Minute)}
+	current := domain.Evidence{StartTime: currentStart}
+
+	tests := []struct {
+		name      string
+		completed time.Time
+		want      domain.EvidenceTestResult
+	}{
+		{name: "inside baseline", completed: currentStart.Add(-time.Minute), want: domain.EvidenceTestPass},
+		{name: "exact current boundary", completed: currentStart, want: domain.EvidenceTestFail},
+		{name: "after current starts", completed: currentStart.Add(time.Second), want: domain.EvidenceTestFail},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			change := domain.ChangeEvent{StartedAt: test.completed.Add(-time.Minute), CompletedAt: test.completed}
+			got, _ := temporalPrecedence(change, current, baseline)
+			if got != test.want {
+				t.Fatalf("temporal precedence=%s, want %s", got, test.want)
+			}
+		})
+	}
+}
+
+func TestEngineKeepsBoundedRedactedAndConfoundedChangeEvidenceInconclusive(t *testing.T) {
+	start := time.Date(2026, 8, 18, 10, 0, 0, 0, time.UTC)
+	baseEvent := domain.ChangeEvent{
+		ID:                        "chg-one",
+		ResourceID:                "res-order-prod",
+		Kind:                      domain.ChangeKindRelease,
+		StartedAt:                 start.Add(-10 * time.Minute),
+		CompletedAt:               start.Add(-5 * time.Minute),
+		FromVersion:               "v0",
+		ToVersion:                 "v1",
+		Owner:                     "order-team",
+		Summary:                   "release",
+		AffectedInstances:         []string{"order-pod-a"},
+		AffectedInstancesComplete: true,
+	}
+	zeroOverlapEvent := baseEvent
+	zeroOverlapEvent.ID = "chg-zero-overlap"
+	zeroOverlapEvent.AffectedInstances = []string{"other-pod"}
+	baselineUnknownResults := causeAnalysisResults()
+	baselineUnknown := baselineUnknownResults["baseline"]
+	baselineUnknown.Instances = baselineUnknown.Instances[:1]
+	baselineUnknown.InstancesExhaustive = false
+	baselineUnknownResults["baseline"] = baselineUnknown
+
+	tests := []struct {
+		name       string
+		results    map[string]domain.QueryResult
+		events     []domain.ChangeEvent
+		unknown    string
+		counter    string
+		counterRes domain.EvidenceTestResult
+	}{
+		{
+			name:    "non-exhaustive Top-K",
+			results: nonExhaustiveCauseResults(),
+			events:  []domain.ChangeEvent{baseEvent},
+			unknown: "affected_instance_concentration",
+		},
+		{
+			name:    "redacted instance",
+			results: redactedCauseResults(),
+			events:  []domain.ChangeEvent{baseEvent},
+			unknown: "affected_instance_concentration",
+		},
+		{
+			name:    "multiple candidate changes",
+			results: causeAnalysisResults(),
+			events: []domain.ChangeEvent{
+				baseEvent,
+				withChangeID(baseEvent, "chg-two", start.Add(-4*time.Minute)),
+			},
+			counter:    "confounding_changes",
+			counterRes: domain.EvidenceTestPass,
+		},
+		{
+			name:       "zero overlap with unknown baseline",
+			results:    baselineUnknownResults,
+			events:     []domain.ChangeEvent{zeroOverlapEvent},
+			unknown:    "baseline_shift",
+			counter:    "no_instance_overlap",
+			counterRes: domain.EvidenceTestPass,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			source := &fakeChangeSource{set: domain.ChangeSet{
+				SourceVersion: "change-catalog-v1",
+				Complete:      true,
+				Events:        test.events,
+			}}
+			engine, err := New(context.Background(), &fakeExecutor{results: test.results}, time.Now, WithChangeSource(source))
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, report, err := engine.Run(context.Background(), "inv_inconclusive", domain.InvestigationRequest{
+				Service: "order-service", Environment: "prod", StartTime: start, EndTime: start.Add(30 * time.Minute),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			analysis := report.CauseAnalysis
+			if analysis == nil || analysis.Status != domain.CauseAnalysisInconclusive {
+				t.Fatalf("bounded or confounded input became conclusive: %#v", analysis)
+			}
+			for _, hypothesis := range analysis.Hypotheses {
+				if hypothesis.Verdict != domain.CauseVerdictInconclusive {
+					t.Fatalf("hypothesis unexpectedly conclusive: %#v", hypothesis)
+				}
+			}
+			if test.unknown != "" && ledgerByCode(t, analysis.Ledger, test.unknown).Result != domain.EvidenceTestUnknown {
+				t.Fatalf("bounded/redacted test was not UNKNOWN: %#v", analysis.Ledger)
+			}
+			if test.counter != "" && ledgerByCode(t, analysis.Ledger, test.counter).Result != test.counterRes {
+				t.Fatalf("confounding counter-test mismatch: %#v", analysis.Ledger)
+			}
+		})
+	}
+}
+
+func TestEnginePreservesM2ReportWhenChangeSourceReturnsInvalidData(t *testing.T) {
+	start := time.Date(2026, 8, 18, 10, 0, 0, 0, time.UTC)
+	source := &fakeChangeSource{set: domain.ChangeSet{
+		SourceVersion: "change-catalog-v1",
+		Complete:      true,
+		Events: []domain.ChangeEvent{{
+			ID:                        "chg-invalid-owner",
+			ResourceID:                "res-order-prod",
+			Kind:                      domain.ChangeKindRelease,
+			StartedAt:                 start.Add(-10 * time.Minute),
+			CompletedAt:               start.Add(-5 * time.Minute),
+			ToVersion:                 "v42",
+			Summary:                   "release v42",
+			AffectedInstances:         []string{"order-pod-a"},
+			AffectedInstancesComplete: true,
+		}},
+	}}
+	engine, err := New(context.Background(), &fakeExecutor{results: causeAnalysisResults()}, time.Now, WithChangeSource(source))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, report, err := engine.Run(context.Background(), "inv_invalid_change_source", domain.InvestigationRequest{
+		Service: "order-service", Environment: "prod", StartTime: start, EndTime: start.Add(30 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("invalid optional source failed the M2 investigation: %v", err)
+	}
+	if report.Outcome != "spike_detected" || report.CauseAnalysis == nil || report.CauseAnalysis.Status != domain.CauseAnalysisUnavailable {
+		t.Fatalf("M2 result was not preserved after invalid change data: %#v", report)
+	}
+	if len(report.CauseAnalysis.MissingInputs) != 1 || report.CauseAnalysis.MissingInputs[0] != "valid_change_set" {
+		t.Fatalf("invalid source reason was not explicit: %#v", report.CauseAnalysis)
+	}
+
+	source.set.SourceVersion = "invalid\nversion"
+	source.set.Events[0].Owner = "order-team"
+	engine, err = New(context.Background(), &fakeExecutor{results: causeAnalysisResults()}, time.Now, WithChangeSource(source))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, report, err = engine.Run(context.Background(), "inv_invalid_source_version", domain.InvestigationRequest{
+		Service: "order-service", Environment: "prod", StartTime: start, EndTime: start.Add(30 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("invalid source version failed the M2 investigation: %v", err)
+	}
+	if report.CauseAnalysis == nil || report.CauseAnalysis.Status != domain.CauseAnalysisUnavailable || report.CauseAnalysis.SourceVersion != "" {
+		t.Fatalf("invalid source version was not safely downgraded: %#v", report.CauseAnalysis)
+	}
+}
+
+func TestEnginePreservesM2ReportWhenChangeSourceFails(t *testing.T) {
+	start := time.Date(2026, 8, 18, 10, 0, 0, 0, time.UTC)
+	source := &fakeChangeSource{err: errors.New("change backend unavailable")}
+	engine, err := New(context.Background(), &fakeExecutor{results: causeAnalysisResults()}, time.Now, WithChangeSource(source))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, report, err := engine.Run(context.Background(), "inv_source_error", domain.InvestigationRequest{
+		Service: "order-service", Environment: "prod", StartTime: start, EndTime: start.Add(30 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("optional source error failed the investigation: %v", err)
+	}
+	if report.Outcome != "spike_detected" || report.CauseAnalysis == nil || report.CauseAnalysis.Status != domain.CauseAnalysisUnavailable {
+		t.Fatalf("M2 result was not preserved: %#v", report)
+	}
+}
+
+func TestEngineDefaultsCauseEnrichmentToUnavailable(t *testing.T) {
+	start := time.Date(2026, 8, 18, 10, 0, 0, 0, time.UTC)
+	engine, err := New(context.Background(), &fakeExecutor{results: causeAnalysisResults()}, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, report, err := engine.Run(context.Background(), "inv_disabled_source", domain.InvestigationRequest{
+		Service: "order-service", Environment: "prod", StartTime: start, EndTime: start.Add(30 * time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Outcome != "spike_detected" || report.CauseAnalysis == nil || report.CauseAnalysis.Status != domain.CauseAnalysisUnavailable {
+		t.Fatalf("disabled optional source changed the M2 result: %#v", report)
+	}
+	if len(report.CauseAnalysis.MissingInputs) != 1 || report.CauseAnalysis.MissingInputs[0] != "change_source_disabled" {
+		t.Fatalf("disabled source was not explicit: %#v", report.CauseAnalysis)
+	}
+}
+
+func TestEnginePropagatesInvestigationCancellationFromChangeSource(t *testing.T) {
+	start := time.Date(2026, 8, 18, 10, 0, 0, 0, time.UTC)
+	ctx, cancel := context.WithCancel(context.Background())
+	engine, err := New(context.Background(), &fakeExecutor{results: causeAnalysisResults()}, time.Now, WithChangeSource(cancellingChangeSource{cancel: cancel}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = engine.Run(ctx, "inv_cancelled", domain.InvestigationRequest{
+		Service: "order-service", Environment: "prod", StartTime: start, EndTime: start.Add(30 * time.Minute),
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run() error=%v, want context.Canceled", err)
+	}
+}
+
+func TestEngineSkipsChangeSourceWithoutConclusiveSpike(t *testing.T) {
+	start := time.Date(2026, 8, 18, 10, 0, 0, 0, time.UTC)
+	current := analysisResult("current", 30,
+		[]domain.CountBucket{{Label: "timeout", Count: 30}},
+		[]domain.CountBucket{{Label: "pod-a", Count: 30}},
+	)
+	baseline := analysisResult("baseline", 20,
+		[]domain.CountBucket{{Label: "timeout", Count: 20}},
+		[]domain.CountBucket{{Label: "pod-a", Count: 20}},
+	)
+	current.ResourceID, baseline.ResourceID = "res-order-prod", "res-order-prod"
+	source := &fakeChangeSource{err: errors.New("must not be called")}
+	engine, err := New(context.Background(), &fakeExecutor{results: map[string]domain.QueryResult{"current": current, "baseline": baseline}}, time.Now, WithChangeSource(source))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, report, err := engine.Run(context.Background(), "inv_no_spike", domain.InvestigationRequest{
+		Service: "order-service", Environment: "prod", StartTime: start, EndTime: start.Add(30 * time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(source.got) != 0 {
+		t.Fatalf("change source called %d times without a spike", len(source.got))
+	}
+	if report.CauseAnalysis == nil || report.CauseAnalysis.Status != domain.CauseAnalysisSkippedNoSpike {
+		t.Fatalf("unexpected skipped cause analysis: %#v", report.CauseAnalysis)
+	}
+}
+
+func fakeAnalysisResult(name string) domain.QueryResult {
+	if name == "current" {
+		return analysisResult(name, 120,
+			[]domain.CountBucket{{Label: "payment_timeout", Count: 90}, {Label: "inventory_lock", Count: 20}, {Label: "signature_invalid", Count: 10}},
+			[]domain.CountBucket{{Label: "order-pod-a", Count: 80}, {Label: "order-pod-b", Count: 30}, {Label: "order-pod-c", Count: 10}},
+		)
+	}
+	return analysisResult(name, 20,
+		[]domain.CountBucket{{Label: "inventory_lock", Count: 10}, {Label: "database_timeout", Count: 5}, {Label: "payment_timeout", Count: 5}},
+		[]domain.CountBucket{{Label: "order-pod-b", Count: 10}, {Label: "order-pod-c", Count: 10}},
+	)
+}
+
+func causeAnalysisResults() map[string]domain.QueryResult {
+	current := fakeAnalysisResult("current")
+	baseline := fakeAnalysisResult("baseline")
+	current.ResourceID = "res-order-prod"
+	baseline.ResourceID = "res-order-prod"
+	return map[string]domain.QueryResult{"current": current, "baseline": baseline}
+}
+
+func nonExhaustiveCauseResults() map[string]domain.QueryResult {
+	results := causeAnalysisResults()
+	current := results["current"]
+	current.Instances = current.Instances[:1]
+	current.InstancesExhaustive = false
+	results["current"] = current
+	return results
+}
+
+func redactedCauseResults() map[string]domain.QueryResult {
+	results := causeAnalysisResults()
+	current := results["current"]
+	current.Redacted = true
+	current.Instances[0].Redacted = true
+	results["current"] = current
+	return results
+}
+
+func withChangeID(change domain.ChangeEvent, id string, completedAt time.Time) domain.ChangeEvent {
+	change.ID = id
+	change.StartedAt = completedAt.Add(-time.Minute)
+	change.CompletedAt = completedAt
+	change.AffectedInstances = append([]string(nil), change.AffectedInstances...)
+	return change
+}
+
+func ledgerByCode(t *testing.T, ledger []domain.EvidenceLedgerEntry, code string) domain.EvidenceLedgerEntry {
+	t.Helper()
+	for _, entry := range ledger {
+		if entry.Code == code {
+			return entry
+		}
+	}
+	t.Fatalf("ledger entry %q not found in %#v", code, ledger)
+	return domain.EvidenceLedgerEntry{}
+}
+
+func analysisResult(name string, total int64, patterns, instances []domain.CountBucket) domain.QueryResult {
+	result := domain.QueryResult{
+		QueryID:                 "query-" + name,
+		Progress:                "Complete",
+		Complete:                true,
+		UsageKnown:              true,
+		APICalls:                domain.ErrorAnalysisAPICalls,
+		ErrorCount:              total,
+		ErrorPatterns:           patterns,
+		Instances:               instances,
+		ErrorPatternsExhaustive: bucketTotal(patterns) == total,
+		InstancesExhaustive:     bucketTotal(instances) == total,
+		PatternLimit:            domain.ErrorAnalysisPatternLimit,
+		InstanceLimit:           domain.ErrorAnalysisInstanceLimit,
+		NanosecondOrderedKnown:  true,
+		NanosecondOrdered:       true,
+	}
+	if len(patterns) > 0 {
+		result.TopError = patterns[0].Label
+		result.TopErrorCount = patterns[0].Count
+	}
+	return result
+}
+
+func bucketTotal(buckets []domain.CountBucket) int64 {
+	var total int64
+	for _, bucket := range buckets {
+		total += bucket.Count
+	}
+	return total
+}
+
+func findingCodes(findings []domain.Finding) map[string]bool {
+	codes := make(map[string]bool, len(findings))
+	for _, finding := range findings {
+		codes[finding.Code] = true
+	}
+	return codes
+}
+
+func assertReportReferencesExistingEvidence(t *testing.T, report domain.Report) {
+	t.Helper()
+	existing := make(map[string]bool, len(report.Evidence))
+	for _, evidence := range report.Evidence {
+		existing[evidence.ID] = true
+	}
+	check := func(kind string, ids []string) {
+		for _, id := range ids {
+			if !existing[id] {
+				t.Fatalf("%s references unknown evidence %q", kind, id)
+			}
+		}
+	}
+	for _, finding := range report.Findings {
+		check("finding "+finding.Code, finding.EvidenceIDs)
+	}
+	for _, recommendation := range report.Recommendations {
+		check("recommendation "+recommendation.Code, recommendation.EvidenceIDs)
+	}
+}

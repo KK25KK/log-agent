@@ -1,0 +1,52 @@
+- iframe [active] [ref=e2]:
+  - generic [ref=f1e2]:
+    - heading "日志 Agent：Go + 飞书 + Eino" [level=1] [ref=f1e3]
+    - tablist "方案视图" [ref=f1e4]:
+      - tab "架构总览" [ref=f1e5] [cursor=pointer]
+      - tab "Eino 决策" [active] [selected] [ref=f1e6] [cursor=pointer]
+      - tab "里程碑" [ref=f1e7] [cursor=pointer]
+    - tabpanel [ref=f1e53]:
+      - generic [ref=f1e54]:
+        - generic [ref=f1e55]: 建议采用
+        - strong [ref=f1e56]: Eino v0.9.14
+        - generic [ref=f1e57]: 隔离在编排适配层；暂不使用 v0.10 alpha。
+      - table [ref=f1e59]:
+        - rowgroup [ref=f1e60]:
+          - row [ref=f1e61]:
+            - columnheader "采用项" [ref=f1e62]
+            - columnheader "用途" [ref=f1e63]
+            - columnheader "生产约束" [ref=f1e64]
+        - rowgroup [ref=f1e65]:
+          - row [ref=f1e66]:
+            - cell "ADK ChatModelAgent + Runner" [ref=f1e67]
+            - cell "意图理解、有限工具选择" [ref=f1e68]
+            - cell "只开放受控 Graph Tool" [ref=f1e69]
+          - row [ref=f1e70]:
+            - cell "Compose Workflow / Graph" [ref=f1e71]
+            - cell "固定调查步骤与反证循环" [ref=f1e72]
+            - cell "节点可测试、可重放" [ref=f1e73]
+          - row [ref=f1e74]:
+            - cell "Typed Tool / GraphTool" [ref=f1e75]
+            - cell "SLS、发布、Trace 能力" [ref=f1e76]
+            - cell "参数先过 Schema、ACL 和预算" [ref=f1e77]
+          - row [ref=f1e78]:
+            - cell "Callback" [ref=f1e79]
+            - cell "模型、Tool、Graph 观测" [ref=f1e80]
+            - cell "转换为稳定业务事件" [ref=f1e81]
+          - row [ref=f1e82]:
+            - cell "Interrupt / Checkpoint" [ref=f1e83]
+            - cell "补充输入和短期恢复" [ref=f1e84]
+            - cell "不能替代业务数据库" [ref=f1e85]
+      - generic [ref=f1e86]:
+        - generic [ref=f1e87]:
+          - heading "第一版使用" [level=2] [ref=f1e88]
+          - list [ref=f1e89]:
+            - listitem [ref=f1e90]: 单 Agent
+            - listitem [ref=f1e91]: 固定错误突增 Graph
+            - listitem [ref=f1e92]: 强类型 Tool 和 Callback
+        - generic [ref=f1e93]:
+          - heading "第一版暂缓" [level=2] [ref=f1e94]
+          - list [ref=f1e95]:
+            - listitem [ref=f1e96]: DeepAgent、Supervisor、多 Agent
+            - listitem [ref=f1e97]: 自由 SQL / SPL
+            - listitem [ref=f1e98]: 依赖 Eino 的长期 Session 与后台任务

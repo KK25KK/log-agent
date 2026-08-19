@@ -1,0 +1,249 @@
+<div id="sls-agent-plan">
+  <h1>日志 Agent：Go + 飞书 + Eino</h1>
+  <div class="viz-controls" role="tablist" aria-label="方案视图">
+    <button class="btn btn-primary" type="button" role="tab" aria-selected="true" data-view="architecture">架构总览</button>
+    <button class="btn" type="button" role="tab" aria-selected="false" data-view="eino">Eino 决策</button>
+    <button class="btn" type="button" role="tab" aria-selected="false" data-view="milestones">里程碑</button>
+  </div>
+
+  <section data-panel="architecture" role="tabpanel">
+    <div class="viz-grid sap-summary">
+      <div class="card viz-stat">
+        <div class="text-muted">首个场景</div>
+        <div class="viz-stat-value">错误突增调查</div>
+      </div>
+      <div class="card viz-stat">
+        <div class="text-muted">生产权限</div>
+        <div class="viz-stat-value">只读</div>
+      </div>
+      <div class="card viz-stat">
+        <div class="text-muted">总体周期</div>
+        <div class="viz-stat-value">8–12 周</div>
+      </div>
+    </div>
+
+    <div class="sap-flow" aria-label="日志 Agent 主链路：飞书入口到阿里云 SLS，再返回调查报告">
+      <div class="sap-node sap-channel">
+        <strong>飞书入口</strong>
+        <span>长连接 · message_id 去重 · 3 秒内持久化</span>
+      </div>
+      <div class="sap-arrow" aria-hidden="true">↓</div>
+      <div class="sap-node sap-state">
+        <strong>Durable Inbox · Job · Outbox</strong>
+        <span>任务租约 · 重试 · 取消 · 通知幂等</span>
+      </div>
+      <div class="sap-arrow" aria-hidden="true">↓</div>
+      <div class="sap-node sap-agent">
+        <strong>Investigation Worker</strong>
+        <span>Go 业务层 + Eino 调查 Graph</span>
+        <small>Scope → Baseline → Drilldown → Correlate → Verify → Report</small>
+      </div>
+      <div class="sap-arrow" aria-hidden="true">↓</div>
+      <div class="sap-node sap-policy">
+        <strong>SLS Tool Policy Gateway</strong>
+        <span>ACL · Schema · QuerySpec · 预算 · 脱敏 · 审计</span>
+      </div>
+      <div class="sap-arrow" aria-hidden="true">↓</div>
+      <div class="sap-node sap-data">
+        <strong>阿里云 SLS</strong>
+        <span>Go SDK 为核心路径 · 官方 MCP 用于 PoC 与扩展</span>
+      </div>
+    </div>
+
+    <div class="sap-boundaries">
+      <section>
+        <h2>Eino 负责</h2>
+        <ul>
+          <li>对话理解和有限工具选择</li>
+          <li>确定性 Workflow / Graph</li>
+          <li>Tool Schema、Callback、短期中断恢复</li>
+        </ul>
+      </section>
+      <section>
+        <h2>自有 Go 层负责</h2>
+        <ul>
+          <li>权限、云凭证和查询预算</li>
+          <li>任务可靠性、证据与审计</li>
+          <li>飞书会话、幂等与消息投递</li>
+        </ul>
+      </section>
+    </div>
+  </section>
+
+  <section data-panel="eino" role="tabpanel" hidden>
+    <div class="sap-verdict">
+      <span class="viz-badge">建议采用</span>
+      <strong>Eino v0.9.14</strong>
+      <span class="text-muted">隔离在编排适配层；暂不使用 v0.10 alpha。</span>
+    </div>
+    <div class="table-responsive">
+      <table class="table">
+        <thead>
+          <tr><th>采用项</th><th>用途</th><th>生产约束</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>ADK ChatModelAgent + Runner</td><td>意图理解、有限工具选择</td><td>只开放受控 Graph Tool</td></tr>
+          <tr><td>Compose Workflow / Graph</td><td>固定调查步骤与反证循环</td><td>节点可测试、可重放</td></tr>
+          <tr><td>Typed Tool / GraphTool</td><td>SLS、发布、Trace 能力</td><td>参数先过 Schema、ACL 和预算</td></tr>
+          <tr><td>Callback</td><td>模型、Tool、Graph 观测</td><td>转换为稳定业务事件</td></tr>
+          <tr><td>Interrupt / Checkpoint</td><td>补充输入和短期恢复</td><td>不能替代业务数据库</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="sap-boundaries">
+      <section>
+        <h2>第一版使用</h2>
+        <ul>
+          <li>单 Agent</li>
+          <li>固定错误突增 Graph</li>
+          <li>强类型 Tool 和 Callback</li>
+        </ul>
+      </section>
+      <section>
+        <h2>第一版暂缓</h2>
+        <ul>
+          <li>DeepAgent、Supervisor、多 Agent</li>
+          <li>自由 SQL / SPL</li>
+          <li>依赖 Eino 的长期 Session 与后台任务</li>
+        </ul>
+      </section>
+    </div>
+  </section>
+
+  <section data-panel="milestones" role="tabpanel" hidden>
+    <div class="table-responsive">
+      <table class="table sap-milestones">
+        <thead>
+          <tr><th>阶段</th><th>目标</th><th>周期</th><th>验收结果</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><strong>M0</strong></td><td>技术验证</td><td>3–5 天</td><td>飞书、Eino、SLS 链路与 ADR</td></tr>
+          <tr><td><strong>M1</strong></td><td>只读查询底座</td><td>1–2 周</td><td>QuerySpec、ACL、预算、Inbox/Outbox</td></tr>
+          <tr><td><strong>M2</strong></td><td>错误突增闭环</td><td>1–2 周</td><td>首条端到端调查 Graph</td></tr>
+          <tr><td><strong>M3</strong></td><td>证据与反证</td><td>约 2 周</td><td>Evidence Ledger、版本与实例对照</td></tr>
+          <tr><td><strong>M4</strong></td><td>长任务与审批</td><td>1–2 周</td><td>故障恢复、幂等、限时 Approval</td></tr>
+          <tr><td><strong>M5</strong></td><td>评测与灰度</td><td>1–2 周</td><td>安全、质量、成本和历史回放基线</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="sap-gate">
+      <strong>M2 是价值验证门：</strong>
+      <span>完成错误突增闭环后先小范围试用，再决定是否投入发布关联、Trace 和主动预调查。</span>
+    </div>
+  </section>
+</div>
+
+<style>
+  #sls-agent-plan {
+    color: var(--foreground);
+    width: 100%;
+  }
+  #sls-agent-plan .viz-controls {
+    margin: 14px 0 18px;
+  }
+  #sls-agent-plan .sap-summary {
+    margin-bottom: 20px;
+  }
+  #sls-agent-plan .sap-flow {
+    display: grid;
+    justify-items: center;
+    gap: 6px;
+    margin: 4px auto 22px;
+    max-width: 680px;
+  }
+  #sls-agent-plan .sap-node {
+    box-sizing: border-box;
+    display: grid;
+    gap: 4px;
+    width: 100%;
+    padding: 12px 16px;
+    background: color-mix(in srgb, var(--viz-series-1) 10%, transparent);
+  }
+  #sls-agent-plan .sap-node strong,
+  #sls-agent-plan .sap-node span,
+  #sls-agent-plan .sap-node small {
+    color: var(--foreground);
+  }
+  #sls-agent-plan .sap-node small,
+  #sls-agent-plan .sap-node span {
+    color: var(--muted-foreground);
+  }
+  #sls-agent-plan .sap-state {
+    background: color-mix(in srgb, var(--viz-series-2) 10%, transparent);
+  }
+  #sls-agent-plan .sap-agent {
+    background: color-mix(in srgb, var(--viz-series-3) 13%, transparent);
+  }
+  #sls-agent-plan .sap-policy {
+    background: color-mix(in srgb, var(--viz-series-4) 10%, transparent);
+  }
+  #sls-agent-plan .sap-data {
+    background: color-mix(in srgb, var(--viz-series-5) 10%, transparent);
+  }
+  #sls-agent-plan .sap-arrow {
+    color: var(--muted-foreground);
+  }
+  #sls-agent-plan .sap-boundaries {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 24px;
+  }
+  #sls-agent-plan .sap-boundaries h2 {
+    margin-bottom: 8px;
+  }
+  #sls-agent-plan .sap-boundaries ul {
+    margin: 0;
+    padding-left: 20px;
+  }
+  #sls-agent-plan .sap-boundaries li + li {
+    margin-top: 5px;
+  }
+  #sls-agent-plan .sap-verdict {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 18px;
+  }
+  #sls-agent-plan .sap-gate {
+    margin-top: 18px;
+    padding-left: 12px;
+    border-left: 3px solid var(--viz-series-1);
+  }
+  #sls-agent-plan [data-panel][hidden] {
+    display: none;
+  }
+  @media (max-width: 520px) {
+    #sls-agent-plan .sap-boundaries {
+      grid-template-columns: 1fr;
+      gap: 14px;
+    }
+    #sls-agent-plan .sap-node {
+      padding: 10px 12px;
+    }
+  }
+</style>
+
+<script>
+  (() => {
+    const root = document.getElementById("sls-agent-plan");
+    if (!root) return;
+    const tabs = Array.from(root.querySelectorAll("[data-view]"));
+    const panels = Array.from(root.querySelectorAll("[data-panel]"));
+
+    const activate = (view) => {
+      tabs.forEach((tab) => {
+        const selected = tab.dataset.view === view;
+        tab.setAttribute("aria-selected", String(selected));
+        tab.classList.toggle("btn-primary", selected);
+      });
+      panels.forEach((panel) => {
+        panel.hidden = panel.dataset.panel !== view;
+      });
+    };
+
+    tabs.forEach((tab) => {
+      tab.addEventListener("click", () => activate(tab.dataset.view));
+    });
+  })();
+</script>
