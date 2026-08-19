@@ -18,6 +18,11 @@ import (
 	"logagent/internal/ports"
 )
 
+// GraphVersion is emitted by the offline evaluation report so changes to the
+// deterministic orchestration contract can be compared with the dataset and
+// gate-policy versions that produced a result.
+const GraphVersion = "error-spike-investigation-v1"
+
 type graphInput struct {
 	InvestigationID string
 	Request         domain.InvestigationRequest

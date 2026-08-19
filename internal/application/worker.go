@@ -159,8 +159,15 @@ func (w *Worker) investigationCancelled(investigationID string) bool {
 }
 
 func validateEngineOutput(job domain.Job, evidence []domain.Evidence, report domain.Report) error {
-	if report.InvestigationID != job.InvestigationID {
-		return fmt.Errorf("engine report investigation ID %q does not match job %q", report.InvestigationID, job.InvestigationID)
+	return ValidateEngineOutput(job.InvestigationID, evidence, report)
+}
+
+// ValidateEngineOutput is the shared production trust boundary used by the
+// Worker and the offline evaluation gate. Keeping one validator prevents a
+// synthetic score from accepting output that the durable Worker would reject.
+func ValidateEngineOutput(investigationID string, evidence []domain.Evidence, report domain.Report) error {
+	if report.InvestigationID != investigationID {
+		return fmt.Errorf("engine report investigation ID %q does not match job %q", report.InvestigationID, investigationID)
 	}
 	if len(evidence) == 0 {
 		return errors.New("engine returned no evidence")

@@ -2,9 +2,9 @@
 
 | Metadata | Value |
 | --- | --- |
-| Version | 0.5 |
-| Status | M4-A implemented and verified offline; live integrations pending |
-| Date | 2026-08-19 |
+| Version | 0.6 |
+| Status | M5-A synthetic offline evaluation gate implemented and verified; live M4-B/M4-C and real gray rollout pending |
+| Date | 2026-08-20 |
 
 ## 1. Overview
 
@@ -40,6 +40,8 @@ Users can ask the bot to investigate an error spike for a known service, environ
 - In-flight cancellation, renewable leases, lease-safe state transitions, and structured output.
 - Durable `sls.current` and `sls.baseline` checkpoints for normalized aggregate results.
 - Fail-closed recovery when a metered SLS read has an unknown external outcome.
+- A versioned synthetic golden evaluation set that runs the real deterministic graph over fixture-backed Mock SLS and Mock change data.
+- Offline quality gates for expected outcome, exact Finding and Recommendation labels, conclusive-finding safety, the same production Worker output validator, QuerySpec-to-Evidence binding, evidence-reference coverage, cause-verdict agreement, fixed query budget, and processed-byte cost proxy.
 
 ## 4. Non-goals
 
@@ -60,6 +62,8 @@ Users can ask the bot to investigate an error spike for a known service, environ
 - Treating a correlated release, configuration change, error pattern, or instance as a confirmed root cause.
 - SLS version-distribution or first-seen-time queries in the first M3 slice; M3 reuses the existing M2 query budget.
 - Live release-platform, configuration-center, CMDB, Trace, metric, error-code, SOP, or service-topology connectors.
+- Claiming that synthetic fixtures are historical incidents, expert labels, production accuracy, or permission to start a real gray rollout.
+- Real Feishu/SLS/change-platform traffic, credentials, model calls, Prompt quality, Token accounting, or production SLO validation in M5-A.
 
 ## 5. Core design and architecture
 
@@ -87,6 +91,14 @@ Feishu card.action.trigger
     -> requester authorization
     -> view evidence | cancel | expand window | rerun | rerun_with_cost_ack
     -> durable state transition or derived investigation
+
+Versioned synthetic evaluation dataset
+    -> strict fixture and label validation
+    -> fixture-backed Mock SLS + Mock Change Source
+    -> real Eino deterministic graph
+    -> outcome / finding / evidence / cause / budget checks
+    -> structured evaluation report
+    -> non-zero process exit when an engineering regression gate fails
 ```
 
 The M3 Change Source is enrichment-only. It is called only after governed SLS evidence has established the resource identity and a conclusive spike. Change-source absence or failure cannot erase an M2 fact or fail the investigation; it produces an explicit unavailable or inconclusive cause-analysis status.
@@ -201,6 +213,16 @@ An explicit diagnostic command loads the same catalog and credentials as a real 
 6. The report stores the selected change metadata, hypotheses, test results, Evidence references, confidence method, and limitations.
 7. Feishu presents the result as a correlation candidate and explicitly states that correlation is not causal proof.
 
+### Run the synthetic offline evaluation gate
+
+1. The evaluator loads a repository-owned dataset using strict JSON decoding and rejects unknown fields, duplicate case IDs, invalid time ranges, unsafe labels, or impossible aggregate fixtures.
+2. Every case declares a trusted request, synthetic current/baseline aggregates, optional synthetic change context, and explicit expected outputs and budgets.
+3. The command constructs fixture-backed Mock adapters and runs the same deterministic Eino graph used by the application. It does not open Feishu, SLS, a model endpoint, or any other network connection.
+4. The evaluator first applies the same output validator used by the production Worker to the independent Evidence returned by `InvestigationEngine.Run`. That Evidence must exactly match the report projection, and each current/baseline item must bind to its exact QuerySpec and Fixture identity. The evaluator then compares the report with the label: exact outcome, exact Finding codes, exact Recommendation codes and their current/baseline Evidence names, cause-analysis status and verdicts, evidence references, logical observations, Provider-call proxy, and processed-byte proxy.
+5. Aggregate metrics are calculated from case results. An unexpected conclusive finding is counted as misleading even if other expectations pass.
+6. The JSON result records the dataset version and fingerprint plus an explicit `synthetic_mock` provenance marker, zero external-network calls, and no credential requirement.
+7. Any configured regression gate failure makes the command return a non-zero exit code after printing the complete structured report.
+
 ## 7. Behavioral contracts and lifecycle
 
 Investigation states are `QUEUED`, `RUNNING`, `SUCCEEDED`, `FAILED`, `CANCELLED`, and `NEEDS_REVIEW`.
@@ -232,6 +254,8 @@ Every hypothesis has at least one support test and one counter-test. Each test r
 Cause confidence uses the versioned deterministic method `change-correlation-v1`, is not a probability, and is capped at `0.85`. A supported candidate requires a conclusive M2 spike, temporal precedence, affected-instance concentration of at least 50%, an increase of at least 20 percentage points from baseline, a complete change set, and no passing counter-test. A complete affected-instance set with complete comparable current distribution and zero overlap is a hard refutation. Multiple overlapping changes are confounding evidence and force `INCONCLUSIVE`.
 
 Change Source errors, disabled configuration, or incomplete source coverage never turn an otherwise valid M2 report into a failed investigation.
+
+M5-A is a deterministic engineering regression gate, not a production-readiness decision. Outcome, Finding, Recommendation, and cause-verdict agreement are measured only against repository-owned synthetic labels. Recommendation matching is exact by code and Evidence name, so an omitted, injected, duplicated, or misgrounded next step fails closed. Evidence coverage verifies reference integrity, not factual completeness outside the fixture. Processed bytes and fixed Provider-call counts are cost proxies rather than an Alibaba Cloud bill. Local elapsed time is recorded for trend inspection but is not a production latency SLO. Prompt and Token metrics are not applicable while the graph remains model-free.
 
 ## 8. Constraints and compatibility
 
@@ -322,6 +346,17 @@ Change Source errors, disabled configuration, or incomplete source coverage neve
 - [x] The offline mock flow traverses the checkpoint wrapper and still performs exactly two logical observations and eight Provider calls.
 - [x] `gofmt`, offline tests, `go vet`, and the mock end-to-end command pass; race testing remains separately reported according to toolchain availability.
 - [x] Automatic transient retries, operator resolution of unknown steps, delivery dead-letter replay, durable tenant quotas, approvals, and a production database remain explicitly deferred to later M4 slices.
+
+### M5-A synthetic offline evaluation gate
+
+- [x] A strict, versioned synthetic dataset covers a supported spike/change candidate, no significant spike, incomplete evidence, a refuted change, and an inconclusive change.
+- [x] The evaluator runs the real deterministic graph only against fixture-backed Mock SLS and Mock change data, with zero credentials and zero external-network calls.
+- [x] Outcome accuracy, Finding and Recommendation exact accuracy, production Worker output-validation accuracy, QuerySpec-to-Evidence contract accuracy, unexpected-conclusive-finding rate, evidence-reference coverage, cause-verdict agreement, fixed query budget, processed-byte cost proxy, and elapsed time are emitted as structured metrics.
+- [x] Every case declares exact expected outcome, conclusive/nonconclusive Finding codes, Recommendation codes with current/baseline Evidence names, expected cause status/verdicts, logical observation count, Provider-call proxy, and byte ceiling.
+- [x] A failed metric or per-case safety expectation prints a structured failure report and returns a non-zero process exit code.
+- [x] Dataset schema/version and content fingerprint are present in every evaluation report so future Graph and policy changes remain comparable.
+- [x] Offline tests, `go vet`, and the evaluation command pass without Feishu, SLS, change-platform, or model credentials.
+- [x] Real historical incidents, expert labels, agent telemetry, pilot groups, production thresholds, and gray-rollout approval remain explicitly deferred to M5-B/M5-C.
 
 ## 10. Open deployment inputs
 
