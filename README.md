@@ -77,7 +77,26 @@ Eino 只负责流程编排，不负责业务状态、权限、幂等、审计和
 - Worker 在成功落库前再次校验固定测试、有限数值、Evidence/Change 引用、支持条件和硬反证质量，防止不可信 Engine 输出伪造结论。
 - SQLite 在调查成功事务中同时保存 Evidence、Report 和独立 `evidence_ledger`；飞书报告与证据页做有界展示。
 
-## 先运行离线 Demo
+## 先运行飞书 + SLS 双 Mock
+
+下面这条命令会走完整的本地纵向链路，不读取环境变量、不需要飞书 App、阿里云账号或任何凭据，也不会发起网络请求：
+
+```powershell
+go run ./cmd/logagent mock-e2e
+```
+
+它会依次完成：
+
+1. 模拟飞书用户发送 `/investigate order-service prod 30m`；
+2. 将同一消息重放一次，验证 Inbox 幂等去重；
+3. 通过真实 SQLite 状态机创建并领取调查任务；
+4. 通过真实 Worker + Eino 固定 Graph、资源 ACL、Schema/预算网关和查询审计调用 Mock SLS Backend；
+5. 生成当前窗口、基线窗口、Evidence、M2 报告和 Mock 变更关联账本；
+6. 通过真实 Delivery Worker 模拟飞书卡片 `REPLY(QUEUED) -> PATCH(RUNNING) -> PATCH(SUCCEEDED)`。
+
+输出中的 `safety.external_network_calls=0`、`credentials_required=false` 表示当前运行完全离线；`schema_calls=1`、`backend_execute_calls=2`、`provider_api_calls=8` 和 `query_audit_events=4` 分别证明固定 Schema、当前/基线观察、四聚合调用元数据和开始/终态审计已经经过真实查询网关。固定的 120/20 条错误、发布事件和飞书标识全部是测试数据，不代表真实阿里云或飞书结果。完整边界与验收方式见 [`docs/local-mock-e2e.md`](docs/local-mock-e2e.md)。
+
+## 只查看离线报告 Demo（可选）
 
 环境要求：Go 1.26 或更高版本。Demo 永远使用 Mock SLS 和内置 Mock Change Source，不需要飞书、阿里云或发布平台凭证。
 
@@ -238,6 +257,7 @@ go run ./cmd/logagent feishu
 Get-ChildItem -Recurse -Filter *.go | ForEach-Object { gofmt -w $_.FullName }
 go test -count=1 ./...
 go vet ./...
+go run ./cmd/logagent mock-e2e
 go run ./cmd/logagent demo
 ```
 
@@ -255,6 +275,7 @@ internal/domain                      领域数据、资源、查询、原因假�
 internal/ports                       Store、Engine、QueryGateway、SLSBackend、ChangeSource 接口
 internal/adapters/eino               唯一允许导入 Eino 的包
 internal/adapters/feishu             唯一允许导入飞书 SDK 的包
+internal/adapters/feishumock         离线飞书收件与卡片投递模拟，不导入 SDK
 internal/adapters/aliyunsls           唯一允许导入阿里云 SLS SDK 的包
 internal/adapters/resourcecatalog     JSON 资源目录与静态 ACL
 internal/adapters/changecatalog       M3 版本化发布/配置变更目录

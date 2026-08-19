@@ -19,6 +19,7 @@ Users can ask the bot to investigate an error spike for a known service, environ
 ## 3. Scope
 
 - Feishu direct messages and group mentions through a replaceable inbound adapter.
+- A credential-free local Feishu mock that exercises normalized intake and durable delivery semantics without importing the Feishu SDK.
 - Durable inbound deduplication and asynchronously claimed investigation jobs.
 - A trusted requester identity derived from the inbound adapter, never from message text.
 - An Eino graph for deterministic planning, query, verification, and reporting.
@@ -236,13 +237,14 @@ Change Source errors, disabled configuration, or incomplete source coverage neve
 - External messages and log content are untrusted input and cannot alter resources, templates, permissions, or budgets.
 - Feishu callback values are untrusted. They may select only a closed action enum and an investigation ID, and every mutation is authorized against the persisted requester.
 - Card rendering is owned by the Feishu adapter. Untrusted bucket labels are JSON-escaped and rendered as plain text rather than executable Markdown.
-- The offline demo and default tests run without network credentials and produce deterministic facts from Mock SLS data; generated IDs are intentionally unique.
+- The offline demo, full-mock command, and default tests run without network credentials and produce deterministic facts from Mock SLS data; generated IDs are intentionally unique.
 - Real integration checks and commands are explicit opt-in operations and cannot be reported as passed without a configured test resource. The repository does not yet contain a credentialed live integration test suite.
 
 ## 9. Acceptance checklist
 
 ### Existing investigation skeleton
 
+- [x] A local `mock-e2e` command covers mock Feishu intake and replay deduplication, SQLite state, Worker/Eino, the real ACL/Schema/budget/audit query gateway over a Mock SLS backend, Evidence persistence, and mock Feishu reply/patch delivery without credentials or network access.
 - [x] A local command runs the complete graph and returns an evidence-backed mock report.
 - [x] Concurrent replay of one source-message ID creates exactly one investigation and one job.
 - [x] A claimed job can be reclaimed after its lease expires.

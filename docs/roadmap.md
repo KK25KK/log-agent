@@ -75,6 +75,19 @@
 
 这些能力需要真实数据源、字段契约、权限和成本预算，不能用 Mock 或静态配置冒充已接通。
 
+## M4 开工前：飞书 + SLS 双 Mock 纵向联调（已完成）
+
+目标：在申请真实飞书应用和阿里云资源之前，用可重复的离线命令证明外部边界替换后，业务主链仍能完整运行。
+
+交付：
+
+- Mock 飞书入站复用严格命令解析、可信身份和 SQLite 幂等接单；
+- Mock SLS Backend 复用真实资源 ACL、Schema/预算网关、查询审计、当前/基线固定聚合、Eino、Evidence、报告和 M3 变更关联；
+- Mock 飞书出站复用正式 Delivery Worker，验证同卡 `Reply -> Patch -> Patch` 生命周期；
+- `go run ./cmd/logagent mock-e2e` 不读取凭据、不访问网络，并输出结构化验收摘要。
+
+不包含：真实飞书 WebSocket/OpenAPI、真实 SLS Schema/ACL/查询、真实卡片视觉验收和生产可靠性声明。运行方法与证据边界见 [`local-mock-e2e.md`](local-mock-e2e.md)。
+
 ## M4：长任务、审批与恢复
 
 目标：达到生产级的任务可靠性与安全边界。

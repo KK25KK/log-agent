@@ -6,6 +6,7 @@
 | --- | --- | --- |
 | [`spec.md`](spec.md) | 唯一当前技术与行为契约 | 行为代码变更前先更新 |
 | [`roadmap.md`](roadmap.md) | 当前阶段边界、完成状态和后续计划 | 只写可独立验收的阶段 |
+| [`local-mock-e2e.md`](local-mock-e2e.md) | 飞书 + SLS 双 Mock 的运行、输出与边界 | Mock 行为变化时同步更新 |
 | [`../README.md`](../README.md) | 运行、配置和项目入口 | 必须与当前代码一致 |
 
 ## 历史阶段归档
@@ -21,7 +22,7 @@
 
 ## 可复现性说明
 
-当前目录尚未初始化为 Git 仓库，因此不存在可验证的 M0/M1 历史 commit 或 tag，不能倒造；M3 文档同样不能声称对应某个可复现 commit。进入 M4 或真实试点前应先建立 Git 基线，并从此对完成阶段打 tag。
+当前目录已经初始化为 Git 仓库并关联 `https://github.com/KK25KK/log-agent`。M0、M1 仍没有单独的历史 tag 或源码快照，不能倒造；从当前基线开始，阶段交付应通过 commit/tag 或 PR 记录可复现版本。
 
 SQLite 仍是技术预览存储，当前通过 `CREATE TABLE IF NOT EXISTS` 做增量建表，没有正式 schema version 和迁移/回滚工具。升级已有数据库前应备份；在生产存储迁移完成前，本地开发允许按阶段说明重建数据库。
 
