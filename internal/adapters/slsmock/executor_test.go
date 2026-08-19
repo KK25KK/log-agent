@@ -29,6 +29,20 @@ func TestExecutorReturnsDeterministicM2Aggregates(t *testing.T) {
 	if first.APICalls != domain.ErrorAnalysisAPICalls || !first.ErrorPatternsExhaustive || !first.InstancesExhaustive {
 		t.Fatalf("unexpected fixed-template metadata: %#v", first)
 	}
+	governanceFingerprint, err := executor.ResolveQueryGovernance(context.Background(), currentSpec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(governanceFingerprint) != 64 || first.GovernanceFingerprint != governanceFingerprint {
+		t.Fatalf("mock execute/resolve governance mismatch: result=%q resolved=%q", first.GovernanceFingerprint, governanceFingerprint)
+	}
+	baselineGovernance, err := executor.ResolveQueryGovernance(context.Background(), mockSpec("baseline"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if baselineGovernance != governanceFingerprint {
+		t.Fatalf("mock governance drifted across windows: current=%q baseline=%q", governanceFingerprint, baselineGovernance)
+	}
 	if len(first.ErrorPatterns) != 3 || first.ErrorPatterns[2].Label != "signature_invalid" {
 		t.Fatalf("new-pattern fixture is missing: %#v", first.ErrorPatterns)
 	}

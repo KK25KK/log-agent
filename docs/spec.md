@@ -2,8 +2,8 @@
 
 | Metadata | Value |
 | --- | --- |
-| Version | 0.4 |
-| Status | M3 implemented and verified offline; live integrations pending |
+| Version | 0.5 |
+| Status | M4-A implemented and verified offline; live integrations pending |
 | Date | 2026-08-19 |
 
 ## 1. Overview
@@ -38,6 +38,8 @@ Users can ask the bot to investigate an error spike for a known service, environ
 - A minimal durable delivery queue so the Feishu and worker processes can exchange card updates without sharing memory.
 - Append-only query audit events for denied, started, succeeded, incomplete, and failed attempts.
 - In-flight cancellation, renewable leases, lease-safe state transitions, and structured output.
+- Durable `sls.current` and `sls.baseline` checkpoints for normalized aggregate results.
+- Fail-closed recovery when a metered SLS read has an unknown external outcome.
 
 ## 4. Non-goals
 
@@ -53,7 +55,8 @@ Users can ask the bot to investigate an error spike for a known service, environ
 - A production database migration or a new organization-wide message queue.
 - Exact RMB cost prediction; processed bytes are the first cost proxy.
 - Cross-process global concurrency quotas; the first implementation limits each worker process.
-- Automatic retry of paid queries before step-level idempotency is available.
+- Automatic retry of a paid query whose external outcome is unknown.
+- Provider exactly-once query execution; SLS does not accept an application idempotency key.
 - Treating a correlated release, configuration change, error pattern, or instance as a confirmed root cause.
 - SLS version-distribution or first-seen-time queries in the first M3 slice; M3 reuses the existing M2 query budget.
 - Live release-platform, configuration-center, CMDB, Trace, metric, error-code, SOP, or service-topology connectors.
@@ -67,6 +70,7 @@ Feishu Receiver
     -> Worker
     -> InvestigationEngine interface
     -> Eino deterministic graph
+    -> CheckpointExecutor (sls.current / sls.baseline)
     -> QueryGateway
          -> Resource Catalog
          -> ACL + Query Budget
@@ -81,7 +85,7 @@ Feishu Receiver
 
 Feishu card.action.trigger
     -> requester authorization
-    -> view evidence | cancel | expand window | rerun
+    -> view evidence | cancel | expand window | rerun | rerun_with_cost_ack
     -> durable state transition or derived investigation
 ```
 
@@ -166,8 +170,9 @@ The minimal Feishu delivery queue is also persisted in SQLite. Business-state co
 4. `cancel` idempotently cancels a queued or running investigation.
 5. `expand_window` creates one derived investigation with twice the lookback, capped by the configured query-window policy.
 6. `rerun` creates one derived investigation for the same scope and time range.
-7. Replayed callbacks reuse the callback event ID as the durable inbound idempotency key and cannot create duplicate investigations.
-8. Mutating callbacks return only a toast. Their card projection is serialized through the durable delivery worker, which is the sole writer of business-state card updates.
+7. A `NEEDS_REVIEW` investigation, or a cancelled investigation with an in-flight query whose outcome is unknown, rejects ordinary `rerun` and accepts only the dedicated `rerun_with_cost_ack` action emitted by a card that explains the possible duplicate query cost.
+8. Replayed callbacks reuse the callback event ID as the durable inbound idempotency key and cannot create duplicate investigations.
+9. Mutating callbacks return only a toast. Their card projection is serialized through the durable delivery worker, which is the sole writer of business-state card updates.
 
 ### Validate a real SLS configuration
 
@@ -179,7 +184,12 @@ An explicit diagnostic command loads the same catalog and credentials as a real 
 - A running worker renews its lease and observes durable cancellation on the heartbeat boundary.
 - A cancelled investigation cannot start new work.
 - A duplicate inbound message does not create duplicate investigations or jobs.
-- Framework checkpoints are optional execution snapshots, not business facts.
+- The two metered query steps are named `sls.current` and `sls.baseline`; their input fingerprints and normalized aggregate results are stored outside Eino.
+- A `SUCCEEDED` step with the same fingerprint is reused after lease reclaim, so the Provider is not called again.
+- Step prepare and completion are fenced by investigation, job, lease owner, job attempt, step name, and input fingerprint.
+- A stale `STARTED` metered step has an ambiguous external outcome. It becomes `UNKNOWN`, and the investigation becomes `NEEDS_REVIEW` without another SLS call.
+- `NEEDS_REVIEW` is resolved only by an explicit new investigation, which warns that the previous call may already have consumed query capacity.
+- Pure planning, report building, and change-catalog correlation remain safe to recompute and are not M4-A checkpoints.
 
 ### Correlate a governed change
 
@@ -193,7 +203,7 @@ An explicit diagnostic command loads the same catalog and credentials as a real 
 
 ## 7. Behavioral contracts and lifecycle
 
-Investigation states are `QUEUED`, `RUNNING`, `SUCCEEDED`, `FAILED`, and `CANCELLED`.
+Investigation states are `QUEUED`, `RUNNING`, `SUCCEEDED`, `FAILED`, `CANCELLED`, and `NEEDS_REVIEW`.
 
 Allowed terminal states cannot transition back to running. Each claim increments the attempt count and binds a lease owner and expiry. Renewal and completion require both the active lease owner and the active attempt fencing token, so a stale process cannot submit through a newer claim that reused the same worker ID.
 
@@ -211,7 +221,7 @@ Notification delivery states are `PENDING`, `RUNNING`, `SENT`, and `DEAD`. Claim
 
 M2 runs one Feishu/delivery process. Database fencing protects local claims and stale attempts, but globally ordered remote patches from multiple delivery processes require the production outbox/dispatcher work planned for M4.
 
-Executor errors remain terminal failures. Application-level retry is intentionally deferred until step-level idempotency keys and error classification are introduced; paid POST queries disable the SDK's server-error retry. SDK metadata GET transport retries are bounded by the configured request timeout. The system does not claim exactly-once SLS query execution.
+M4-A persists one checkpoint per logical SLS window. Its input hash combines the immutable logical `QuerySpec` with a governed fingerprint over the catalog and physical resource, selectors, schema, template, policy, and budgets. Confirmed successful results are reusable only while that governance identity still matches, and current/baseline Evidence with different governance identities cannot produce a report. An abandoned `STARTED` metered step is never automatically retried. Other executor errors remain terminal until the later M4 retry-classification slice is implemented. Paid POST queries disable the SDK's server-error retry; metadata GET transport retries are bounded by the configured request timeout. The system does not claim exactly-once SLS query execution.
 
 Existing queued records created before trusted principals were persisted decode with an empty principal and must fail closed in real-SLS mode. The offline mock remains backward compatible.
 
@@ -299,6 +309,19 @@ Change Source errors, disabled configuration, or incomplete source coverage neve
 - [x] Feishu report/evidence cards render bounded change, support, counter, unknown, confidence-source, and limitation content without exposing raw logs, raw queries, provider errors, or untrusted URLs.
 - [x] The offline demo deterministically emits one supported change-correlation candidate while retaining exactly two logical SLS observations and eight fixed provider calls in total.
 - [x] Live release/configuration systems, version-distribution queries, Trace/metric correlation, and enterprise knowledge retrieval remain explicitly unimplemented.
+
+### M4-A recoverable metered query steps
+
+- [x] A successful current-window checkpoint survives SQLite reopen and is reused while only the missing baseline window reaches the Provider.
+- [x] Two successful window checkpoints can rebuild and persist the report after job reclaim without another Provider call.
+- [x] A stale `STARTED` metered step becomes `UNKNOWN`; the investigation becomes `NEEDS_REVIEW`, and recovery performs zero new Provider calls.
+- [x] Cancelling before or after an in-flight step becomes `UNKNOWN` preserves a stable cost-risk marker; ordinary rerun/expand actions are rejected until the dedicated cost-acknowledgement action is used.
+- [x] Checkpoint prepare and completion reject stale job attempts, expired leases, changed logical or governed input fingerprints, and oversized or invalid result payloads.
+- [x] The governed fingerprint binds the catalog and physical resource, selectors, schema, template, policy, and budget; current and baseline evidence must carry the same governance identity before a conclusion is allowed.
+- [x] Checkpoints contain only normalized aggregate `QueryResult` data and exclude raw logs, SQL, credentials, and raw Provider errors.
+- [x] The offline mock flow traverses the checkpoint wrapper and still performs exactly two logical observations and eight Provider calls.
+- [x] `gofmt`, offline tests, `go vet`, and the mock end-to-end command pass; race testing remains separately reported according to toolchain availability.
+- [x] Automatic transient retries, operator resolution of unknown steps, delivery dead-letter replay, durable tenant quotas, approvals, and a production database remain explicitly deferred to later M4 slices.
 
 ## 10. Open deployment inputs
 

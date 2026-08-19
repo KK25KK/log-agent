@@ -91,9 +91,17 @@ func runDemo() error {
 	defer store.Close()
 
 	fixedEnd := time.Date(2026, 8, 18, 10, 30, 0, 0, time.UTC)
+	checkpointedExecutor, err := application.NewCheckpointExecutor(
+		newMockExecutor(),
+		store,
+		func() time.Time { return fixedEnd.Add(time.Second) },
+	)
+	if err != nil {
+		return err
+	}
 	engine, err := eino.New(
 		ctx,
-		newMockExecutor(),
+		checkpointedExecutor,
 		func() time.Time { return fixedEnd.Add(time.Second) },
 		eino.WithChangeSource(demoChangeSource{event: domain.ChangeEvent{
 			ID: "chg_demo_release_v2", ResourceID: "mock/order-service/prod", Kind: domain.ChangeKindRelease,
@@ -160,11 +168,15 @@ func runWorker(config config.Config) error {
 	if err != nil {
 		return err
 	}
+	checkpointedExecutor, err := application.NewCheckpointExecutor(executor, store, time.Now)
+	if err != nil {
+		return err
+	}
 	changeSource, err := buildChangeSource(config)
 	if err != nil {
 		return err
 	}
-	engine, err := eino.New(ctx, executor, time.Now, eino.WithChangeSource(changeSource))
+	engine, err := eino.New(ctx, checkpointedExecutor, time.Now, eino.WithChangeSource(changeSource))
 	if err != nil {
 		return err
 	}

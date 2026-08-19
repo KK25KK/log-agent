@@ -15,7 +15,6 @@ import (
 	"logagent/internal/application"
 	queryapp "logagent/internal/application/query"
 	"logagent/internal/domain"
-	"logagent/internal/ports"
 )
 
 type mockE2EResult struct {
@@ -43,22 +42,27 @@ type mockFeishuSummary struct {
 }
 
 type mockSLSSummary struct {
-	Mode                string `json:"mode"`
-	LogicalObservations int    `json:"logical_observations"`
-	SchemaCalls         int    `json:"schema_calls"`
-	BackendExecuteCalls int    `json:"backend_execute_calls"`
-	ProviderAPICalls    int    `json:"provider_api_calls"`
-	QueryAuditEvents    int    `json:"query_audit_events"`
-	RawLogRowsReturned  int    `json:"raw_log_rows_returned"`
-	CurrentErrorCount   int64  `json:"current_error_count"`
-	BaselineErrorCount  int64  `json:"baseline_error_count"`
+	Mode                 string `json:"mode"`
+	LogicalObservations  int    `json:"logical_observations"`
+	SchemaCalls          int    `json:"schema_calls"`
+	BackendExecuteCalls  int    `json:"backend_execute_calls"`
+	ProviderAPICalls     int    `json:"provider_api_calls"`
+	QueryAuditEvents     int    `json:"query_audit_events"`
+	QueryStepCheckpoints int    `json:"query_step_checkpoints"`
+	RawLogRowsReturned   int    `json:"raw_log_rows_returned"`
+	CurrentErrorCount    int64  `json:"current_error_count"`
+	BaselineErrorCount   int64  `json:"baseline_error_count"`
 }
 
 type gatedMockExecutor struct {
-	delegate ports.SLSExecutor
+	delegate application.GovernedSLSExecutor
 	started  chan struct{}
 	release  chan struct{}
 	once     sync.Once
+}
+
+func (executor *gatedMockExecutor) ResolveQueryGovernance(ctx context.Context, spec domain.QuerySpec) (string, error) {
+	return executor.delegate.ResolveQueryGovernance(ctx, spec)
 }
 
 type localMockChangeSource struct {
@@ -177,10 +181,18 @@ func executeMockE2E(ctx context.Context) (mockE2EResult, error) {
 		started:  make(chan struct{}),
 		release:  make(chan struct{}),
 	}
+	checkpointedExecutor, err := application.NewCheckpointExecutor(
+		gatedExecutor,
+		store,
+		func() time.Time { return messageAt.Add(time.Second) },
+	)
+	if err != nil {
+		return mockE2EResult{}, err
+	}
 	released := false
 	engine, err := eino.New(
 		ctx,
-		gatedExecutor,
+		checkpointedExecutor,
 		func() time.Time { return messageAt.Add(time.Second) },
 		eino.WithChangeSource(localMockChangeSource{event: domain.ChangeEvent{
 			ID: "chg_mock_release_v2", ResourceID: "mock/order-service/prod", Kind: domain.ChangeKindRelease,
@@ -297,6 +309,13 @@ func executeMockE2E(ctx context.Context) (mockE2EResult, error) {
 	if len(audits) != 4 {
 		return mockE2EResult{}, fmt.Errorf("unexpected mock query audit count %d", len(audits))
 	}
+	queryStepCheckpoints, err := store.CountQuerySteps(ctx, investigationID)
+	if err != nil {
+		return mockE2EResult{}, err
+	}
+	if queryStepCheckpoints != 2 {
+		return mockE2EResult{}, fmt.Errorf("unexpected mock query checkpoint count %d", queryStepCheckpoints)
+	}
 
 	return mockE2EResult{
 		Scenario: "feishu_to_sls_investigation_full_mock",
@@ -314,15 +333,16 @@ func executeMockE2E(ctx context.Context) (mockE2EResult, error) {
 			Deliveries:                  deliveries,
 		},
 		AlibabaSLS: mockSLSSummary{
-			Mode:                "mock",
-			LogicalObservations: len(investigation.Report.Evidence),
-			SchemaCalls:         backendStats.SchemaCalls,
-			BackendExecuteCalls: backendStats.ExecuteCalls,
-			ProviderAPICalls:    backendStats.ProviderAPICalls,
-			QueryAuditEvents:    len(audits),
-			RawLogRowsReturned:  0,
-			CurrentErrorCount:   currentErrors,
-			BaselineErrorCount:  baselineErrors,
+			Mode:                 "mock",
+			LogicalObservations:  len(investigation.Report.Evidence),
+			SchemaCalls:          backendStats.SchemaCalls,
+			BackendExecuteCalls:  backendStats.ExecuteCalls,
+			ProviderAPICalls:     backendStats.ProviderAPICalls,
+			QueryAuditEvents:     len(audits),
+			QueryStepCheckpoints: queryStepCheckpoints,
+			RawLogRowsReturned:   0,
+			CurrentErrorCount:    currentErrors,
+			BaselineErrorCount:   baselineErrors,
 		},
 		ChangeSource:  "mock",
 		Investigation: investigation,

@@ -149,7 +149,7 @@ func (r *Receiver) handleAction(ctx context.Context, event *callback.CardActionT
 
 func isMutatingAction(action domain.InvestigationAction) bool {
 	switch action {
-	case domain.ActionCancel, domain.ActionExpandWindow, domain.ActionRerun:
+	case domain.ActionCancel, domain.ActionExpandWindow, domain.ActionRerun, domain.ActionRerunWithCostAck:
 		return true
 	default:
 		return false
@@ -206,7 +206,7 @@ func decodeActionValue(value map[string]interface{}) (domain.InvestigationAction
 	}
 	action := domain.InvestigationAction(rawAction)
 	switch action {
-	case domain.ActionViewEvidence, domain.ActionViewReport, domain.ActionCancel, domain.ActionExpandWindow, domain.ActionRerun:
+	case domain.ActionViewEvidence, domain.ActionViewReport, domain.ActionCancel, domain.ActionExpandWindow, domain.ActionRerun, domain.ActionRerunWithCostAck:
 		return action, investigationID, true
 	default:
 		return "", "", false
@@ -230,7 +230,7 @@ func actionSuccessMessage(action domain.InvestigationAction, result domain.Actio
 			return "已扩大时间窗并创建新调查。"
 		}
 		return "扩大时间窗的调查已存在。"
-	case domain.ActionRerun:
+	case domain.ActionRerun, domain.ActionRerunWithCostAck:
 		if result.Created {
 			return "已创建重新运行的调查。"
 		}

@@ -7,6 +7,7 @@
 | [`spec.md`](spec.md) | 唯一当前技术与行为契约 | 行为代码变更前先更新 |
 | [`roadmap.md`](roadmap.md) | 当前阶段边界、完成状态和后续计划 | 只写可独立验收的阶段 |
 | [`local-mock-e2e.md`](local-mock-e2e.md) | 飞书 + SLS 双 Mock 的运行、输出与边界 | Mock 行为变化时同步更新 |
+| [`m4-recoverable-query-steps.md`](m4-recoverable-query-steps.md) | 第五期 M4-A 的检查点、结果未知与恢复合同 | M4-A 行为或验收变化时同步更新 |
 | [`../README.md`](../README.md) | 运行、配置和项目入口 | 必须与当前代码一致 |
 
 ## 历史阶段归档
@@ -17,6 +18,7 @@
 | M1 / 第二期 | [`m1-readonly-query-foundation.md`](m1-readonly-query-foundation.md) | 历史叙事归档；没有独立源码快照 |
 | M2 / 第三期 | [`m2-error-spike-investigation-loop.md`](m2-error-spike-investigation-loop.md) | 历史叙事归档；当前树仍可对照其主体实现 |
 | M3 / 第四期 | [`m3-change-correlation-evidence.md`](m3-change-correlation-evidence.md) | 代码与离线验收完成；真实系统联调待部署阶段 |
+| M4-A / 第五期首个切片 | [`m4-recoverable-query-steps.md`](m4-recoverable-query-steps.md) | 代码与离线验收完成；不代表完整 M4 或生产验收 |
 
 阶段归档记录“当时为什么这样做、相对上一期增加了什么、当时验证到哪里”，不会被重写成当前实现。归档中的源码路径默认指向当前工作树，除非文档明确给出 tag/commit；M0、M1 没有可恢复的独立源码快照。
 

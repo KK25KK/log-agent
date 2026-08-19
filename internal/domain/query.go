@@ -59,18 +59,19 @@ type IndexSchema struct {
 
 // ApprovedQuery can only be produced after catalog, ACL, budget, and Schema checks.
 type ApprovedQuery struct {
-	SpecHash          string      `json:"spec_hash"`
-	Resource          LogResource `json:"resource"`
-	TemplateID        string      `json:"template_id"`
-	PolicyVersion     string      `json:"policy_version"`
-	SchemaFingerprint string      `json:"schema_fingerprint"`
-	StartTime         time.Time   `json:"start_time"`
-	EndTime           time.Time   `json:"end_time"`
-	MaxRows           int64       `json:"max_rows"`
-	MaxAPICalls       int         `json:"max_api_calls"`
-	PatternLimit      int         `json:"pattern_limit"`
-	InstanceLimit     int         `json:"instance_limit"`
-	ExpectedAPICalls  int         `json:"expected_api_calls"`
+	SpecHash              string      `json:"spec_hash"`
+	Resource              LogResource `json:"resource"`
+	TemplateID            string      `json:"template_id"`
+	PolicyVersion         string      `json:"policy_version"`
+	SchemaFingerprint     string      `json:"schema_fingerprint"`
+	GovernanceFingerprint string      `json:"governance_fingerprint"`
+	StartTime             time.Time   `json:"start_time"`
+	EndTime               time.Time   `json:"end_time"`
+	MaxRows               int64       `json:"max_rows"`
+	MaxAPICalls           int         `json:"max_api_calls"`
+	PatternLimit          int         `json:"pattern_limit"`
+	InstanceLimit         int         `json:"instance_limit"`
+	ExpectedAPICalls      int         `json:"expected_api_calls"`
 }
 
 type QueryAudit struct {

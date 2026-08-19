@@ -59,6 +59,7 @@ func (w *Worker) RunOne(ctx context.Context) (bool, error) {
 	}
 
 	runCtx, cancelRun := context.WithCancel(ctx)
+	runCtx = withRunJob(runCtx, job)
 	stopHeartbeat := make(chan struct{})
 	heartbeatDone := w.startHeartbeat(runCtx, cancelRun, stopHeartbeat, job)
 	evidence, report, runErr := w.engine.Run(runCtx, job.InvestigationID, job.Request)
@@ -81,7 +82,26 @@ func (w *Worker) RunOne(ctx context.Context) (bool, error) {
 	}
 	finishedAt := w.now().UTC()
 	if runErr != nil {
-		if finishErr := w.store.FinishFailure(ctx, job, runErr.Error(), finishedAt); finishErr != nil {
+		if errors.Is(runErr, ports.ErrExternalOutcomeUnknown) {
+			// The request context may already be tied to a shutting-down HTTP or
+			// worker process. Persist this fail-closed state with a short,
+			// independent context and a stable reason code rather than raw SDK
+			// output. No automatic retry is allowed from NEEDS_REVIEW.
+			finishCtx, cancelFinish := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancelFinish()
+			if finishErr := w.store.FinishNeedsReview(finishCtx, job, domain.ReviewReasonExternalQueryOutcomeUnknown, finishedAt); finishErr != nil {
+				if errors.Is(finishErr, ports.ErrLeaseLost) && w.investigationCancelled(job.InvestigationID) {
+					return true, nil
+				}
+				return true, fmt.Errorf("mark investigation for review: %w", finishErr)
+			}
+			return true, fmt.Errorf("investigation requires operator review: %w", ports.ErrExternalOutcomeUnknown)
+		}
+		failureCause := runErr.Error()
+		if stableCode, ok := ports.QueryStepFailureCode(runErr); ok {
+			failureCause = stableCode
+		}
+		if finishErr := w.store.FinishFailure(ctx, job, failureCause, finishedAt); finishErr != nil {
 			if errors.Is(finishErr, ports.ErrLeaseLost) && w.investigationCancelled(job.InvestigationID) {
 				return true, nil
 			}

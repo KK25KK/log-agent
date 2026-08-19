@@ -41,6 +41,53 @@ func (unusedDerivedAccepter) Accept(context.Context, domain.InboundMessage, doma
 	return "", false, errors.New("unexpected derived intake")
 }
 
+type needsReviewActionStore struct {
+	source       domain.Investigation
+	derived      domain.Investigation
+	cancelCalled bool
+}
+
+func (s *needsReviewActionStore) ResolveInteraction(context.Context, string, string, string, string) (string, error) {
+	return s.source.ID, nil
+}
+
+func (*needsReviewActionStore) ResolveActionReplay(context.Context, string, string, string, string, string, domain.InvestigationAction) (string, error) {
+	return "", ports.ErrNotFound
+}
+
+func (s *needsReviewActionStore) GetInvestigation(_ context.Context, investigationID string) (domain.Investigation, error) {
+	if investigationID == s.source.ID {
+		return s.source, nil
+	}
+	if investigationID == s.derived.ID && s.derived.ID != "" {
+		return s.derived, nil
+	}
+	return domain.Investigation{}, ports.ErrNotFound
+}
+
+func (s *needsReviewActionStore) RequestCancel(context.Context, string, time.Time) error {
+	s.cancelCalled = true
+	return errors.New("unexpected cancellation")
+}
+
+type needsReviewAccepter struct {
+	store *needsReviewActionStore
+}
+
+func (a needsReviewAccepter) Accept(_ context.Context, inbound domain.InboundMessage, request domain.InvestigationRequest) (string, bool, error) {
+	if inbound.ExpectedInvestigationID != a.store.source.ID || inbound.ReplyToMessageID == "" {
+		return "", false, errors.New("derived intake did not preserve the source card binding")
+	}
+	a.store.derived = domain.Investigation{
+		ID:        "inv-derived-after-review",
+		Status:    domain.StatusQueued,
+		Request:   request,
+		CreatedAt: inbound.ReceivedAt,
+		UpdatedAt: inbound.ReceivedAt,
+	}
+	return a.store.derived.ID, true, nil
+}
+
 func TestActionServiceAuthorizesAndIdempotentlyCancels(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -105,6 +152,107 @@ func TestActionServiceDoesNotConfirmCancellationAfterTerminalRace(t *testing.T) 
 	}
 	if result.View != "" || store.investigation.Status != domain.StatusSucceeded {
 		t.Fatalf("terminal state was misreported as cancelled: result=%+v state=%s", result, store.investigation.Status)
+	}
+}
+
+func TestActionServiceNeedsReviewCanOnlyCreateANewInvestigation(t *testing.T) {
+	principal := domain.Principal{AppID: "app", TenantKey: "tenant", UserID: "requester"}
+	now := time.Date(2026, 8, 19, 15, 0, 0, 0, time.UTC)
+	store := &needsReviewActionStore{source: domain.Investigation{
+		ID:     "inv-needs-review",
+		Status: domain.StatusNeedsReview,
+		Request: domain.InvestigationRequest{
+			Service: "order-service", Environment: "prod",
+			StartTime: now.Add(-30 * time.Minute), EndTime: now, Requester: principal,
+		},
+		LastError: "provider outcome details must stay internal",
+	}}
+	service, err := application.NewActionService(store, needsReviewAccepter{store: store}, 2*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := domain.ActionCommand{
+		InvestigationID: store.source.ID, Principal: principal,
+		ChatID: "chat", CardMessageID: "card", OccurredAt: now.Add(time.Minute),
+	}
+
+	view := base
+	view.Action = domain.ActionViewReport
+	result, err := service.Handle(context.Background(), view)
+	if err != nil || result.View != domain.ActionViewNeedsReviewCard {
+		t.Fatalf("needs-review view was not preserved: result=%+v err=%v", result, err)
+	}
+
+	cancel := base
+	cancel.Action = domain.ActionCancel
+	cancel.EventID = "cancel-needs-review"
+	if _, err := service.Handle(context.Background(), cancel); !errors.Is(err, ports.ErrActionInvalid) {
+		t.Fatalf("needs-review investigation was cancellable: %v", err)
+	}
+	if store.cancelCalled {
+		t.Fatal("terminal needs-review state reached the cancellation store mutation")
+	}
+
+	expand := base
+	expand.Action = domain.ActionExpandWindow
+	expand.EventID = "expand-needs-review"
+	if _, err := service.Handle(context.Background(), expand); !errors.Is(err, ports.ErrActionInvalid) {
+		t.Fatalf("needs-review investigation accepted an implicit cost-expanding rerun: %v", err)
+	}
+
+	rerun := base
+	rerun.Action = domain.ActionRerun
+	rerun.EventID = "rerun-needs-review"
+	if _, err := service.Handle(context.Background(), rerun); !errors.Is(err, ports.ErrActionInvalid) {
+		t.Fatalf("needs-review accepted rerun without cost acknowledgement: %v", err)
+	}
+
+	acknowledged := base
+	acknowledged.Action = domain.ActionRerunWithCostAck
+	acknowledged.EventID = "rerun-needs-review-ack"
+	result, err = service.Handle(context.Background(), acknowledged)
+	if err != nil || !result.Created || result.View != domain.ActionViewQueuedCard || result.Investigation.Status != domain.StatusQueued {
+		t.Fatalf("acknowledged needs-review rerun did not create queued work: result=%+v err=%v", result, err)
+	}
+	if result.Investigation.Request != store.source.Request {
+		t.Fatalf("rerun changed trusted investigation scope: source=%+v derived=%+v", store.source.Request, result.Investigation.Request)
+	}
+}
+
+func TestActionServiceCancelledUnknownOutcomeRequiresCostAcknowledgement(t *testing.T) {
+	principal := domain.Principal{AppID: "app", TenantKey: "tenant", UserID: "requester"}
+	now := time.Date(2026, 8, 19, 15, 30, 0, 0, time.UTC)
+	store := &needsReviewActionStore{source: domain.Investigation{
+		ID:        "inv-cancelled-unknown",
+		Status:    domain.StatusCancelled,
+		LastError: domain.CancelReasonExternalQueryOutcomeUnknown,
+		Request: domain.InvestigationRequest{
+			Service: "order-service", Environment: "prod",
+			StartTime: now.Add(-30 * time.Minute), EndTime: now, Requester: principal,
+		},
+	}}
+	service, err := application.NewActionService(store, needsReviewAccepter{store: store}, 2*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := domain.ActionCommand{
+		InvestigationID: store.source.ID, Principal: principal,
+		ChatID: "chat", CardMessageID: "card", OccurredAt: now.Add(time.Minute),
+	}
+
+	ordinary := base
+	ordinary.Action = domain.ActionRerun
+	ordinary.EventID = "cancelled-unknown-rerun"
+	if _, err := service.Handle(context.Background(), ordinary); !errors.Is(err, ports.ErrActionInvalid) {
+		t.Fatalf("cancelled unknown outcome accepted an unacknowledged rerun: %v", err)
+	}
+
+	acknowledged := base
+	acknowledged.Action = domain.ActionRerunWithCostAck
+	acknowledged.EventID = "cancelled-unknown-rerun-ack"
+	result, err := service.Handle(context.Background(), acknowledged)
+	if err != nil || !result.Created || result.View != domain.ActionViewQueuedCard {
+		t.Fatalf("acknowledged cancelled rerun failed: result=%+v err=%v", result, err)
 	}
 }
 

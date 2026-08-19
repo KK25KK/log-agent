@@ -3,6 +3,7 @@ package eino
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -95,6 +96,39 @@ func TestEngineRejectsUntraceableQueryResult(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("want invalid query result error")
+	}
+}
+
+func TestEngineRejectsCrossWindowGovernanceDriftBeforeReport(t *testing.T) {
+	start := time.Date(2026, 8, 18, 10, 0, 0, 0, time.UTC)
+	mutations := map[string]func(*domain.QueryResult){
+		"governance fingerprint": func(result *domain.QueryResult) { result.GovernanceFingerprint = strings.Repeat("c", 64) },
+		"resource":               func(result *domain.QueryResult) { result.ResourceID = "resource-other" },
+		"template":               func(result *domain.QueryResult) { result.TemplateVersion = "template-v3" },
+		"schema":                 func(result *domain.QueryResult) { result.SchemaFingerprint = "schema-v3" },
+		"policy":                 func(result *domain.QueryResult) { result.PolicyVersion = "policy-v3" },
+	}
+	for name, mutate := range mutations {
+		t.Run(name, func(t *testing.T) {
+			current := fakeAnalysisResult("current")
+			baseline := fakeAnalysisResult("baseline")
+			mutate(&baseline)
+			engine, err := New(context.Background(), &fakeExecutor{results: map[string]domain.QueryResult{
+				"current": current, "baseline": baseline,
+			}}, time.Now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			evidence, report, err := engine.Run(context.Background(), "inv_governance_drift", domain.InvestigationRequest{
+				Service: "order-service", Environment: "prod", StartTime: start, EndTime: start.Add(time.Minute),
+			})
+			if err == nil {
+				t.Fatalf("cross-window %s drift formed a report: %#v", name, report)
+			}
+			if evidence != nil || report.InvestigationID != "" {
+				t.Fatalf("cross-window %s drift escaped fail-closed graph: evidence=%#v report=%#v", name, evidence, report)
+			}
+		})
 	}
 }
 
@@ -674,6 +708,12 @@ func ledgerByCode(t *testing.T, ledger []domain.EvidenceLedgerEntry, code string
 func analysisResult(name string, total int64, patterns, instances []domain.CountBucket) domain.QueryResult {
 	result := domain.QueryResult{
 		QueryID:                 "query-" + name,
+		ResourceID:              "resource-order-prod",
+		TemplateID:              domain.ErrorAnalysisTemplateID,
+		TemplateVersion:         domain.ErrorAnalysisTemplateVersion,
+		SchemaFingerprint:       "schema-v2",
+		PolicyVersion:           "query-policy-v2",
+		GovernanceFingerprint:   strings.Repeat("b", 64),
 		Progress:                "Complete",
 		Complete:                true,
 		UsageKnown:              true,

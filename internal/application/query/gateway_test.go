@@ -33,6 +33,7 @@ type fakeBackend struct {
 	executeErr   error
 	schemaCalls  int
 	execCalls    int
+	approved     []domain.ApprovedQuery
 	started      chan struct{}
 	release      chan struct{}
 	executeDelay time.Duration
@@ -45,9 +46,10 @@ func (f *fakeBackend) GetSchema(_ context.Context, _ domain.LogResource) (domain
 	return f.schema, f.schemaErr
 }
 
-func (f *fakeBackend) Execute(ctx context.Context, _ domain.ApprovedQuery) (domain.QueryResult, error) {
+func (f *fakeBackend) Execute(ctx context.Context, approved domain.ApprovedQuery) (domain.QueryResult, error) {
 	f.mu.Lock()
 	f.execCalls++
+	f.approved = append(f.approved, approved)
 	f.mu.Unlock()
 	if f.started != nil {
 		select {
@@ -67,6 +69,15 @@ func (f *fakeBackend) Execute(ctx context.Context, _ domain.ApprovedQuery) (doma
 		time.Sleep(f.executeDelay)
 	}
 	return f.result, f.executeErr
+}
+
+func (f *fakeBackend) lastApproved() domain.ApprovedQuery {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.approved) == 0 {
+		return domain.ApprovedQuery{}
+	}
+	return f.approved[len(f.approved)-1]
 }
 
 func (f *fakeBackend) calls() (int, int) {
@@ -102,7 +113,7 @@ func TestGatewayExecutesAuthorizedFixedTemplate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !result.Complete || result.ResourceID != "order-prod" || result.QuerySpecHash == "" {
+	if !result.Complete || result.ResourceID != "order-prod" || result.QuerySpecHash == "" || !validFingerprint(result.GovernanceFingerprint) {
 		t.Fatalf("unexpected governed result: %#v", result)
 	}
 	if result.TopError != "payment failed for [REDACTED_EMAIL] from [REDACTED_IP]" || !result.Redacted {
@@ -114,11 +125,106 @@ func TestGatewayExecutesAuthorizedFixedTemplate(t *testing.T) {
 	if _, calls := backend.calls(); calls != 1 {
 		t.Fatalf("want one backend query, got %d", calls)
 	}
+	if backend.lastApproved().GovernanceFingerprint != result.GovernanceFingerprint {
+		t.Fatalf("approved query/result governance mismatch: approved=%#v result=%#v", backend.lastApproved(), result)
+	}
 	if len(auditor.events) != 2 || auditor.events[0].Outcome != "STARTED" || auditor.events[1].Outcome != "SUCCEEDED" {
 		t.Fatalf("unexpected audit lifecycle: %#v", auditor.events)
 	}
 	if auditor.events[1].ProviderRequestID != "req-count-before,req-patterns,req-instances,req-count-after" {
 		t.Fatalf("provider request ID not audited: %#v", auditor.events[1])
+	}
+}
+
+func TestResolveQueryGovernanceMatchesExecutionWithoutReadingLogs(t *testing.T) {
+	backend := validBackend()
+	auditor := &fakeAuditor{}
+	gateway := newTestGateway(t, fakeCatalog{resource: testResource(), allowed: true}, backend, auditor, testBudget())
+
+	governanceFingerprint, err := gateway.ResolveQueryGovernance(context.Background(), testSpec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !validFingerprint(governanceFingerprint) {
+		t.Fatalf("invalid governance fingerprint %q", governanceFingerprint)
+	}
+	if schemaCalls, executeCalls := backend.calls(); schemaCalls != 1 || executeCalls != 0 {
+		t.Fatalf("governance resolution read log rows: schema=%d execute=%d", schemaCalls, executeCalls)
+	}
+	if len(auditor.events) != 0 {
+		t.Fatalf("successful metadata resolution emitted query lifecycle audit: %#v", auditor.events)
+	}
+
+	result, err := gateway.Execute(context.Background(), testSpec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.GovernanceFingerprint != governanceFingerprint {
+		t.Fatalf("resolve/execute governance drift: resolved=%s result=%s", governanceFingerprint, result.GovernanceFingerprint)
+	}
+}
+
+func TestQueryGovernanceFingerprintBindsCatalogPhysicalSchemaPolicyAndBudget(t *testing.T) {
+	baseResource := testResource()
+	baseSchema := validBackend().schema
+	baseBudget := testBudget()
+	base, err := queryGovernanceFingerprint(baseResource, domain.ErrorAnalysisTemplateID, PolicyVersion, baseSchema.Fingerprint, baseBudget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := map[string]struct {
+		resource domain.LogResource
+		schema   string
+		policy   string
+		budget   Budget
+	}{
+		"catalog version":  {resource: func() domain.LogResource { value := baseResource; value.CatalogVersion = "catalog-v2"; return value }(), schema: baseSchema.Fingerprint, policy: PolicyVersion, budget: baseBudget},
+		"physical project": {resource: func() domain.LogResource { value := baseResource; value.Project = "project-migrated"; return value }(), schema: baseSchema.Fingerprint, policy: PolicyVersion, budget: baseBudget},
+		"endpoint": {resource: func() domain.LogResource {
+			value := baseResource
+			value.Endpoint = "https://cn-shanghai.log.aliyuncs.com"
+			return value
+		}(), schema: baseSchema.Fingerprint, policy: PolicyVersion, budget: baseBudget},
+		"logstore": {resource: func() domain.LogResource { value := baseResource; value.LogStore = "logstore-v2"; return value }(), schema: baseSchema.Fingerprint, policy: PolicyVersion, budget: baseBudget},
+		"selector": {resource: func() domain.LogResource {
+			value := baseResource
+			value.Selectors = append([]domain.LogSelector(nil), value.Selectors...)
+			value.Selectors[0].Value = "order-service-v2"
+			return value
+		}(), schema: baseSchema.Fingerprint, policy: PolicyVersion, budget: baseBudget},
+		"indexed field":   {resource: func() domain.LogResource { value := baseResource; value.ErrorField = "error_code"; return value }(), schema: baseSchema.Fingerprint, policy: PolicyVersion, budget: baseBudget},
+		"schema":          {resource: baseResource, schema: "schema-v3", policy: PolicyVersion, budget: baseBudget},
+		"policy":          {resource: baseResource, schema: baseSchema.Fingerprint, policy: "query-policy-v3", budget: baseBudget},
+		"processed bytes": {resource: baseResource, schema: baseSchema.Fingerprint, policy: PolicyVersion, budget: func() Budget { value := baseBudget; value.MaxProcessedBytes++; return value }()},
+		"timeout":         {resource: baseResource, schema: baseSchema.Fingerprint, policy: PolicyVersion, budget: func() Budget { value := baseBudget; value.Timeout += time.Second; return value }()},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			got, err := queryGovernanceFingerprint(test.resource, domain.ErrorAnalysisTemplateID, test.policy, test.schema, test.budget)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !validFingerprint(got) || got == base {
+				t.Fatalf("%s drift did not invalidate governance: base=%s got=%s", name, base, got)
+			}
+		})
+	}
+}
+
+func TestResolveQueryGovernanceDenialIsAuditedBeforeLogRead(t *testing.T) {
+	backend := validBackend()
+	auditor := &fakeAuditor{}
+	gateway := newTestGateway(t, fakeCatalog{resource: testResource(), allowed: false}, backend, auditor, testBudget())
+
+	_, err := gateway.ResolveQueryGovernance(context.Background(), testSpec())
+	if !errors.Is(err, ports.ErrQueryDenied) {
+		t.Fatalf("want query denial, got %v", err)
+	}
+	if schemaCalls, executeCalls := backend.calls(); schemaCalls != 0 || executeCalls != 0 {
+		t.Fatalf("denied governance reached provider: schema=%d execute=%d", schemaCalls, executeCalls)
+	}
+	if len(auditor.events) != 1 || auditor.events[0].Outcome != "DENIED" || auditor.events[0].Reason != "acl_denied" {
+		t.Fatalf("unexpected governance denial audit: %#v", auditor.events)
 	}
 }
 

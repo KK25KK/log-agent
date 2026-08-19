@@ -2,6 +2,7 @@ package query
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"regexp"
@@ -47,6 +48,29 @@ type cachedSchema struct {
 	expiresAt time.Time
 }
 
+type governanceBudget struct {
+	MaxWindowNanoseconds      int64 `json:"max_window_nanoseconds"`
+	IngestionGraceNanoseconds int64 `json:"ingestion_grace_nanoseconds"`
+	TimeoutNanoseconds        int64 `json:"timeout_nanoseconds"`
+	MaxRows                   int64 `json:"max_rows"`
+	MaxAPICalls               int   `json:"max_api_calls"`
+	MaxProcessedBytes         int64 `json:"max_processed_bytes"`
+	MaxConcurrent             int   `json:"max_concurrent"`
+	SchemaTTLNanoseconds      int64 `json:"schema_ttl_nanoseconds"`
+	PatternLimit              int   `json:"pattern_limit"`
+	InstanceLimit             int   `json:"instance_limit"`
+	ExpectedAPICalls          int   `json:"expected_api_calls"`
+	ExpectedResultRows        int   `json:"expected_result_rows"`
+}
+
+type queryGovernanceIdentity struct {
+	Resource          domain.LogResource `json:"resource"`
+	TemplateID        string             `json:"template_id"`
+	PolicyVersion     string             `json:"policy_version"`
+	SchemaFingerprint string             `json:"schema_fingerprint"`
+	Budget            governanceBudget   `json:"budget"`
+}
+
 func NewGateway(catalog ports.ResourceCatalog, backend ports.SLSBackend, auditor ports.QueryAuditor, budget Budget) (*Gateway, error) {
 	if catalog == nil || backend == nil || auditor == nil {
 		return nil, errors.New("catalog, SLS backend, and query auditor are required")
@@ -75,40 +99,12 @@ func NewGateway(catalog ports.ResourceCatalog, backend ports.SLSBackend, auditor
 }
 
 func (g *Gateway) Execute(ctx context.Context, spec domain.QuerySpec) (domain.QueryResult, error) {
-	if err := validateSpec(spec); err != nil {
-		return domain.QueryResult{}, g.deny(ctx, spec, domain.LogResource{}, "invalid_request", fmt.Errorf("%w: %v", ports.ErrQueryDenied, err))
-	}
-
-	resource, err := g.catalog.Resolve(ctx, spec.Service, spec.Environment)
-	if err != nil {
-		return domain.QueryResult{}, g.deny(ctx, spec, domain.LogResource{}, "unknown_resource", fmt.Errorf("%w: %v", ports.ErrQueryDenied, err))
-	}
-	if !g.catalog.Allowed(ctx, spec.Requester, resource.ID) {
-		return domain.QueryResult{}, g.deny(ctx, spec, resource, "acl_denied", ports.ErrQueryDenied)
-	}
-	if err := g.preflight(spec); err != nil {
-		return domain.QueryResult{}, g.deny(ctx, spec, resource, "preflight_budget", err)
-	}
-
-	runCtx, cancel := context.WithTimeout(ctx, g.budget.Timeout)
-	defer cancel()
-	if err := g.acquire(runCtx); err != nil {
-		return domain.QueryResult{}, g.deny(ctx, spec, resource, "concurrency_budget", fmt.Errorf("%w: %v", ports.ErrQueryBudgetExceeded, err))
-	}
-	defer g.release()
-
-	schema, err := g.schema(runCtx, resource)
-	if err != nil {
-		return domain.QueryResult{}, g.deny(ctx, spec, resource, "schema_unavailable", fmt.Errorf("%w: %v", ports.ErrInvalidQuerySchema, err))
-	}
-	if err := validateSchema(resource, schema); err != nil {
-		return domain.QueryResult{}, g.deny(ctx, spec, resource, "schema_invalid", err)
-	}
-
-	approved, err := g.approve(spec, resource, schema)
+	approved, runCtx, cleanup, err := g.resolveApproved(ctx, spec)
 	if err != nil {
 		return domain.QueryResult{}, err
 	}
+	defer cleanup()
+
 	if err := g.audit(runCtx, spec, approved, domain.QueryAudit{Outcome: "STARTED"}); err != nil {
 		return domain.QueryResult{}, fmt.Errorf("persist query start audit: %w", err)
 	}
@@ -140,6 +136,69 @@ func (g *Gateway) Execute(ctx context.Context, spec domain.QuerySpec) (domain.Qu
 		return domain.QueryResult{}, fmt.Errorf("persist terminal query audit: %w", err)
 	}
 	return result, nil
+}
+
+// ResolveQueryGovernance performs the same policy, catalog, ACL, budget and
+// schema resolution as Execute, but stops before the log-reading backend call.
+// Checkpoint reuse binds this identity to the logical QuerySpec.
+func (g *Gateway) ResolveQueryGovernance(ctx context.Context, spec domain.QuerySpec) (string, error) {
+	approved, _, cleanup, err := g.resolveApproved(ctx, spec)
+	if err != nil {
+		return "", err
+	}
+	defer cleanup()
+	if !validFingerprint(approved.GovernanceFingerprint) {
+		return "", g.deny(ctx, spec, approved.Resource, "governance_fingerprint", fmt.Errorf("%w: resolved governance fingerprint is invalid", ports.ErrQueryDenied))
+	}
+	return approved.GovernanceFingerprint, nil
+}
+
+// resolveApproved owns the complete pre-provider governance path. Its caller
+// must invoke cleanup so the concurrency slot and timeout remain active for the
+// whole provider call in Execute, while ResolveQueryGovernance releases them
+// immediately after schema identity has been resolved.
+func (g *Gateway) resolveApproved(ctx context.Context, spec domain.QuerySpec) (domain.ApprovedQuery, context.Context, func(), error) {
+	if err := validateSpec(spec); err != nil {
+		return domain.ApprovedQuery{}, nil, nil, g.deny(ctx, spec, domain.LogResource{}, "invalid_request", fmt.Errorf("%w: %v", ports.ErrQueryDenied, err))
+	}
+
+	resource, err := g.catalog.Resolve(ctx, spec.Service, spec.Environment)
+	if err != nil {
+		return domain.ApprovedQuery{}, nil, nil, g.deny(ctx, spec, domain.LogResource{}, "unknown_resource", fmt.Errorf("%w: %v", ports.ErrQueryDenied, err))
+	}
+	if !g.catalog.Allowed(ctx, spec.Requester, resource.ID) {
+		return domain.ApprovedQuery{}, nil, nil, g.deny(ctx, spec, resource, "acl_denied", ports.ErrQueryDenied)
+	}
+	if err := g.preflight(spec); err != nil {
+		return domain.ApprovedQuery{}, nil, nil, g.deny(ctx, spec, resource, "preflight_budget", err)
+	}
+
+	runCtx, cancel := context.WithTimeout(ctx, g.budget.Timeout)
+	if err := g.acquire(runCtx); err != nil {
+		cancel()
+		return domain.ApprovedQuery{}, nil, nil, g.deny(ctx, spec, resource, "concurrency_budget", fmt.Errorf("%w: %v", ports.ErrQueryBudgetExceeded, err))
+	}
+	cleanup := func() {
+		g.release()
+		cancel()
+	}
+
+	schema, err := g.schema(runCtx, resource)
+	if err != nil {
+		cleanup()
+		return domain.ApprovedQuery{}, nil, nil, g.deny(ctx, spec, resource, "schema_unavailable", fmt.Errorf("%w: %v", ports.ErrInvalidQuerySchema, err))
+	}
+	if err := validateSchema(resource, schema); err != nil {
+		cleanup()
+		return domain.ApprovedQuery{}, nil, nil, g.deny(ctx, spec, resource, "schema_invalid", err)
+	}
+
+	approved, err := g.approve(spec, resource, schema)
+	if err != nil {
+		cleanup()
+		return domain.ApprovedQuery{}, nil, nil, g.deny(ctx, spec, resource, "governance_fingerprint", fmt.Errorf("%w: %v", ports.ErrQueryDenied, err))
+	}
+	return approved, runCtx, cleanup, nil
 }
 
 func validateSpec(spec domain.QuerySpec) error {
@@ -248,6 +307,11 @@ func (g *Gateway) approve(spec domain.QuerySpec, resource domain.LogResource, sc
 		InstanceLimit:     domain.ErrorAnalysisInstanceLimit,
 		ExpectedAPICalls:  domain.ErrorAnalysisAPICalls,
 	}
+	governanceFingerprint, err := queryGovernanceFingerprint(resource, spec.TemplateID, PolicyVersion, schema.Fingerprint, g.budget)
+	if err != nil {
+		return domain.ApprovedQuery{}, fmt.Errorf("fingerprint query governance: %w", err)
+	}
+	approved.GovernanceFingerprint = governanceFingerprint
 	hash, err := fingerprint.JSON(approved)
 	if err != nil {
 		return domain.ApprovedQuery{}, fmt.Errorf("fingerprint approved query: %w", err)
@@ -263,6 +327,7 @@ func (g *Gateway) normalize(approved domain.ApprovedQuery, result domain.QueryRe
 	result.TemplateVersion = approved.Resource.TemplateVersion
 	result.SchemaFingerprint = approved.SchemaFingerprint
 	result.PolicyVersion = approved.PolicyVersion
+	result.GovernanceFingerprint = approved.GovernanceFingerprint
 
 	result.ErrorPatterns = append([]domain.CountBucket(nil), result.ErrorPatterns...)
 	result.Instances = append([]domain.CountBucket(nil), result.Instances...)
@@ -301,6 +366,38 @@ func (g *Gateway) normalize(approved domain.ApprovedQuery, result domain.QueryRe
 	}
 	result.Complete = complete
 	return result
+}
+
+func queryGovernanceFingerprint(resource domain.LogResource, templateID, policyVersion, schemaFingerprint string, budget Budget) (string, error) {
+	identity := queryGovernanceIdentity{
+		Resource:          resource,
+		TemplateID:        templateID,
+		PolicyVersion:     policyVersion,
+		SchemaFingerprint: schemaFingerprint,
+		Budget: governanceBudget{
+			MaxWindowNanoseconds:      int64(budget.MaxWindow),
+			IngestionGraceNanoseconds: int64(budget.IngestionGrace),
+			TimeoutNanoseconds:        int64(budget.Timeout),
+			MaxRows:                   budget.MaxRows,
+			MaxAPICalls:               budget.MaxAPICalls,
+			MaxProcessedBytes:         budget.MaxProcessedBytes,
+			MaxConcurrent:             budget.MaxConcurrent,
+			SchemaTTLNanoseconds:      int64(budget.SchemaTTL),
+			PatternLimit:              domain.ErrorAnalysisPatternLimit,
+			InstanceLimit:             domain.ErrorAnalysisInstanceLimit,
+			ExpectedAPICalls:          domain.ErrorAnalysisAPICalls,
+			ExpectedResultRows:        domain.ErrorAnalysisResultRows,
+		},
+	}
+	return fingerprint.JSON(identity)
+}
+
+func validFingerprint(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil
 }
 
 func redactBuckets(buckets []domain.CountBucket, alreadyRedacted bool) ([]domain.CountBucket, bool) {
@@ -420,4 +517,7 @@ func redactLabel(value string) (string, bool) {
 	return cleaned, cleaned != value
 }
 
-var _ ports.SLSExecutor = (*Gateway)(nil)
+var (
+	_ ports.SLSExecutor             = (*Gateway)(nil)
+	_ ports.QueryGovernanceResolver = (*Gateway)(nil)
+)

@@ -40,7 +40,7 @@ func TestExecuteMockE2ECoversInboundAnalysisAndCardLifecycle(t *testing.T) {
 			t.Fatalf("delivery %d did not capture the live lifecycle state: %#v", index, delivery)
 		}
 	}
-	if result.AlibabaSLS.Mode != "mock" || result.AlibabaSLS.LogicalObservations != 2 || result.AlibabaSLS.SchemaCalls != 1 || result.AlibabaSLS.BackendExecuteCalls != 2 || result.AlibabaSLS.ProviderAPICalls != 8 || result.AlibabaSLS.QueryAuditEvents != 4 || result.AlibabaSLS.RawLogRowsReturned != 0 {
+	if result.AlibabaSLS.Mode != "mock" || result.AlibabaSLS.LogicalObservations != 2 || result.AlibabaSLS.SchemaCalls != 1 || result.AlibabaSLS.BackendExecuteCalls != 2 || result.AlibabaSLS.ProviderAPICalls != 8 || result.AlibabaSLS.QueryAuditEvents != 4 || result.AlibabaSLS.QueryStepCheckpoints != 2 || result.AlibabaSLS.RawLogRowsReturned != 0 {
 		t.Fatalf("unexpected mock SLS summary: %#v", result.AlibabaSLS)
 	}
 	if result.Investigation.Status != domain.StatusSucceeded || result.Investigation.Report == nil || result.Investigation.Report.Outcome != "spike_detected" {

@@ -11,6 +11,7 @@ Mock 飞书消息
   -> Worker + Eino
   -> 真实 ACL / Schema / 预算 / 审计网关
   -> Mock SLS Backend 当前/基线聚合
+  -> SQLite current / baseline Query Checkpoint
   -> Evidence + Report + Mock 变更关联
   -> Delivery Worker
   -> Mock 飞书 Reply/Patch 记录
@@ -44,6 +45,7 @@ go run ./cmd/logagent mock-e2e
 | `aliyun_sls.backend_execute_calls` | `2` | Query Gateway 调用两次 Mock Backend |
 | `aliyun_sls.provider_api_calls` | `8` | 每个窗口模拟四次固定聚合 |
 | `aliyun_sls.query_audit_events` | `4` | 两个逻辑查询各有 STARTED 与终态审计 |
+| `aliyun_sls.query_step_checkpoints` | `2` | current、baseline 的规范化聚合结果已持久化 |
 | `aliyun_sls.raw_log_rows_returned` | `0` | 只返回聚合，不返回原始日志 |
 | `investigation.status` | `SUCCEEDED` | 调查成功持久化 |
 | `investigation.report.outcome` | `spike_detected` | 固定测试数据形成错误突增结论 |
@@ -66,7 +68,7 @@ go run ./cmd/logagent mock-e2e
 - 使用固定的 `internal/adapters/slsmock.Catalog` 和 `Backend`；
 - 真实 Query Gateway 仍执行 Principal ACL、时间水位、窗口/行数/调用数预算、Schema 校验、脱敏和 SQLite 查询审计；
 - Mock Backend 返回与正式 Provider 边界一致的 `QueryResult`、完整性、调用数和聚合桶，并记录实际收到的 Schema/Execute 次数；
-- Eino、Worker、Evidence/Report 校验与 SQLite 成功事务全部使用正式实现。
+- Eino、Worker、Query Checkpoint、Evidence/Report 校验与 SQLite 成功事务全部使用正式实现。
 
 它不调用 GetIndex/GetLogsV2，也不读取真实 JSON 资源目录，因此不能验证真实 LogStore Schema、目录配置、RAM 权限、扫描成本和索引延迟。只有显式使用 `sls-check`、`sls-smoke` 或 `LOG_AGENT_SLS_MODE=aliyun` 才会触达真实 SLS。
 
@@ -78,7 +80,7 @@ go test -count=1 ./...
 go vet ./...
 ```
 
-测试会检查重复入站幂等、可信身份映射、严格命令、Reply/Patch 同卡顺序、ACL/Schema/预算/审计网关、两份 Evidence、两次 Backend/八次模拟 Provider 调用、无原始日志以及最终成功报告。另有架构测试禁止双 Mock 源码直接导入真实飞书/SLS 适配器、配置加载器或网络包。
+测试会检查重复入站幂等、可信身份映射、严格命令、Reply/Patch 同卡顺序、ACL/Schema/预算/审计网关、两个 Query Checkpoint、两份 Evidence、两次 Backend/八次模拟 Provider 调用、无原始日志以及最终成功报告。Checkpoint 的崩溃恢复语义另见 [`m4-recoverable-query-steps.md`](m4-recoverable-query-steps.md)。另有架构测试禁止双 Mock 源码直接导入真实飞书/SLS 适配器、配置加载器或网络包。
 
 ## 后续替换顺序
 
