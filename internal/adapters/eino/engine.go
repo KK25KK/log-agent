@@ -10,11 +10,13 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/cloudwego/eino/compose"
 
 	"logagent/internal/domain"
+	"logagent/internal/observability"
 	"logagent/internal/ports"
 )
 
@@ -46,6 +48,7 @@ type graphOutput struct {
 
 type engineConfig struct {
 	changeSource ports.ChangeSource
+	observer     ports.AgentObserver
 }
 
 // Option configures optional enrichment without changing the M2 constructor
@@ -63,9 +66,27 @@ func WithChangeSource(source ports.ChangeSource) Option {
 	}
 }
 
+// WithObserver enables privacy-bounded Agent events when RunContext is also
+// attached to Engine.Run's context. A nil observer preserves no-op behavior.
+func WithObserver(observer ports.AgentObserver) Option {
+	return func(config *engineConfig) {
+		if observer != nil {
+			config.observer = observer
+		}
+	}
+}
+
 // Engine runs a compiled, deterministic Eino graph.
 type Engine struct {
-	runner compose.Runnable[graphInput, graphOutput]
+	runner   compose.Runnable[graphInput, graphOutput]
+	observer ports.AgentObserver
+}
+
+var graphNodeOrder = [...]domain.AgentSpanName{
+	domain.AgentSpanPlanQueries,
+	domain.AgentSpanExecuteQueries,
+	domain.AgentSpanBuildReport,
+	domain.AgentSpanCorrelateChanges,
 }
 
 // New compiles the graph once. The returned runner is safe to reuse concurrently.
@@ -84,22 +105,22 @@ func New(ctx context.Context, executor ports.SLSExecutor, now func() time.Time, 
 	}
 
 	graph := compose.NewGraph[graphInput, graphOutput]()
-	if err := graph.AddLambdaNode("plan_queries", compose.InvokableLambda(planQueries)); err != nil {
+	if err := graph.AddLambdaNode("plan_queries", compose.InvokableLambda(observeGraphNode(config.observer, domain.AgentSpanPlanQueries, planQueries))); err != nil {
 		return nil, fmt.Errorf("add plan node: %w", err)
 	}
-	if err := graph.AddLambdaNode("execute_queries", compose.InvokableLambda(func(ctx context.Context, plan queryPlan) (queryObservations, error) {
+	if err := graph.AddLambdaNode("execute_queries", compose.InvokableLambda(observeGraphNode(config.observer, domain.AgentSpanExecuteQueries, func(ctx context.Context, plan queryPlan) (queryObservations, error) {
 		return executeQueries(ctx, executor, plan)
-	})); err != nil {
+	}))); err != nil {
 		return nil, fmt.Errorf("add execute node: %w", err)
 	}
-	if err := graph.AddLambdaNode("build_report", compose.InvokableLambda(func(_ context.Context, observations queryObservations) (graphOutput, error) {
+	if err := graph.AddLambdaNode("build_report", compose.InvokableLambda(observeGraphNode(config.observer, domain.AgentSpanBuildReport, func(_ context.Context, observations queryObservations) (graphOutput, error) {
 		return buildReport(observations, now().UTC()), nil
-	})); err != nil {
+	}))); err != nil {
 		return nil, fmt.Errorf("add report node: %w", err)
 	}
-	if err := graph.AddLambdaNode("correlate_changes", compose.InvokableLambda(func(ctx context.Context, output graphOutput) (graphOutput, error) {
+	if err := graph.AddLambdaNode("correlate_changes", compose.InvokableLambda(observeGraphNode(config.observer, domain.AgentSpanCorrelateChanges, func(ctx context.Context, output graphOutput) (graphOutput, error) {
 		return correlateChanges(ctx, output, config.changeSource)
-	})); err != nil {
+	}))); err != nil {
 		return nil, fmt.Errorf("add change-correlation node: %w", err)
 	}
 
@@ -120,15 +141,273 @@ func New(ctx context.Context, executor ports.SLSExecutor, now func() time.Time, 
 	if err != nil {
 		return nil, fmt.Errorf("compile investigation graph: %w", err)
 	}
-	return &Engine{runner: runner}, nil
+	return &Engine{runner: runner, observer: config.observer}, nil
 }
 
 func (e *Engine) Run(ctx context.Context, investigationID string, request domain.InvestigationRequest) ([]domain.Evidence, domain.Report, error) {
+	state, observed := newTraceCallState(ctx)
+	if observed {
+		recordSpanStart(e.observer, ctx, domain.AgentLayerRun, domain.AgentSpanEngineRun, "")
+		ctx = context.WithValue(ctx, traceCallStateKey{}, state)
+	}
+
+	startedAt := time.Now()
 	output, err := e.runner.Invoke(ctx, graphInput{InvestigationID: investigationID, Request: request})
 	if err != nil {
+		if observed {
+			failureClass := state.failureOr(classifyFailure(ctx, err, domain.FailureClassInternal))
+			recordSkippedGraphNodes(e.observer, ctx, state)
+			recordSpanTerminal(e.observer, ctx, domain.AgentLayerRun, domain.AgentSpanEngineRun, "", domain.AgentPhaseFailed, failureClass, startedAt, nil)
+		}
 		return nil, domain.Report{}, fmt.Errorf("invoke investigation graph: %w", err)
 	}
+	if observed {
+		recordSpanTerminal(e.observer, ctx, domain.AgentLayerRun, domain.AgentSpanEngineRun, "", domain.AgentPhaseSucceeded, "", startedAt, nil)
+	}
 	return output.Evidence, output.Report, nil
+}
+
+type traceCallStateKey struct{}
+
+type traceCallState struct {
+	mu           sync.Mutex
+	startedNodes map[domain.AgentSpanName]struct{}
+	failureClass domain.FailureClass
+}
+
+func newTraceCallState(ctx context.Context) (*traceCallState, bool) {
+	if _, ok := observability.RunContextFrom(ctx); !ok {
+		return nil, false
+	}
+	return &traceCallState{startedNodes: make(map[domain.AgentSpanName]struct{}, len(graphNodeOrder))}, true
+}
+
+func traceCallStateFrom(ctx context.Context) *traceCallState {
+	if ctx == nil {
+		return nil
+	}
+	state, _ := ctx.Value(traceCallStateKey{}).(*traceCallState)
+	return state
+}
+
+func (state *traceCallState) start(name domain.AgentSpanName) {
+	if state == nil {
+		return
+	}
+	state.mu.Lock()
+	state.startedNodes[name] = struct{}{}
+	state.mu.Unlock()
+}
+
+func (state *traceCallState) fail(class domain.FailureClass) {
+	if state == nil {
+		return
+	}
+	state.mu.Lock()
+	if state.failureClass == "" {
+		state.failureClass = class
+	}
+	state.mu.Unlock()
+}
+
+func (state *traceCallState) snapshot() map[domain.AgentSpanName]struct{} {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	result := make(map[domain.AgentSpanName]struct{}, len(state.startedNodes))
+	for name := range state.startedNodes {
+		result[name] = struct{}{}
+	}
+	return result
+}
+
+func (state *traceCallState) failureOr(fallback domain.FailureClass) domain.FailureClass {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if state.failureClass != "" {
+		return state.failureClass
+	}
+	return fallback
+}
+
+func observeGraphNode[Input, Output any](
+	observer ports.AgentObserver,
+	name domain.AgentSpanName,
+	invoke func(context.Context, Input) (Output, error),
+) func(context.Context, Input) (Output, error) {
+	return func(ctx context.Context, input Input) (Output, error) {
+		state := traceCallStateFrom(ctx)
+		if state == nil {
+			return invoke(ctx, input)
+		}
+
+		state.start(name)
+		parentSpanID := engineRunSpanID(ctx)
+		recordSpanStart(observer, ctx, domain.AgentLayerGraphNode, name, parentSpanID)
+		startedAt := time.Now()
+		output, err := invoke(ctx, input)
+		if err != nil {
+			failureClass := graphNodeFailureClass(ctx, name, err)
+			state.fail(failureClass)
+			recordSpanTerminal(observer, ctx, domain.AgentLayerGraphNode, name, parentSpanID, domain.AgentPhaseFailed, failureClass, startedAt, nil)
+			return output, err
+		}
+		recordSpanTerminal(observer, ctx, domain.AgentLayerGraphNode, name, parentSpanID, domain.AgentPhaseSucceeded, "", startedAt, nil)
+		return output, nil
+	}
+}
+
+func recordSkippedGraphNodes(observer ports.AgentObserver, ctx context.Context, state *traceCallState) {
+	started := state.snapshot()
+	parentSpanID := engineRunSpanID(ctx)
+	for _, name := range graphNodeOrder {
+		if _, exists := started[name]; exists {
+			continue
+		}
+		recordSpanStart(observer, ctx, domain.AgentLayerGraphNode, name, parentSpanID)
+		recordSpanTerminal(observer, ctx, domain.AgentLayerGraphNode, name, parentSpanID, domain.AgentPhaseSkipped, "", time.Now(), nil)
+	}
+}
+
+func graphNodeFailureClass(ctx context.Context, name domain.AgentSpanName, err error) domain.FailureClass {
+	if class := classifyFailure(ctx, err, ""); class != "" {
+		return class
+	}
+	var classified interface{ AgentFailureClass() domain.FailureClass }
+	if errors.As(err, &classified) {
+		return classified.AgentFailureClass()
+	}
+	switch name {
+	case domain.AgentSpanPlanQueries:
+		return domain.FailureClassValidation
+	case domain.AgentSpanExecuteQueries, domain.AgentSpanCorrelateChanges:
+		return domain.FailureClassDependency
+	default:
+		return domain.FailureClassInternal
+	}
+}
+
+func classifyFailure(ctx context.Context, err error, fallback domain.FailureClass) domain.FailureClass {
+	switch {
+	case errors.Is(err, context.Canceled):
+		return domain.FailureClassCancelled
+	case errors.Is(err, context.DeadlineExceeded):
+		return domain.FailureClassTimeout
+	}
+	if ctx != nil {
+		switch {
+		case errors.Is(ctx.Err(), context.Canceled):
+			return domain.FailureClassCancelled
+		case errors.Is(ctx.Err(), context.DeadlineExceeded):
+			return domain.FailureClassTimeout
+		}
+	}
+	return fallback
+}
+
+func engineRunSpanID(ctx context.Context) string {
+	run, ok := observability.RunContextFrom(ctx)
+	if !ok {
+		return ""
+	}
+	return observability.StableSpanID(run.TraceID, domain.AgentLayerRun, domain.AgentSpanEngineRun)
+}
+
+func recordSpanStart(observer ports.AgentObserver, ctx context.Context, layer domain.AgentLayer, name domain.AgentSpanName, parentSpanID string) {
+	if observer == nil {
+		return
+	}
+	run, ok := observability.RunContextFrom(ctx)
+	if !ok {
+		return
+	}
+	observer.Record(domain.AgentEvent{
+		SpanID:       observability.StableSpanID(run.TraceID, layer, name),
+		ParentSpanID: parentSpanID,
+		Layer:        layer,
+		Name:         name,
+		Phase:        domain.AgentPhaseStarted,
+		OccurredAt:   time.Now().UTC(),
+	})
+}
+
+func recordSpanTerminal(
+	observer ports.AgentObserver,
+	ctx context.Context,
+	layer domain.AgentLayer,
+	name domain.AgentSpanName,
+	parentSpanID string,
+	phase domain.AgentPhase,
+	failureClass domain.FailureClass,
+	startedAt time.Time,
+	usage *domain.ToolUsage,
+) {
+	if observer == nil {
+		return
+	}
+	run, ok := observability.RunContextFrom(ctx)
+	if !ok {
+		return
+	}
+	duration := time.Since(startedAt).Milliseconds()
+	if duration < 0 {
+		duration = 0
+	}
+	failureCode := domain.AgentFailureCode("")
+	if phase == domain.AgentPhaseFailed {
+		failureCode = agentFailureCode(layer, failureClass)
+	}
+	observer.Record(domain.AgentEvent{
+		SpanID:               observability.StableSpanID(run.TraceID, layer, name),
+		ParentSpanID:         parentSpanID,
+		Layer:                layer,
+		Name:                 name,
+		Phase:                phase,
+		OccurredAt:           time.Now().UTC(),
+		DurationMilliseconds: duration,
+		FailureClass:         failureClass,
+		FailureCode:          failureCode,
+		ToolUsage:            usage,
+	})
+}
+
+func agentFailureCode(layer domain.AgentLayer, class domain.FailureClass) domain.AgentFailureCode {
+	switch class {
+	case domain.FailureClassCancelled:
+		return domain.AgentFailureCodeContextCancelled
+	case domain.FailureClassTimeout:
+		return domain.AgentFailureCodeDeadlineExceeded
+	case domain.FailureClassContractViolation:
+		return domain.AgentFailureCodeContractViolation
+	}
+	switch layer {
+	case domain.AgentLayerRun:
+		return domain.AgentFailureCodeEngineRunFailed
+	case domain.AgentLayerGraphNode:
+		return domain.AgentFailureCodeGraphNodeFailed
+	default:
+		return domain.AgentFailureCodeToolFailed
+	}
+}
+
+type agentClassifiedError struct {
+	class domain.FailureClass
+	err   error
+}
+
+func (err agentClassifiedError) Error() string {
+	return err.err.Error()
+}
+
+func (err agentClassifiedError) Unwrap() error {
+	return err.err
+}
+
+func (err agentClassifiedError) AgentFailureClass() domain.FailureClass {
+	return err.class
+}
+
+func classifyAgentError(class domain.FailureClass, err error) error {
+	return agentClassifiedError{class: class, err: err}
 }
 
 func planQueries(_ context.Context, input graphInput) (queryPlan, error) {
@@ -174,17 +453,23 @@ func executeQueries(ctx context.Context, executor ports.SLSExecutor, plan queryP
 		}
 		result, err := executor.Execute(ctx, spec)
 		if err != nil {
-			return queryObservations{}, fmt.Errorf("execute %s query: %w", spec.Name, err)
+			return queryObservations{}, classifyAgentError(
+				domain.FailureClassDependency,
+				fmt.Errorf("execute %s query: %w", spec.Name, err),
+			)
 		}
 		if err := validateQueryResult(result); err != nil {
-			return queryObservations{}, fmt.Errorf("validate %s query result: %w", spec.Name, err)
+			return queryObservations{}, classifyAgentError(
+				domain.FailureClassContractViolation,
+				fmt.Errorf("validate %s query result: %w", spec.Name, err),
+			)
 		}
 		hash := result.QuerySpecHash
 		if hash == "" {
 			var err error
 			hash, err = hashSpec(spec)
 			if err != nil {
-				return queryObservations{}, err
+				return queryObservations{}, classifyAgentError(domain.FailureClassInternal, err)
 			}
 		}
 		evidence = append(evidence, domain.Evidence{
@@ -224,7 +509,7 @@ func executeQueries(ctx context.Context, executor ports.SLSExecutor, plan queryP
 		})
 	}
 	if err := validateCrossWindowGovernance(evidence); err != nil {
-		return queryObservations{}, err
+		return queryObservations{}, classifyAgentError(domain.FailureClassContractViolation, err)
 	}
 	return queryObservations{InvestigationID: plan.InvestigationID, Evidence: evidence}, nil
 }

@@ -2,12 +2,14 @@ package eino
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
 	"time"
 
 	"logagent/internal/domain"
+	"logagent/internal/observability"
 )
 
 type fakeExecutor struct {
@@ -25,6 +27,14 @@ type fakeChangeSource struct {
 
 type cancellingChangeSource struct {
 	cancel context.CancelFunc
+}
+
+type countingObserver struct {
+	events int
+}
+
+func (observer *countingObserver) Record(domain.AgentEvent) {
+	observer.events++
 }
 
 func (s cancellingChangeSource) List(_ context.Context, _ domain.ChangeQuery) (domain.ChangeSet, error) {
@@ -262,6 +272,88 @@ func TestEnginePropagatesExecutorError(t *testing.T) {
 	})
 	if !errors.Is(err, slsErr) {
 		t.Fatalf("want wrapped SLS error, got %v", err)
+	}
+}
+
+func TestEngineRecordsClosedGraphTrace(t *testing.T) {
+	ctx, recorder := traceTestContext(t, "case-success")
+	start := time.Date(2026, 8, 18, 10, 0, 0, 0, time.UTC)
+	engine, err := New(context.Background(), &fakeExecutor{}, time.Now, WithObserver(recorder))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := engine.Run(ctx, "inv_trace_success", domain.InvestigationRequest{
+		Service: "order-service", Environment: "prod", StartTime: start, EndTime: start.Add(time.Minute),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	trace := recorder.Snapshot()
+	if !trace.Complete || trace.DropCount != 0 {
+		t.Fatalf("trace is incomplete: %#v", trace)
+	}
+	if err := domain.ValidateAgentTrace(trace); err != nil {
+		t.Fatalf("validate trace: %v", err)
+	}
+	if len(trace.Events) != 2*(1+len(graphNodeOrder)) {
+		t.Fatalf("event count=%d, want %d", len(trace.Events), 2*(1+len(graphNodeOrder)))
+	}
+	assertSpanTerminal(t, trace, domain.AgentSpanEngineRun, domain.AgentPhaseSucceeded, "")
+	for _, name := range graphNodeOrder {
+		assertSpanTerminal(t, trace, name, domain.AgentPhaseSucceeded, "")
+	}
+}
+
+func TestEngineRecordsSafeFailureAndSkippedNodes(t *testing.T) {
+	ctx, recorder := traceTestContext(t, "case-failure")
+	secret := "SENSITIVE_PROVIDER_ERROR_BEARER_abc123"
+	engine, err := New(context.Background(), &fakeExecutor{err: errors.New(secret)}, time.Now, WithObserver(recorder))
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Date(2026, 8, 18, 10, 0, 0, 0, time.UTC)
+	if _, _, err := engine.Run(ctx, "inv_trace_failure", domain.InvestigationRequest{
+		Service: "order-service", Environment: "prod", StartTime: start, EndTime: start.Add(time.Minute),
+	}); err == nil {
+		t.Fatal("want executor failure")
+	}
+
+	trace := recorder.Snapshot()
+	if !trace.Complete || trace.DropCount != 0 {
+		t.Fatalf("failed run did not close its trace: %#v", trace)
+	}
+	if err := domain.ValidateAgentTrace(trace); err != nil {
+		t.Fatalf("validate trace: %v", err)
+	}
+	assertSpanTerminal(t, trace, domain.AgentSpanEngineRun, domain.AgentPhaseFailed, domain.FailureClassDependency)
+	assertSpanTerminal(t, trace, domain.AgentSpanPlanQueries, domain.AgentPhaseSucceeded, "")
+	assertSpanTerminal(t, trace, domain.AgentSpanExecuteQueries, domain.AgentPhaseFailed, domain.FailureClassDependency)
+	assertSpanTerminal(t, trace, domain.AgentSpanBuildReport, domain.AgentPhaseSkipped, "")
+	assertSpanTerminal(t, trace, domain.AgentSpanCorrelateChanges, domain.AgentPhaseSkipped, "")
+
+	payload, err := json.Marshal(trace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(payload), secret) {
+		t.Fatalf("serialized trace leaked dependency error: %s", payload)
+	}
+}
+
+func TestEngineObserverRequiresRunContext(t *testing.T) {
+	observer := &countingObserver{}
+	engine, err := New(context.Background(), &fakeExecutor{}, time.Now, WithObserver(observer))
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Date(2026, 8, 18, 10, 0, 0, 0, time.UTC)
+	if _, _, err := engine.Run(context.Background(), "inv_no_trace", domain.InvestigationRequest{
+		Service: "order-service", Environment: "prod", StartTime: start, EndTime: start.Add(time.Minute),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if observer.events != 0 {
+		t.Fatalf("observer received %d events without RunContext", observer.events)
 	}
 }
 
@@ -741,6 +833,50 @@ func bucketTotal(buckets []domain.CountBucket) int64 {
 		total += bucket.Count
 	}
 	return total
+}
+
+func traceTestContext(t *testing.T, caseID string) (context.Context, *observability.BoundedRecorder) {
+	t.Helper()
+	run := observability.RunContext{
+		EvaluationRunID:    "evaluation-run-1",
+		TraceID:            "trace-" + caseID,
+		RunID:              "engine-run-" + caseID,
+		CaseID:             caseID,
+		VersionFingerprint: strings.Repeat("a", 64),
+	}
+	recorder := observability.NewBoundedRecorder(64, run)
+	return observability.WithRunContext(context.Background(), run), recorder
+}
+
+func assertSpanTerminal(
+	t *testing.T,
+	trace domain.AgentTrace,
+	name domain.AgentSpanName,
+	phase domain.AgentPhase,
+	failureClass domain.FailureClass,
+) {
+	t.Helper()
+	starts := 0
+	terminals := 0
+	for _, event := range trace.Events {
+		if event.Name != name {
+			continue
+		}
+		if event.Phase == domain.AgentPhaseStarted {
+			starts++
+			continue
+		}
+		terminals++
+		if event.Phase != phase || event.FailureClass != failureClass {
+			t.Fatalf("span %s terminal=%s/%s, want %s/%s", name, event.Phase, event.FailureClass, phase, failureClass)
+		}
+		if phase == domain.AgentPhaseFailed && event.FailureCode != agentFailureCode(event.Layer, failureClass) {
+			t.Fatalf("span %s failure code=%s, want %s", name, event.FailureCode, agentFailureCode(event.Layer, failureClass))
+		}
+	}
+	if starts != 1 || terminals != 1 {
+		t.Fatalf("span %s starts=%d terminals=%d, want 1/1", name, starts, terminals)
+	}
 }
 
 func findingCodes(findings []domain.Finding) map[string]bool {

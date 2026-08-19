@@ -22,13 +22,22 @@ func TestEvaluatePassesCompleteSyntheticContract(t *testing.T) {
 		t.Fatalf("unexpected evaluation result: %#v", report.Metrics)
 	}
 	metrics := report.Metrics
-	if metrics.OutcomeAccuracy != 1 || metrics.FindingExactAccuracy != 1 || metrics.QueryContractAccuracy != 1 || metrics.MisleadingRate != 0 || metrics.ConclusiveRecall != 1 || metrics.EvidenceCoverage != 1 || metrics.CauseExactAccuracy != 1 || metrics.CauseVerdictAccuracy != 1 {
+	if metrics.OutcomeAccuracy != 1 || metrics.FindingExactAccuracy != 1 || metrics.QueryContractAccuracy != 1 || metrics.TraceContractAccuracy != 1 || metrics.TraceContractFailures != 0 || metrics.MisleadingRate != 0 || metrics.ConclusiveRecall != 1 || metrics.EvidenceCoverage != 1 || metrics.CauseExactAccuracy != 1 || metrics.CauseVerdictAccuracy != 1 {
 		t.Fatalf("unexpected exact metrics: %#v", metrics)
 	}
 	if metrics.LogicalSLSCalls != len(dataset.Cases)*ExpectedLogicalSLSCalls || metrics.ProviderAPICalls != len(dataset.Cases)*ExpectedProviderAPICalls || metrics.ChangeSourceCalls != 3 || metrics.CallBudgetBreaches != 0 || metrics.CostBudgetBreaches != 0 {
 		t.Fatalf("unexpected usage metrics: %#v", metrics)
 	}
-	if report.Versions.PromptUsed || report.Versions.PromptVersion != "" || report.Versions.CauseMethod != domain.CauseConfidenceMethod {
+	if report.EvaluationRunID == "" || report.VersionFingerprint == "" || report.VersionManifest.ExecutorProfile != SyntheticMockExecutorProfile || report.VersionManifest.PromptUsed || report.VersionManifest.TraceSchemaVersion != domain.AgentTraceSchemaVersion {
+		t.Fatalf("traceable version manifest is incomplete: %#v", report.VersionManifest)
+	}
+	if fingerprint, err := report.VersionManifest.Fingerprint(); err != nil || fingerprint != report.VersionFingerprint {
+		t.Fatalf("version manifest fingerprint mismatch: fingerprint=%q err=%v", fingerprint, err)
+	}
+	if metrics.TraceEvents != 76 || metrics.TraceToolSpans != 13 || metrics.TraceDroppedEvents != 0 {
+		t.Fatalf("unexpected trace totals: %#v", metrics)
+	}
+	if report.Versions.PromptUsed || report.Versions.PromptVersion != "" || report.Versions.CauseMethod != domain.CauseConfidenceMethod || report.Versions.ExecutorProfile != SyntheticMockExecutorProfile {
 		t.Fatalf("version boundary is misleading: %#v", report.Versions)
 	}
 	for _, gate := range report.Gates {
@@ -197,7 +206,7 @@ func TestEvaluateCountsExecutionFailureInsteadOfSkippingCase(t *testing.T) {
 	if !errors.Is(err, ErrGateFailed) {
 		t.Fatalf("execution failure error=%v", err)
 	}
-	if report.Metrics.ExecutedCases != len(dataset.Cases) || report.Metrics.ExecutionFailures != 1 || report.Metrics.PassedCases != len(dataset.Cases)-1 {
+	if report.Metrics.ExecutedCases != len(dataset.Cases) || report.Metrics.ExecutionFailures != 1 || report.Metrics.TraceContractFailures != 1 || report.Metrics.PassedCases != len(dataset.Cases)-1 {
 		t.Fatalf("execution failure was skipped: %#v", report.Metrics)
 	}
 }
@@ -222,7 +231,7 @@ func evaluateMetrics(ctx context.Context, dataset Dataset, execute ExecuteCase) 
 	}, execute)
 }
 
-func successfulExecution(_ context.Context, evaluationCase EvaluationCase) (domain.Report, ExecutionStats, error) {
+func successfulExecution(ctx context.Context, evaluationCase EvaluationCase) (domain.Report, ExecutionStats, error) {
 	investigationID := "inv-" + evaluationCase.ID
 	duration := evaluationCase.Request.EndTime.Sub(evaluationCase.Request.StartTime)
 	specs := []domain.QuerySpec{
@@ -285,10 +294,12 @@ func successfulExecution(_ context.Context, evaluationCase EvaluationCase) (doma
 		Evidence:        evidence,
 		CauseAnalysis:   analysis,
 	}
-	return report, ExecutionStats{
+	stats := ExecutionStats{
 		EngineEvidence: evidence, QuerySpecs: specs, QueryContractValid: true,
 		LogicalSLSCalls: len(specs), ProviderAPICalls: evaluationCase.Expected.ProviderAPICalls,
 		ChangeSourceCalls: evaluationCase.Expected.ChangeSourceCalls,
 		ProcessedBytes:    evaluationCase.Current.ProcessedBytes + evaluationCase.Baseline.ProcessedBytes,
-	}, nil
+	}
+	stats.AgentTrace = successfulAgentTrace(ctx, evaluationCase)
+	return report, stats, nil
 }

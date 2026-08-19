@@ -2,12 +2,15 @@ package evalmock
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 
+	"logagent/internal/adapters/eino"
 	"logagent/internal/domain"
 	"logagent/internal/evaluation"
+	"logagent/internal/observability"
 )
 
 func TestScenarioReturnsBoundedDeepCopiedFixturesAndStats(t *testing.T) {
@@ -223,6 +226,174 @@ func TestBuiltInDatasetConstructsEveryScenario(t *testing.T) {
 	}
 }
 
+func TestScenarioRecordsToolUsageMatchingStatsWithoutSensitivePayloads(t *testing.T) {
+	evaluationCase := fixtureCase()
+	secret := "SENSITIVE_BEARER_abc123"
+	evaluationCase.Request.Service = secret
+	evaluationCase.Current.TopError = secret
+	evaluationCase.Current.ErrorPatterns[0].Label = secret
+	evaluationCase.ChangeSet.Events[0].Summary = secret
+
+	ctx, recorder := scenarioTraceContext(t, "case-tool-success")
+	scenario, err := New(evaluationCase, "inv_tool_success", WithObserver(recorder))
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine, err := eino.New(
+		context.Background(),
+		scenario.Executor,
+		time.Now,
+		eino.WithChangeSource(scenario.ChangeSource),
+		eino.WithObserver(recorder),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := engine.Run(ctx, "inv_tool_success", evaluationCase.Request); err != nil {
+		t.Fatal(err)
+	}
+
+	trace := recorder.Snapshot()
+	if !trace.Complete || trace.DropCount != 0 {
+		t.Fatalf("tool trace is incomplete: %#v", trace)
+	}
+	if err := domain.ValidateAgentTrace(trace); err != nil {
+		t.Fatalf("validate tool trace: %v", err)
+	}
+	stats := scenario.Stats()
+	var slsLogical, providerCalls, processedBytes, changeCalls int64
+	seen := make(map[domain.AgentSpanName]int)
+	for _, event := range trace.Events {
+		if event.Layer != domain.AgentLayerTool || event.Phase == domain.AgentPhaseStarted {
+			continue
+		}
+		if event.Phase != domain.AgentPhaseSucceeded || event.ToolUsage == nil || !event.ToolUsage.Complete {
+			t.Fatalf("unexpected tool terminal: %#v", event)
+		}
+		seen[event.Name]++
+		switch event.Name {
+		case domain.AgentSpanSLSCurrent, domain.AgentSpanSLSBaseline:
+			slsLogical += event.ToolUsage.LogicalCalls
+			providerCalls += event.ToolUsage.ProviderCalls
+			processedBytes += event.ToolUsage.ProcessedBytes
+		case domain.AgentSpanChangeSourceList:
+			changeCalls += event.ToolUsage.LogicalCalls
+		}
+	}
+	if seen[domain.AgentSpanSLSCurrent] != 1 || seen[domain.AgentSpanSLSBaseline] != 1 || seen[domain.AgentSpanChangeSourceList] != 1 {
+		t.Fatalf("unexpected tool terminals: %#v", seen)
+	}
+	if slsLogical != int64(stats.LogicalSLSCalls) || providerCalls != int64(stats.ProviderAPICalls) || processedBytes != stats.ProcessedBytes || changeCalls != int64(stats.ChangeSourceCalls) {
+		t.Fatalf("trace usage does not match stats: trace=%d/%d/%d/%d stats=%#v", slsLogical, providerCalls, processedBytes, changeCalls, stats)
+	}
+	payload, err := json.Marshal(trace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(payload), secret) {
+		t.Fatalf("serialized trace leaked fixture payload: %s", payload)
+	}
+}
+
+func TestScenarioRecordsFailedToolUsageWithoutChangingStats(t *testing.T) {
+	evaluationCase := fixtureCase()
+	ctx, recorder := scenarioTraceContext(t, "case-tool-failure")
+	scenario, err := New(evaluationCase, "inv_tool_failure", WithObserver(recorder))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Force the fixture boundary to reject the otherwise valid graph query.
+	// This exercises a tool-contract failure without adding a second mock API.
+	scenario.Executor.request.Service = "different-service"
+	engine, err := eino.New(context.Background(), scenario.Executor, time.Now, eino.WithObserver(recorder))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := engine.Run(ctx, "inv_tool_failure", evaluationCase.Request); err == nil {
+		t.Fatal("want fixture contract failure")
+	}
+
+	trace := recorder.Snapshot()
+	if !trace.Complete || trace.DropCount != 0 {
+		t.Fatalf("failed tool did not close trace: %#v", trace)
+	}
+	stats := scenario.Stats()
+	if stats.LogicalSLSCalls != 1 || stats.ProviderAPICalls != 0 || stats.ProcessedBytes != 0 {
+		t.Fatalf("failed usage changed stats contract: %#v", stats)
+	}
+	terminal := findToolTerminal(t, trace, domain.AgentSpanSLSCurrent)
+	if terminal.Phase != domain.AgentPhaseFailed || terminal.FailureClass != domain.FailureClassContractViolation || terminal.FailureCode != domain.AgentFailureCodeContractViolation || terminal.ToolUsage == nil {
+		t.Fatalf("unexpected failed tool terminal: %#v", terminal)
+	}
+	if terminal.ToolUsage.LogicalCalls != int64(stats.LogicalSLSCalls) || terminal.ToolUsage.ProviderCalls != 0 || terminal.ToolUsage.ProcessedBytes != 0 || terminal.ToolUsage.Complete {
+		t.Fatalf("failed tool usage does not match stats: event=%#v stats=%#v", terminal.ToolUsage, stats)
+	}
+}
+
+func TestScenarioOmitsChangeToolWhenGraphSkipsChangeLookup(t *testing.T) {
+	evaluationCase := fixtureCase()
+	evaluationCase.Current = cloneQueryResult(evaluationCase.Baseline)
+	evaluationCase.Current.QueryID = "eval-current-no-spike"
+	evaluationCase.Current.ProcessedBytes = 3072
+	ctx, recorder := scenarioTraceContext(t, "case-no-change-tool")
+	scenario, err := New(evaluationCase, "inv_no_change_tool", WithObserver(recorder))
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine, err := eino.New(
+		context.Background(),
+		scenario.Executor,
+		time.Now,
+		eino.WithChangeSource(scenario.ChangeSource),
+		eino.WithObserver(recorder),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, report, err := engine.Run(ctx, "inv_no_change_tool", evaluationCase.Request); err != nil {
+		t.Fatal(err)
+	} else if report.Outcome != "no_significant_spike" {
+		t.Fatalf("unexpected outcome: %s", report.Outcome)
+	}
+	trace := recorder.Snapshot()
+	if !trace.Complete || trace.DropCount != 0 {
+		t.Fatalf("conditional trace is incomplete: %#v", trace)
+	}
+	for _, event := range trace.Events {
+		if event.Name == domain.AgentSpanChangeSourceList {
+			t.Fatalf("change tool was recorded without a source lookup: %#v", event)
+		}
+	}
+	if stats := scenario.Stats(); stats.ChangeSourceCalls != 0 || stats.LogicalSLSCalls != 2 {
+		t.Fatalf("conditional tool activity drifted: %#v", stats)
+	}
+}
+
+func TestScenarioObserverRequiresRunContext(t *testing.T) {
+	observer := &scenarioCountingObserver{}
+	scenario, err := New(fixtureCase(), "inv_no_run_context", WithObserver(observer))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := scenario.Executor.request
+	if _, err := scenario.Executor.Execute(context.Background(), fixtureSpec("inv_no_run_context", request, "current")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := scenario.Executor.Execute(context.Background(), fixtureSpec("inv_no_run_context", request, "baseline")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := scenario.ChangeSource.List(context.Background(), expectedChangeQuery(request, scenario.ChangeSource.resourceID)); err != nil {
+		t.Fatal(err)
+	}
+	if observer.events != 0 {
+		t.Fatalf("observer received %d events without RunContext", observer.events)
+	}
+	stats := scenario.Stats()
+	if stats.LogicalSLSCalls != 2 || stats.ProviderAPICalls != evaluation.ExpectedProviderAPICalls || stats.ChangeSourceCalls != 1 {
+		t.Fatalf("no-context observation changed adapter stats: %#v", stats)
+	}
+}
+
 func fixtureCase() evaluation.EvaluationCase {
 	start := time.Date(2026, 8, 18, 10, 0, 0, 0, time.UTC)
 	request := domain.InvestigationRequest{
@@ -358,4 +529,36 @@ func bucketTotal(buckets []domain.CountBucket) int64 {
 		total += bucket.Count
 	}
 	return total
+}
+
+type scenarioCountingObserver struct {
+	events int
+}
+
+func (observer *scenarioCountingObserver) Record(domain.AgentEvent) {
+	observer.events++
+}
+
+func scenarioTraceContext(t *testing.T, caseID string) (context.Context, *observability.BoundedRecorder) {
+	t.Helper()
+	run := observability.RunContext{
+		EvaluationRunID:    "evaluation-run-1",
+		TraceID:            "trace-" + caseID,
+		RunID:              "engine-run-" + caseID,
+		CaseID:             caseID,
+		VersionFingerprint: strings.Repeat("b", 64),
+	}
+	recorder := observability.NewBoundedRecorder(64, run)
+	return observability.WithRunContext(context.Background(), run), recorder
+}
+
+func findToolTerminal(t *testing.T, trace domain.AgentTrace, name domain.AgentSpanName) domain.AgentEvent {
+	t.Helper()
+	for _, event := range trace.Events {
+		if event.Layer == domain.AgentLayerTool && event.Name == name && event.Phase != domain.AgentPhaseStarted {
+			return event
+		}
+	}
+	t.Fatalf("tool terminal %s was not recorded", name)
+	return domain.AgentEvent{}
 }

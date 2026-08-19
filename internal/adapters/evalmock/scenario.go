@@ -14,6 +14,7 @@ import (
 	"logagent/internal/domain"
 	"logagent/internal/evaluation"
 	"logagent/internal/fingerprint"
+	"logagent/internal/observability"
 	"logagent/internal/ports"
 )
 
@@ -38,10 +39,28 @@ type Scenario struct {
 	ChangeSource *ChangeSource
 }
 
+type scenarioConfig struct {
+	observer ports.AgentObserver
+}
+
+// Option configures synthetic-only adapter behavior without changing existing
+// M5-A callers.
+type Option func(*scenarioConfig)
+
+// WithObserver enables bounded tool events when the execution context also
+// carries an observability RunContext. Nil preserves no-op behavior.
+func WithObserver(observer ports.AgentObserver) Option {
+	return func(config *scenarioConfig) {
+		if observer != nil {
+			config.observer = observer
+		}
+	}
+}
+
 // New makes an immutable runtime copy of an already strictly decoded
 // evaluation case. investigationID is bound into the query contract so the
 // fixture cannot be consumed by another investigation accidentally.
-func New(evaluationCase evaluation.EvaluationCase, investigationID string) (*Scenario, error) {
+func New(evaluationCase evaluation.EvaluationCase, investigationID string, options ...Option) (*Scenario, error) {
 	if strings.TrimSpace(investigationID) == "" || strings.TrimSpace(investigationID) != investigationID {
 		return nil, errors.New("evaluation investigation ID is required and cannot have surrounding whitespace")
 	}
@@ -57,6 +76,12 @@ func New(evaluationCase evaluation.EvaluationCase, investigationID string) (*Sce
 	if err := validateChangeSet(evaluationCase.ChangeSet, evaluationCase.Current.ResourceID); err != nil {
 		return nil, err
 	}
+	var config scenarioConfig
+	for _, option := range options {
+		if option != nil {
+			option(&config)
+		}
+	}
 
 	request := evaluationCase.Request
 	return &Scenario{
@@ -67,12 +92,14 @@ func New(evaluationCase evaluation.EvaluationCase, investigationID string) (*Sce
 			baseline:        cloneQueryResult(evaluationCase.Baseline),
 			seen:            make(map[string]struct{}, evaluation.ExpectedLogicalSLSCalls),
 			contractValid:   true,
+			observer:        config.observer,
 		},
 		ChangeSource: &ChangeSource{
 			request:       request,
 			resourceID:    evaluationCase.Current.ResourceID,
 			changeSet:     cloneChangeSet(evaluationCase.ChangeSet),
 			contractValid: true,
+			observer:      config.observer,
 		},
 	}, nil
 }
@@ -126,6 +153,7 @@ type Executor struct {
 	processedBytes   int64
 	querySpecs       []domain.QuerySpec
 	contractValid    bool
+	observer         ports.AgentObserver
 }
 
 // ResolveQueryGovernance exposes the same immutable identity carried by both
@@ -153,18 +181,31 @@ func (executor *Executor) ResolveQueryGovernance(ctx context.Context, spec domai
 
 // Execute consumes one unique current or baseline fixture. Duplicate logical
 // observations fail closed instead of silently understating evaluation cost.
-func (executor *Executor) Execute(ctx context.Context, spec domain.QuerySpec) (domain.QueryResult, error) {
-	if err := ctx.Err(); err != nil {
+func (executor *Executor) Execute(ctx context.Context, spec domain.QuerySpec) (result domain.QueryResult, err error) {
+	var observer ports.AgentObserver
+	if executor != nil {
+		observer = executor.observer
+	}
+	observation := beginToolObservation(observer, ctx, queryToolName(spec.Name), domain.AgentSpanExecuteQueries)
+	usage := domain.ToolUsage{}
+	failureClass := domain.FailureClassContractViolation
+	defer func() {
+		observation.finish(ctx, err, failureClass, usage)
+	}()
+
+	if err = ctx.Err(); err != nil {
 		return domain.QueryResult{}, err
 	}
 	if executor == nil {
+		failureClass = domain.FailureClassInternal
 		return domain.QueryResult{}, errors.New("evaluation executor is nil")
 	}
 
 	executor.mu.Lock()
 	defer executor.mu.Unlock()
 	executor.querySpecs = append(executor.querySpecs, spec)
-	result, err := executor.fixtureFor(spec)
+	usage.LogicalCalls = 1
+	result, err = executor.fixtureFor(spec)
 	if err != nil {
 		executor.contractValid = false
 		return domain.QueryResult{}, err
@@ -178,10 +219,13 @@ func (executor *Executor) Execute(ctx context.Context, spec domain.QuerySpec) (d
 	result = cloneQueryResult(result)
 	result.QuerySpecHash, err = fingerprint.JSON(spec)
 	if err != nil {
+		failureClass = domain.FailureClassInternal
 		return domain.QueryResult{}, fmt.Errorf("fingerprint evaluation query %q: %w", spec.Name, err)
 	}
 	executor.providerAPICalls += result.APICalls
 	executor.processedBytes += result.ProcessedBytes
+	usage.ProviderCalls = int64(result.APICalls)
+	usage.ProcessedBytes = result.ProcessedBytes
 	return result, nil
 }
 
@@ -247,22 +291,36 @@ type ChangeSource struct {
 	called        bool
 	queries       []domain.ChangeQuery
 	contractValid bool
+	observer      ports.AgentObserver
 }
 
 // List accepts exactly one full baseline-plus-current lookup with the domain
 // hard limit. A duplicate call fails so an orchestration regression cannot
 // hide behind a deterministic fixture.
-func (source *ChangeSource) List(ctx context.Context, query domain.ChangeQuery) (domain.ChangeSet, error) {
-	if err := ctx.Err(); err != nil {
+func (source *ChangeSource) List(ctx context.Context, query domain.ChangeQuery) (result domain.ChangeSet, err error) {
+	var observer ports.AgentObserver
+	if source != nil {
+		observer = source.observer
+	}
+	observation := beginToolObservation(observer, ctx, domain.AgentSpanChangeSourceList, domain.AgentSpanCorrelateChanges)
+	usage := domain.ToolUsage{}
+	failureClass := domain.FailureClassContractViolation
+	defer func() {
+		observation.finish(ctx, err, failureClass, usage)
+	}()
+
+	if err = ctx.Err(); err != nil {
 		return domain.ChangeSet{}, err
 	}
 	if source == nil {
+		failureClass = domain.FailureClassInternal
 		return domain.ChangeSet{}, errors.New("evaluation change source is nil")
 	}
 
 	source.mu.Lock()
 	defer source.mu.Unlock()
 	source.queries = append(source.queries, query)
+	usage.LogicalCalls = 1
 	if source.called {
 		source.contractValid = false
 		return domain.ChangeSet{}, errors.New("evaluation change source was queried more than once")
@@ -291,6 +349,117 @@ func (source *ChangeSource) stats() (bool, int, []domain.ChangeQuery) {
 	source.mu.Lock()
 	defer source.mu.Unlock()
 	return source.contractValid, len(source.queries), append([]domain.ChangeQuery(nil), source.queries...)
+}
+
+type toolObservation struct {
+	observer     ports.AgentObserver
+	spanID       string
+	parentSpanID string
+	name         domain.AgentSpanName
+	startedAt    time.Time
+}
+
+func beginToolObservation(
+	observer ports.AgentObserver,
+	ctx context.Context,
+	name domain.AgentSpanName,
+	parentName domain.AgentSpanName,
+) toolObservation {
+	if observer == nil || name == "" {
+		return toolObservation{}
+	}
+	run, ok := observability.RunContextFrom(ctx)
+	if !ok {
+		return toolObservation{}
+	}
+	startedAt := time.Now()
+	observation := toolObservation{
+		observer:     observer,
+		spanID:       observability.StableSpanID(run.TraceID, domain.AgentLayerTool, name),
+		parentSpanID: observability.StableSpanID(run.TraceID, domain.AgentLayerGraphNode, parentName),
+		name:         name,
+		startedAt:    startedAt,
+	}
+	observer.Record(domain.AgentEvent{
+		SpanID:       observation.spanID,
+		ParentSpanID: observation.parentSpanID,
+		Layer:        domain.AgentLayerTool,
+		Name:         name,
+		Phase:        domain.AgentPhaseStarted,
+		OccurredAt:   startedAt.UTC(),
+	})
+	return observation
+}
+
+func (observation toolObservation) finish(
+	ctx context.Context,
+	err error,
+	fallback domain.FailureClass,
+	usage domain.ToolUsage,
+) {
+	if observation.observer == nil {
+		return
+	}
+	phase := domain.AgentPhaseSucceeded
+	failureClass := domain.FailureClass("")
+	failureCode := domain.AgentFailureCode("")
+	usage.Complete = err == nil
+	if err != nil {
+		phase = domain.AgentPhaseFailed
+		failureClass = toolFailureClass(ctx, err, fallback)
+		failureCode = toolFailureCode(failureClass)
+	}
+	duration := time.Since(observation.startedAt).Milliseconds()
+	if duration < 0 {
+		duration = 0
+	}
+	observation.observer.Record(domain.AgentEvent{
+		SpanID:               observation.spanID,
+		ParentSpanID:         observation.parentSpanID,
+		Layer:                domain.AgentLayerTool,
+		Name:                 observation.name,
+		Phase:                phase,
+		OccurredAt:           time.Now().UTC(),
+		DurationMilliseconds: duration,
+		FailureClass:         failureClass,
+		FailureCode:          failureCode,
+		ToolUsage:            &usage,
+	})
+}
+
+func toolFailureCode(class domain.FailureClass) domain.AgentFailureCode {
+	switch class {
+	case domain.FailureClassCancelled:
+		return domain.AgentFailureCodeContextCancelled
+	case domain.FailureClassTimeout:
+		return domain.AgentFailureCodeDeadlineExceeded
+	case domain.FailureClassContractViolation:
+		return domain.AgentFailureCodeContractViolation
+	default:
+		return domain.AgentFailureCodeToolFailed
+	}
+}
+
+func toolFailureClass(ctx context.Context, err error, fallback domain.FailureClass) domain.FailureClass {
+	switch {
+	case errors.Is(err, context.Canceled), ctx != nil && errors.Is(ctx.Err(), context.Canceled):
+		return domain.FailureClassCancelled
+	case errors.Is(err, context.DeadlineExceeded), ctx != nil && errors.Is(ctx.Err(), context.DeadlineExceeded):
+		return domain.FailureClassTimeout
+	default:
+		return fallback
+	}
+}
+
+func queryToolName(name string) domain.AgentSpanName {
+	switch name {
+	case "current":
+		return domain.AgentSpanSLSCurrent
+	case "baseline":
+		return domain.AgentSpanSLSBaseline
+	default:
+		return ""
+	}
 }
 
 func validateRequest(request domain.InvestigationRequest) error {
