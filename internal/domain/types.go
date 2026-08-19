@@ -11,6 +11,17 @@ const (
 	StatusSucceeded Status = "SUCCEEDED"
 	StatusFailed    Status = "FAILED"
 	StatusCancelled Status = "CANCELLED"
+	// StatusNeedsReview means a metered external read may have completed, but
+	// the process disappeared before a reusable result was durably recorded.
+	// It is intentionally not retried automatically.
+	StatusNeedsReview Status = "NEEDS_REVIEW"
+)
+
+// StableReason codes are safe to persist and branch on. They never contain
+// provider diagnostics, raw queries, credentials, or log content.
+const (
+	ReviewReasonExternalQueryOutcomeUnknown = "external_query_outcome_unknown"
+	CancelReasonExternalQueryOutcomeUnknown = "cancelled_external_query_outcome_unknown"
 )
 
 // InboundMessage is the framework-independent envelope produced by an entry adapter.
@@ -82,6 +93,7 @@ type QueryResult struct {
 	TemplateVersion         string        `json:"template_version"`
 	SchemaFingerprint       string        `json:"schema_fingerprint"`
 	PolicyVersion           string        `json:"policy_version"`
+	GovernanceFingerprint   string        `json:"governance_fingerprint"`
 	Progress                string        `json:"progress"`
 	Complete                bool          `json:"complete"`
 	Truncated               bool          `json:"truncated"`
@@ -115,6 +127,7 @@ type Evidence struct {
 	TemplateVersion         string        `json:"template_version"`
 	SchemaFingerprint       string        `json:"schema_fingerprint"`
 	PolicyVersion           string        `json:"policy_version"`
+	GovernanceFingerprint   string        `json:"governance_fingerprint"`
 	Name                    string        `json:"name"`
 	StartTime               time.Time     `json:"start_time"`
 	EndTime                 time.Time     `json:"end_time"`
@@ -177,6 +190,44 @@ type Job struct {
 	Attempt         int                  `json:"attempt"`
 	LeaseOwner      string               `json:"lease_owner"`
 	LeaseUntil      time.Time            `json:"lease_until"`
+}
+
+// QueryStepStatus is the durable state of one logical, metered SLS window.
+type QueryStepStatus string
+
+const (
+	QueryStepStarted   QueryStepStatus = "STARTED"
+	QueryStepSucceeded QueryStepStatus = "SUCCEEDED"
+	QueryStepFailed    QueryStepStatus = "FAILED"
+	QueryStepUnknown   QueryStepStatus = "UNKNOWN"
+)
+
+// QueryStepAction tells the application wrapper whether it must execute the
+// Provider boundary or may reuse a previously normalized result.
+type QueryStepAction string
+
+const (
+	QueryStepExecute QueryStepAction = "EXECUTE"
+	QueryStepReuse   QueryStepAction = "REUSE"
+)
+
+type QueryStepDecision struct {
+	Action QueryStepAction `json:"action"`
+	Result *QueryResult    `json:"result,omitempty"`
+}
+
+// QueryStep is an operator-safe projection. It contains only fingerprints,
+// normalized aggregate output metadata, and fencing information.
+type QueryStep struct {
+	InvestigationID string          `json:"investigation_id"`
+	StepKey         string          `json:"step_key"`
+	InputHash       string          `json:"input_hash"`
+	Status          QueryStepStatus `json:"status"`
+	JobAttempt      int             `json:"job_attempt"`
+	LeaseOwner      string          `json:"lease_owner"`
+	OutputHash      string          `json:"output_hash,omitempty"`
+	StartedAt       time.Time       `json:"started_at"`
+	CompletedAt     time.Time       `json:"completed_at,omitempty"`
 }
 
 // Investigation is the persisted state returned to callers.

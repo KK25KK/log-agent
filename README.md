@@ -1,6 +1,6 @@
 # Log Agent
 
-这是一个用 Go 开发的“证据驱动”日志调查 Agent。M0～M3 的主体代码、离线测试和独立复核已经完成；由于仓库没有真实飞书/SLS/发布平台凭据与试点资源，当前只能称为“具备试点条件”，不能称为日常可用或生产可用。
+这是一个用 Go 开发的“证据驱动”日志调查 Agent。M0～M3、M4-A 可恢复查询切片和 M5-A 全合成离线评测门禁的主体代码与离线测试已经完成；第五期的 M4-B/M4-C 与第六期的真实评测、可观测性和灰度仍未完成。由于仓库没有真实飞书/SLS/发布平台凭据、生产数据库、历史故障标注集与试点资源，当前只能称为“具备试点条件”，不能称为日常可用或生产可用。
 
 ```text
 飞书消息
@@ -11,6 +11,7 @@
        -> 查询预算 + Schema 校验
        -> 查询审计
        -> Mock SLS 或真实阿里云 SLS
+  -> current / baseline 聚合结果 Checkpoint
   -> Evidence + M2 Report
   -> 可选的受控 Change Catalog
   -> 支持/反证 Ledger + CauseAnalysis
@@ -28,7 +29,7 @@ Eino 只负责流程编排，不负责业务状态、权限、幂等、审计和
 - 飞书企业自建应用 WebSocket 长连接入口。
 - 严格命令：`/investigate <service> <environment> <duration>`。
 - 以 `(app_id, tenant_key, message_id)` 为唯一键的持久化幂等接单。
-- `QUEUED -> RUNNING -> SUCCEEDED | FAILED | CANCELLED` 状态机。
+- `QUEUED -> RUNNING -> SUCCEEDED | FAILED | CANCELLED | NEEDS_REVIEW` 状态机。
 - Worker 心跳续租、租约过期重领，以及基于 `attempt` fencing token 的旧 Worker 防误提交。
 - Eino v0.9.14 固定 Graph，不依赖 LLM。
 - 当前窗口与等长基线窗口对比。
@@ -77,7 +78,58 @@ Eino 只负责流程编排，不负责业务状态、权限、幂等、审计和
 - Worker 在成功落库前再次校验固定测试、有限数值、Evidence/Change 引用、支持条件和硬反证质量，防止不可信 Engine 输出伪造结论。
 - SQLite 在调查成功事务中同时保存 Evidence、Report 和独立 `evidence_ledger`；飞书报告与证据页做有界展示。
 
-## 先运行离线 Demo
+### M4-A 可恢复查询步骤
+
+- 将两个有外部成本的逻辑观察固定为 `sls.current` 和 `sls.baseline`，在 Eino 之外持久化输入指纹与规范化聚合结果。
+- 已成功落盘的窗口在租约恢复后直接复用；current 已完成时只执行缺失的 baseline，不从头重复查询。
+- 输入指纹同时绑定管理员控制的资源目录、物理 Project/LogStore、Selector、Schema、模板、策略和预算；治理配置变化时禁止混用旧、新窗口证据。
+- Checkpoint Prepare/Complete 同时校验 job、investigation、lease owner、job attempt、租约、step key 和 input hash，旧 Worker 无法提交到新 attempt。
+- 若请求可能已到达 SLS、但结果未成功落盘，步骤变为 `UNKNOWN`，调查变为 `NEEDS_REVIEW`，系统不自动再次查询。
+- 飞书提示明确说明潜在重复查询成本，只允许专用的 `rerun_with_cost_ack` 按钮在用户确认后创建新调查；执行中取消若留下未知查询，也使用同一确认门禁，不会显示 Provider 原始错误。
+- 该能力不代表 SLS Provider exactly-once，也不代表完整 M4 已完成。设计、验收与延期项见 [`docs/m4-recoverable-query-steps.md`](docs/m4-recoverable-query-steps.md)。
+
+### M5-A 全合成离线评测门禁
+
+- 内置版本化严格数据集，至少覆盖突增且关联候选成立、无突增、证据不足、变更被反证和变更不确定五类安全场景。
+- 每个 Case 使用 Fixture Mock 提供 SLS 聚合和变更上下文，但运行的仍是应用当前使用的真实确定性 Eino Graph，不复制调查算法。
+- 输出 outcome accuracy、misleading rate、conclusive recall、Finding 与 Recommendation 精确匹配率、生产 Worker 输出校验通过率、Engine/Report Evidence 一致性与 QuerySpec 绑定准确率、Evidence 引用覆盖率、原因判断准确率、查询合同、调用/处理字节成本代理和本机耗时。Recommendation 标签同时约束 Code 和 `current`/`baseline` Evidence 绑定，删除、插入或错误引用建议都会使门禁失败。
+- 数据集版本和 SHA-256 指纹进入报告；任一 Case 或工程门禁失败时，命令打印完整结构化 JSON 后以非零状态退出。
+- 全部请求、身份、聚合、变更和标签均为合成 Mock，真实故障数与专家标签数都是 0，不读取凭据、不访问网络。
+- 当前 Graph 不调用 LLM，因此 Prompt、Token 和模型成本指标明确为 `N/A`。M5-A 不是生产准确率、真实成本、SLO 或灰度批准，完整设计见 [`docs/m5-offline-evaluation-gate.md`](docs/m5-offline-evaluation-gate.md)。
+
+## 先运行飞书 + SLS 双 Mock
+
+下面这条命令会走完整的本地纵向链路，不读取环境变量、不需要飞书 App、阿里云账号或任何凭据，也不会发起网络请求：
+
+```powershell
+go run ./cmd/logagent mock-e2e
+```
+
+它会依次完成：
+
+1. 模拟飞书用户发送 `/investigate order-service prod 30m`；
+2. 将同一消息重放一次，验证 Inbox 幂等去重；
+3. 通过真实 SQLite 状态机创建并领取调查任务；
+4. 通过真实 Worker + Eino 固定 Graph、资源 ACL、Schema/预算网关和查询审计调用 Mock SLS Backend；
+5. 将 current、baseline 两个规范化聚合结果写入真实 SQLite Checkpoint；
+6. 生成 Evidence、M2 报告和 Mock 变更关联账本；
+7. 通过真实 Delivery Worker 模拟飞书卡片 `REPLY(QUEUED) -> PATCH(RUNNING) -> PATCH(SUCCEEDED)`。
+
+输出中的 `safety.external_network_calls=0`、`credentials_required=false` 表示当前运行完全离线；`schema_calls=1`、`backend_execute_calls=2`、`provider_api_calls=8`、`query_audit_events=4` 和 `query_step_checkpoints=2` 分别证明固定 Schema、当前/基线观察、四聚合调用元数据、开始/终态审计和两个持久化步骤已经经过真实应用链路。固定的 120/20 条错误、发布事件和飞书标识全部是测试数据，不代表真实阿里云或飞书结果。完整 Mock 边界见 [`docs/local-mock-e2e.md`](docs/local-mock-e2e.md)，恢复合同见 [`docs/m4-recoverable-query-steps.md`](docs/m4-recoverable-query-steps.md)。
+
+## 运行第六期离线评测门禁
+
+```powershell
+go run ./cmd/logagent evaluate
+```
+
+该命令加载仓库内置的 `synthetic-m5a-v1` 数据集，对每个 Case 组装独立 Fixture Mock，并执行真实确定性 Eino Graph。它不读取环境变量中的外部凭据，也不会访问飞书、阿里云 SLS、发布平台或模型服务。
+
+命令输出结构化 JSON，包含数据集身份与指纹、Graph/策略版本、逐 Case 结果、聚合指标和门禁状态。通过时退出码为 `0`；数据集非法、Graph 执行失败、标签不一致、出现意外确定性结论、证据引用失效或查询/成本代理合同越界时返回非零退出码。脚本和 CI 应检查退出码，不能只匹配输出文字。
+
+评测数字只描述受控合成回归集：它不是历史真实故障或专家标注上的准确率，`processed_bytes`/API 调用数不是阿里云账单，本机耗时也不是生产 SLO。
+
+## 只查看离线报告 Demo（可选）
 
 环境要求：Go 1.26 或更高版本。Demo 永远使用 Mock SLS 和内置 Mock Change Source，不需要飞书、阿里云或发布平台凭证。
 
@@ -238,6 +290,8 @@ go run ./cmd/logagent feishu
 Get-ChildItem -Recurse -Filter *.go | ForEach-Object { gofmt -w $_.FullName }
 go test -count=1 ./...
 go vet ./...
+go run ./cmd/logagent evaluate
+go run ./cmd/logagent mock-e2e
 go run ./cmd/logagent demo
 ```
 
@@ -245,21 +299,26 @@ go run ./cmd/logagent demo
 
 默认测试全部离线，不读取云凭据、不访问 SLS 或发布平台。只有显式运行 `sls-check`、`sls-smoke`，或以 `LOG_AGENT_SLS_MODE=aliyun` 启动 Worker，才会访问真实 SLS。
 
+本轮 M5-A 验收中，`gofmt`、`go test -count=1 ./...`、`go vet ./...`、`evaluate` 和 `mock-e2e` 均通过。`evaluate` 的 5/5 个合成 Case 全部通过，misleading rate 为 0，调用与成本代理越界均为 0；这些仍只是离线合成回归结果。`go test -race ./...` 未执行，因为当前 Windows 环境 `CGO_ENABLED=0` 且未安装 GCC，不能写成已通过。
+
 ## 代码边界
 
 ```text
 cmd/logagent                          进程组装与诊断命令
-internal/application                 接单、调查 Worker、卡片 Delivery 和动作控制用例
+internal/application                 接单、调查 Worker、查询 Checkpoint、卡片 Delivery 和动作控制用例
 internal/application/query           ACL、预算、Schema、审计与脱敏网关
 internal/domain                      领域数据、资源、查询、原因假设与证据账本模型
 internal/ports                       Store、Engine、QueryGateway、SLSBackend、ChangeSource 接口
 internal/adapters/eino               唯一允许导入 Eino 的包
 internal/adapters/feishu             唯一允许导入飞书 SDK 的包
+internal/adapters/feishumock         离线飞书收件与卡片投递模拟，不导入 SDK
 internal/adapters/aliyunsls           唯一允许导入阿里云 SLS SDK 的包
 internal/adapters/resourcecatalog     JSON 资源目录与静态 ACL
 internal/adapters/changecatalog       M3 版本化发布/配置变更目录
-internal/adapters/sqlite              本地持久化、查询审计与卡片事件
+internal/adapters/sqlite              本地持久化、查询审计、查询 Checkpoint 与卡片事件
 internal/adapters/slsmock             离线确定性数据
+internal/adapters/evalmock            M5-A 逐 Case 的 SLS 与 Change Source Fixture Mock
+internal/evaluation                   严格合成数据集、质量指标和离线门禁
 ```
 
 ## 当前边界与已知限制
@@ -268,16 +327,18 @@ internal/adapters/slsmock             离线确定性数据
 - 官方 Go SDK 的 `GetLogsV2` 不接收调用方 `context.Context`。当前关闭 SDK 的 500/502/503 自动重试，同时把 HTTP timeout 和 SDK 内部 GET 网络错误重试窗口都限制为配置值，并在调用返回后再次检查 deadline；四次顺序查询由独立的总查询时限约束，但用户取消仍不能保证底层 HTTP 立即中止。
 - 内置 ECS RAM Role Provider 使用官方推荐的 IMDSv2 加固模式获取元数据 Token，再读取临时凭据；请求有有限 timeout、缓存凭据且禁止代理和重定向。该模式仍需在你的 ECS 试点上做真实验证。
 - SLS `limited` 表示 SQL 的结果行限制，不等同于发生截断；两个总数查询显式 `LIMIT 1`，两个维度查询显式 `LIMIT 5`，不会仅凭该元数据误判证据不足。
-- 付费的四个 POST 聚合请求不会在 SDK 内自动重试，因此正常执行的 `api_calls=4` 同时代表四个逻辑请求和四个物理请求；元数据 GET 遇到网络错误时仍可能在配置的短窗口内重试。进程在查询后、持久化前崩溃时，租约恢复也可能重复整个调查，所以系统仍不承诺 exactly-once。
+- 付费的四个 POST 聚合请求不会在 SDK 内自动重试，因此正常执行的 `api_calls=4` 同时代表四个逻辑请求和四个物理请求；元数据 GET 遇到网络错误时仍可能在配置的短窗口内重试。M4-A 会复用已落盘窗口；若进程在查询可能执行后、Checkpoint 提交前崩溃，则进入 `NEEDS_REVIEW` 而不是自动重试，所以系统仍不承诺 Provider exactly-once。
 - SLS 没有为多次 `GetLogsV2` 暴露跨请求快照令牌。飞书命令和 `sls-smoke` 默认分析“截至消息时刻前 10 秒”的等长窗口，Gateway 对尚未越过配置水位的请求 fail closed；同一窗口还会用前后两次计数做一致性门禁，计数变化时绝不形成确定性结论。10 秒是可配置的运维假设而非 Provider 完整性证明，生产试点必须根据实际采集/索引延迟调大。
 - 扫描字节和真实费用无法在执行前精确获知；当前在返回后用 `processed_bytes` 做硬门禁，超限结果只能成为非结论性证据。
 - 查询仅返回聚合，不返回原始日志。通用敏感信息识别不可能完全可靠，生产前仍需按企业字段规范补充脱敏模式。
 - Schema 缓存过期后刷新失败会 fail closed，不会无限使用旧 Schema。
-- SQLite 继续用于本地技术验证；卡片发送只有有限本地重试，不承诺 exactly-once。M2 按单个飞书/Delivery 进程部署，多实例卡片发送的全局顺序、生产数据库、全局配额、通用 Outbox 和步骤级 Checkpoint 仍在后续阶段。
+- SQLite 继续用于本地技术验证；卡片发送只有有限本地重试，不承诺 exactly-once。M2 按单个飞书/Delivery 进程部署；多实例卡片发送的全局顺序、Delivery 死信安全重放、生产数据库、全局配额和审批仍在 M4-B/M4-C。
 - SQLite 技术预览当前没有 schema version、正式迁移和回滚工具；升级已有数据库前必须备份，本地试验环境可按阶段说明重建。
 - M3 Change Catalog 是启动时加载的静态文件，不是已接通的发布平台、配置中心或 CMDB；关联候选、权重和阈值尚未经过企业历史故障集校准。
 - M3 不增加 SLS 查询，也没有版本分布、首次出现时间、Trace、指标、拓扑或知识库证据；相关性不会被表述成已确认根因。
+- M5-A 数据集没有真实故障和专家标注，只能发现已编码合成场景上的回归；它不测量生产泛化能力，也不能批准灰度。Agent 自身 Trace/工具调用趋势属于 M5-B，真实数据集、团队阈值、试点群和回滚验收属于 M5-C。
+- 当前 Eino Graph 是确定性、无 LLM 的，因此 M5-A 不生成 Prompt/Token 指标；如果未来引入模型，必须先补版本、成本和安全评测合同。
 - 非文本消息、格式错误的命令和永久无效事件目前会被安全确认但不会回复用法提示；这是已知的交互限制。
 - 系统只有只读调查能力，不包含自动处置工具。
 
-文档入口见 [`docs/README.md`](docs/README.md)。其中 `spec.md` 是唯一当前规范，M0～M3 文档是分阶段实现归档；离线验收结果和未验证的真实集成边界已在 M3 归档与规范清单中分别记录。完整路线图见 [`docs/roadmap.md`](docs/roadmap.md)，迁移前生成的方案、用例图和 Canvas 文件保存在 [`artifacts/`](artifacts/README.md)。
+文档入口见 [`docs/README.md`](docs/README.md)。其中 `spec.md` 是唯一当前规范，M0～M3 是历史阶段归档，M4-A 文档记录第五期已完成的恢复切片，M5-A 文档记录第六期的全合成离线评测门禁；两者都不代表完整阶段或生产验收。完整路线图见 [`docs/roadmap.md`](docs/roadmap.md)，迁移前生成的方案、用例图和 Canvas 文件保存在 [`artifacts/`](artifacts/README.md)。

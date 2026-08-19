@@ -3,6 +3,7 @@ package slsmock
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"logagent/internal/domain"
 	"logagent/internal/fingerprint"
@@ -12,6 +13,66 @@ import (
 // Executor returns deterministic observations for offline development and CI.
 type Executor struct {
 	Incomplete bool
+}
+
+type mockGovernanceIdentity struct {
+	Resource          domain.LogResource `json:"resource"`
+	TemplateID        string             `json:"template_id"`
+	PolicyVersion     string             `json:"policy_version"`
+	SchemaFingerprint string             `json:"schema_fingerprint"`
+	Budget            struct {
+		MaxWindowNanoseconds      int64 `json:"max_window_nanoseconds"`
+		IngestionGraceNanoseconds int64 `json:"ingestion_grace_nanoseconds"`
+		TimeoutNanoseconds        int64 `json:"timeout_nanoseconds"`
+		MaxRows                   int64 `json:"max_rows"`
+		MaxAPICalls               int   `json:"max_api_calls"`
+		MaxProcessedBytes         int64 `json:"max_processed_bytes"`
+		MaxConcurrent             int   `json:"max_concurrent"`
+		SchemaTTLNanoseconds      int64 `json:"schema_ttl_nanoseconds"`
+		PatternLimit              int   `json:"pattern_limit"`
+		InstanceLimit             int   `json:"instance_limit"`
+		ExpectedAPICalls          int   `json:"expected_api_calls"`
+		ExpectedResultRows        int   `json:"expected_result_rows"`
+	} `json:"budget"`
+}
+
+// ResolveQueryGovernance returns the stable offline identity used by the mock
+// executor. It deliberately excludes the time window; CheckpointExecutor binds
+// this fingerprint together with the complete logical QuerySpec.
+func (e *Executor) ResolveQueryGovernance(ctx context.Context, spec domain.QuerySpec) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if spec.Service == "" || spec.Environment == "" || spec.TemplateID != domain.ErrorAnalysisTemplateID {
+		return "", fmt.Errorf("invalid mock query governance scope")
+	}
+	identity := mockGovernanceIdentity{
+		Resource: domain.LogResource{
+			ID: "mock/" + spec.Service + "/" + spec.Environment, CatalogVersion: "mock-catalog-v2",
+			Service: spec.Service, Environment: spec.Environment, Endpoint: "mock://sls",
+			Project: "mock-project", LogStore: "mock-logstore", TemplateVersion: "mock-v2",
+			Selectors: []domain.LogSelector{
+				{Field: "service", Value: spec.Service},
+				{Field: "environment", Value: spec.Environment},
+			},
+			ErrorSelector: domain.LogSelector{Field: "level", Value: "ERROR"},
+			ErrorField:    "error_type", InstanceField: "pod_name",
+		},
+		TemplateID: spec.TemplateID, PolicyVersion: "mock-policy-v2", SchemaFingerprint: "mock-schema-v2",
+	}
+	identity.Budget.MaxWindowNanoseconds = int64(2 * time.Hour)
+	identity.Budget.IngestionGraceNanoseconds = int64(domain.DefaultIngestionGrace)
+	identity.Budget.TimeoutNanoseconds = int64(30 * time.Second)
+	identity.Budget.MaxRows = domain.ErrorAnalysisResultRows
+	identity.Budget.MaxAPICalls = domain.ErrorAnalysisAPICalls
+	identity.Budget.MaxProcessedBytes = 16 * 1024 * 1024
+	identity.Budget.MaxConcurrent = 1
+	identity.Budget.SchemaTTLNanoseconds = int64(time.Minute)
+	identity.Budget.PatternLimit = domain.ErrorAnalysisPatternLimit
+	identity.Budget.InstanceLimit = domain.ErrorAnalysisInstanceLimit
+	identity.Budget.ExpectedAPICalls = domain.ErrorAnalysisAPICalls
+	identity.Budget.ExpectedResultRows = domain.ErrorAnalysisResultRows
+	return fingerprint.JSON(identity)
 }
 
 func (e *Executor) Execute(ctx context.Context, spec domain.QuerySpec) (domain.QueryResult, error) {
@@ -60,9 +121,15 @@ func (e *Executor) result(spec domain.QuerySpec, queryID string, errorCount int6
 	if err != nil {
 		return domain.QueryResult{}, err
 	}
+	governanceFingerprint, err := e.ResolveQueryGovernance(context.Background(), spec)
+	if err != nil {
+		return domain.QueryResult{}, err
+	}
 	progress := "Complete"
+	incompleteReason := ""
 	if e.Incomplete {
 		progress = "Incomplete"
+		incompleteReason = "mock_incomplete_fixture"
 	}
 	topError := ""
 	var topErrorCount int64
@@ -78,8 +145,10 @@ func (e *Executor) result(spec domain.QuerySpec, queryID string, errorCount int6
 		TemplateVersion:         "mock-v2",
 		SchemaFingerprint:       "mock-schema-v2",
 		PolicyVersion:           "mock-policy-v2",
+		GovernanceFingerprint:   governanceFingerprint,
 		Progress:                progress,
 		Complete:                !e.Incomplete,
+		IncompleteReason:        incompleteReason,
 		NanosecondOrderedKnown:  true,
 		NanosecondOrdered:       true,
 		UsageKnown:              true,
@@ -107,4 +176,7 @@ func bucketTotal(buckets []domain.CountBucket) int64 {
 	return total
 }
 
-var _ ports.SLSExecutor = (*Executor)(nil)
+var (
+	_ ports.SLSExecutor             = (*Executor)(nil)
+	_ ports.QueryGovernanceResolver = (*Executor)(nil)
+)

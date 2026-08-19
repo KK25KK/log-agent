@@ -93,6 +93,23 @@ CREATE TABLE IF NOT EXISTS query_audit (
     occurred_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS query_steps (
+    investigation_id TEXT NOT NULL,
+    step_key TEXT NOT NULL,
+    input_hash TEXT NOT NULL,
+    status TEXT NOT NULL,
+    job_attempt INTEGER NOT NULL,
+    lease_owner TEXT NOT NULL,
+    result_json TEXT NOT NULL DEFAULT '',
+    output_hash TEXT NOT NULL DEFAULT '',
+    reason_code TEXT NOT NULL DEFAULT '',
+    started_at INTEGER NOT NULL,
+    completed_at INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (investigation_id, step_key),
+    FOREIGN KEY (investigation_id) REFERENCES investigations(id)
+);
+
 CREATE TABLE IF NOT EXISTS interaction_targets (
     investigation_id TEXT PRIMARY KEY,
     app_id TEXT NOT NULL,
@@ -127,6 +144,9 @@ ON jobs(status, lease_until, created_at);
 
 CREATE INDEX IF NOT EXISTS idx_query_audit_investigation
 ON query_audit(investigation_id, audit_id);
+
+CREATE INDEX IF NOT EXISTS idx_query_steps_status
+ON query_steps(status, updated_at);
 
 CREATE INDEX IF NOT EXISTS idx_evidence_ledger_investigation
 ON evidence_ledger(investigation_id, hypothesis_id, entry_id);
@@ -277,7 +297,7 @@ WITH candidate AS (
     FROM jobs j
     JOIN investigations i ON i.id = j.investigation_id
     WHERE (j.status = ? OR (j.status = ? AND j.lease_until <= ?))
-      AND i.status NOT IN (?, ?, ?)
+      AND i.status NOT IN (?, ?, ?, ?)
     ORDER BY j.created_at, j.id
     LIMIT 1
 )
@@ -286,7 +306,7 @@ SET status = ?, attempts = attempts + 1, lease_owner = ?, lease_until = ?, updat
 WHERE id = (SELECT id FROM candidate)
 RETURNING id, investigation_id, attempts, lease_until`,
 		domain.StatusQueued, domain.StatusRunning, nowMillis,
-		domain.StatusSucceeded, domain.StatusFailed, domain.StatusCancelled,
+		domain.StatusSucceeded, domain.StatusFailed, domain.StatusCancelled, domain.StatusNeedsReview,
 		domain.StatusRunning, workerID, leaseUntil.UnixMilli(), nowMillis,
 	).Scan(&job.ID, &job.InvestigationID, &job.Attempt, &leaseUntilMillis)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -468,6 +488,67 @@ WHERE id = ? AND status = ?`,
 	return nil
 }
 
+func (s *Store) FinishNeedsReview(ctx context.Context, job domain.Job, reasonCode string, now time.Time) error {
+	if !validReasonCode(reasonCode) {
+		return errors.New("stable review reason code is required")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin needs-review transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	nowMillis := now.UTC().UnixMilli()
+	result, err := tx.ExecContext(ctx, `
+UPDATE jobs
+SET status = ?, last_error = ?, lease_owner = '', lease_until = 0, updated_at = ?
+WHERE id = ? AND investigation_id = ? AND status = ? AND lease_owner = ? AND attempts = ? AND lease_until >= ?`,
+		domain.StatusNeedsReview, reasonCode, nowMillis, job.ID, job.InvestigationID,
+		domain.StatusRunning, job.LeaseOwner, job.Attempt, nowMillis)
+	if err != nil {
+		return fmt.Errorf("mark job for review: %w", err)
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("read needs-review job result: %w", err)
+	}
+	if updated != 1 {
+		return ports.ErrLeaseLost
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+UPDATE query_steps
+SET status = ?, reason_code = ?, completed_at = ?, updated_at = ?
+WHERE investigation_id = ? AND status = ? AND job_attempt = ? AND lease_owner = ?`,
+		domain.QueryStepUnknown, reasonCode, nowMillis, nowMillis,
+		job.InvestigationID, domain.QueryStepStarted, job.Attempt, job.LeaseOwner); err != nil {
+		return fmt.Errorf("mark active query steps unknown: %w", err)
+	}
+
+	result, err = tx.ExecContext(ctx, `
+UPDATE investigations
+SET status = ?, last_error = ?, updated_at = ?
+WHERE id = ? AND status = ?`,
+		domain.StatusNeedsReview, reasonCode, nowMillis, job.InvestigationID, domain.StatusRunning)
+	if err != nil {
+		return fmt.Errorf("mark investigation for review: %w", err)
+	}
+	updated, err = result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("read needs-review investigation result: %w", err)
+	}
+	if updated != 1 {
+		return ports.ErrLeaseLost
+	}
+	if err := enqueueDelivery(ctx, tx, job.InvestigationID, domain.DeliveryNeedsReview, nowMillis); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit needs-review state: %w", err)
+	}
+	return nil
+}
+
 func (s *Store) RequestCancel(ctx context.Context, investigationID string, now time.Time) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -505,6 +586,49 @@ WHERE investigation_id = ? AND status IN (?, ?)`,
 		return fmt.Errorf("cancel job: %w", err)
 	}
 	if updated == 1 {
+		unknownResult, err := tx.ExecContext(ctx, `
+UPDATE query_steps
+SET status = ?, result_json = '', output_hash = '',
+    reason_code = ?,
+    completed_at = ?, updated_at = ?
+WHERE investigation_id = ? AND status = ?`,
+			domain.QueryStepUnknown, domain.CancelReasonExternalQueryOutcomeUnknown,
+			nowMillis, nowMillis, investigationID, domain.QueryStepStarted)
+		if err != nil {
+			return fmt.Errorf("mark cancelled query steps unknown: %w", err)
+		}
+		if _, err := unknownResult.RowsAffected(); err != nil {
+			return fmt.Errorf("read cancelled unknown query-step result: %w", err)
+		}
+		// A reclaimed worker may already have changed an abandoned STARTED step
+		// to UNKNOWN but not yet committed NEEDS_REVIEW on the investigation.
+		// Count both that state and rows converted above inside this same
+		// cancellation transaction so callback ordering cannot bypass the cost
+		// acknowledgement gate.
+		var unknownCount int
+		err = tx.QueryRowContext(ctx, `
+SELECT COUNT(*) FROM query_steps
+WHERE investigation_id = ? AND status = ?`,
+			investigationID, domain.QueryStepUnknown).Scan(&unknownCount)
+		if err != nil {
+			return fmt.Errorf("count cancelled unknown query steps: %w", err)
+		}
+		if unknownCount > 0 {
+			if _, err := tx.ExecContext(ctx, `
+UPDATE investigations SET last_error = ?
+WHERE id = ? AND status = ?`,
+				domain.CancelReasonExternalQueryOutcomeUnknown,
+				investigationID, domain.StatusCancelled); err != nil {
+				return fmt.Errorf("mark cancelled investigation outcome unknown: %w", err)
+			}
+			if _, err := tx.ExecContext(ctx, `
+UPDATE jobs SET last_error = ?
+WHERE investigation_id = ? AND status = ?`,
+				domain.CancelReasonExternalQueryOutcomeUnknown,
+				investigationID, domain.StatusCancelled); err != nil {
+				return fmt.Errorf("mark cancelled job outcome unknown: %w", err)
+			}
+		}
 		if err := enqueueDelivery(ctx, tx, investigationID, domain.DeliveryCancelled, nowMillis); err != nil {
 			return err
 		}

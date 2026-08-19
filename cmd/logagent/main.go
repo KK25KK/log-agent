@@ -28,9 +28,19 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: logagent <demo|worker|feishu|sls-check|sls-smoke>")
+		return errors.New("usage: logagent <evaluate|mock-e2e|demo|worker|feishu|sls-check|sls-smoke>")
 	}
 	switch args[0] {
+	case "evaluate":
+		if len(args) != 1 {
+			return errors.New("usage: logagent evaluate")
+		}
+		return runEvaluate()
+	case "mock-e2e":
+		if len(args) != 1 {
+			return errors.New("usage: logagent mock-e2e")
+		}
+		return runMockE2E()
 	case "demo":
 		if len(args) != 1 {
 			return errors.New("usage: logagent demo")
@@ -73,7 +83,7 @@ func run(args []string) error {
 		}
 		return runSLSSmoke(loaded, args[1], args[2], args[3])
 	default:
-		return fmt.Errorf("unknown command %q; use demo, worker, feishu, sls-check, or sls-smoke", args[0])
+		return fmt.Errorf("unknown command %q; use evaluate, mock-e2e, demo, worker, feishu, sls-check, or sls-smoke", args[0])
 	}
 }
 
@@ -86,9 +96,17 @@ func runDemo() error {
 	defer store.Close()
 
 	fixedEnd := time.Date(2026, 8, 18, 10, 30, 0, 0, time.UTC)
+	checkpointedExecutor, err := application.NewCheckpointExecutor(
+		newMockExecutor(),
+		store,
+		func() time.Time { return fixedEnd.Add(time.Second) },
+	)
+	if err != nil {
+		return err
+	}
 	engine, err := eino.New(
 		ctx,
-		newMockExecutor(),
+		checkpointedExecutor,
 		func() time.Time { return fixedEnd.Add(time.Second) },
 		eino.WithChangeSource(demoChangeSource{event: domain.ChangeEvent{
 			ID: "chg_demo_release_v2", ResourceID: "mock/order-service/prod", Kind: domain.ChangeKindRelease,
@@ -155,11 +173,15 @@ func runWorker(config config.Config) error {
 	if err != nil {
 		return err
 	}
+	checkpointedExecutor, err := application.NewCheckpointExecutor(executor, store, time.Now)
+	if err != nil {
+		return err
+	}
 	changeSource, err := buildChangeSource(config)
 	if err != nil {
 		return err
 	}
-	engine, err := eino.New(ctx, executor, time.Now, eino.WithChangeSource(changeSource))
+	engine, err := eino.New(ctx, checkpointedExecutor, time.Now, eino.WithChangeSource(changeSource))
 	if err != nil {
 		return err
 	}

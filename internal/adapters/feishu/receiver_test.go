@@ -232,6 +232,32 @@ func TestReceiverReturnsCardJSONForReadOnlyViewAction(t *testing.T) {
 	}
 }
 
+func TestReceiverMapsExplicitCostAcknowledgementAction(t *testing.T) {
+	actions := &fakeActionHandler{result: domain.ActionResult{
+		View: domain.ActionViewQueuedCard,
+		Investigation: domain.Investigation{
+			ID: "inv_derived", Status: domain.StatusQueued,
+			Request: domain.InvestigationRequest{Service: "order-service", Environment: "prod"},
+		},
+		Created: true,
+	}}
+	receiver, err := New("cli_test", "secret", &fakeIntake{}, WithActionHandler(actions))
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := receiver.dispatcher.Do(context.Background(), cardActionPayload(`{"action":"rerun_with_cost_ack","investigation_id":"inv_action"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if actions.calls != 1 || actions.command.Action != domain.ActionRerunWithCostAck {
+		t.Fatalf("explicit cost acknowledgement was not mapped: calls=%d command=%#v", actions.calls, actions.command)
+	}
+	callbackResponse := response.(*callback.CardActionTriggerResponse)
+	if callbackResponse.Toast == nil || callbackResponse.Toast.Type != "success" {
+		t.Fatalf("unexpected acknowledgement response: %#v", callbackResponse)
+	}
+}
+
 func TestReceiverAcknowledgesForbiddenAndInvalidActions(t *testing.T) {
 	forbidden := &fakeActionHandler{err: ports.ErrActionForbidden}
 	receiver, err := New("cli_test", "secret", &fakeIntake{}, WithActionHandler(forbidden))

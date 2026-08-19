@@ -23,6 +23,7 @@ func TestRendererUsesJSON2AndOnlyAllowedButtons(t *testing.T) {
 		{name: "succeeded", kind: domain.DeliverySucceeded, item: cardInvestigation(domain.StatusSucceeded), actions: []string{"expand_window", "rerun", "view_evidence"}},
 		{name: "failed", kind: domain.DeliveryFailed, item: cardInvestigation(domain.StatusFailed), actions: []string{"rerun"}},
 		{name: "cancelled", kind: domain.DeliveryCancelled, item: cardInvestigation(domain.StatusCancelled), actions: []string{"rerun"}},
+		{name: "needs review", kind: domain.DeliveryNeedsReview, item: cardInvestigation(domain.StatusNeedsReview), actions: []string{"rerun_with_cost_ack"}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -103,6 +104,75 @@ func TestRendererOmitsLastErrorAndEscapesUntrustedMarkdown(t *testing.T) {
 	}
 	if strings.Contains(payload, "**admin**") || strings.Contains(payload, "<script>") {
 		t.Fatalf("untrusted markdown was not escaped: %s", payload)
+	}
+}
+
+func TestNeedsReviewDeliveryAndActionExplainManualRerunWithoutLeakingError(t *testing.T) {
+	item := cardInvestigation(domain.StatusNeedsReview)
+	item.LastError = "TOP_SECRET_PROVIDER_FAILURE select * from raw_logs"
+
+	for _, render := range []struct {
+		name string
+		card func() (cardDocument, error)
+	}{
+		{name: "delivery", card: func() (cardDocument, error) {
+			return renderDeliveryCard(domain.DeliveryJob{Kind: domain.DeliveryNeedsReview, Investigation: item})
+		}},
+		{name: "action", card: func() (cardDocument, error) {
+			return renderActionCard(domain.ActionResult{View: domain.ActionViewNeedsReviewCard, Investigation: item})
+		}},
+	} {
+		t.Run(render.name, func(t *testing.T) {
+			card, err := render.card()
+			if err != nil {
+				t.Fatal(err)
+			}
+			payload, err := marshalCard(card)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(payload, "上一次只读查询可能已执行但结果未落盘；系统没有自动重试；确认潜在重复查询成本后可新建调查") {
+				t.Fatalf("recovery contract is missing: %s", payload)
+			}
+			if strings.Contains(payload, "TOP_SECRET_PROVIDER_FAILURE") || strings.Contains(payload, "raw_logs") {
+				t.Fatalf("internal recovery detail leaked into card: %s", payload)
+			}
+			var document map[string]interface{}
+			if err := json.Unmarshal([]byte(payload), &document); err != nil {
+				t.Fatal(err)
+			}
+			actions := collectButtonActions(t, document)
+			if len(actions) != 1 || actions[0] != string(domain.ActionRerunWithCostAck) {
+				t.Fatalf("needs-review actions=%v want [rerun_with_cost_ack]", actions)
+			}
+		})
+	}
+}
+
+func TestCancelledUnknownOutcomeRequiresExplicitCostAcknowledgement(t *testing.T) {
+	item := cardInvestigation(domain.StatusCancelled)
+	item.LastError = domain.CancelReasonExternalQueryOutcomeUnknown
+	card, err := renderDeliveryCard(domain.DeliveryJob{Kind: domain.DeliveryCancelled, Investigation: item})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := marshalCard(card)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(payload, "该只读查询可能已经到达云端") || !strings.Contains(payload, "确认潜在重复查询成本") {
+		t.Fatalf("cancelled unknown-outcome warning is missing: %s", payload)
+	}
+	if strings.Contains(payload, domain.CancelReasonExternalQueryOutcomeUnknown) {
+		t.Fatalf("stable internal reason code leaked into card: %s", payload)
+	}
+	var document map[string]interface{}
+	if err := json.Unmarshal([]byte(payload), &document); err != nil {
+		t.Fatal(err)
+	}
+	actions := collectButtonActions(t, document)
+	if len(actions) != 1 || actions[0] != string(domain.ActionRerunWithCostAck) {
+		t.Fatalf("cancelled unknown-outcome actions=%v", actions)
 	}
 }
 

@@ -1,0 +1,222 @@
+{
+  "schema_version": "evaluation-dataset-v1",
+  "dataset_id": "synthetic-m5a-v1",
+  "data_source": "SYNTHETIC_MOCK",
+  "real_incident_count": 0,
+  "expert_label_count": 0,
+  "credentials_required": false,
+  "external_network_calls": 0,
+  "production_claim_allowed": false,
+  "cases": [
+    {
+      "id": "spike-supported",
+      "description": "合成错误突增与单一发布变更形成受支持候选，但不宣称根因。",
+      "request": {
+        "service": "order-service",
+        "environment": "prod",
+        "start_time": "2026-08-18T10:00:00Z",
+        "end_time": "2026-08-18T10:30:00Z",
+        "requester": {"app_id": "mock-app", "tenant_key": "mock-tenant", "user_id": "mock-user"}
+      },
+      "current": {
+        "query_id": "synthetic-supported-current",
+        "resource_id": "mock/order-service/prod",
+        "template_id": "error_analysis_v2",
+        "template_version": "error-analysis-v2",
+        "schema_fingerprint": "synthetic-schema-v1",
+        "policy_version": "synthetic-policy-v1",
+        "governance_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "progress": "Complete", "complete": true, "truncated": false,
+        "nanosecond_ordered_known": true, "nanosecond_ordered": true, "usage_known": true,
+        "processed_rows": 480, "processed_bytes": 15360, "elapsed_millisecond": 15, "api_calls": 4,
+        "redacted": false, "error_count": 120, "top_error": "payment_timeout", "top_error_count": 90,
+        "error_patterns": [{"label":"payment_timeout","count":90,"redacted":false},{"label":"inventory_lock","count":20,"redacted":false},{"label":"signature_invalid","count":10,"redacted":false}],
+        "instances": [{"label":"order-pod-a","count":80,"redacted":false},{"label":"order-pod-b","count":30,"redacted":false},{"label":"order-pod-c","count":10,"redacted":false}],
+        "error_patterns_exhaustive": true, "instances_exhaustive": true, "pattern_limit": 5, "instance_limit": 5
+      },
+      "baseline": {
+        "query_id": "synthetic-supported-baseline",
+        "resource_id": "mock/order-service/prod",
+        "template_id": "error_analysis_v2",
+        "template_version": "error-analysis-v2",
+        "schema_fingerprint": "synthetic-schema-v1",
+        "policy_version": "synthetic-policy-v1",
+        "governance_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "progress": "Complete", "complete": true, "truncated": false,
+        "nanosecond_ordered_known": true, "nanosecond_ordered": true, "usage_known": true,
+        "processed_rows": 80, "processed_bytes": 2560, "elapsed_millisecond": 12, "api_calls": 4,
+        "redacted": false, "error_count": 20, "top_error": "inventory_lock", "top_error_count": 10,
+        "error_patterns": [{"label":"inventory_lock","count":10,"redacted":false},{"label":"database_timeout","count":5,"redacted":false},{"label":"payment_timeout","count":5,"redacted":false}],
+        "instances": [{"label":"order-pod-b","count":10,"redacted":false},{"label":"order-pod-c","count":10,"redacted":false}],
+        "error_patterns_exhaustive": true, "instances_exhaustive": true, "pattern_limit": 5, "instance_limit": 5
+      },
+      "change_set": {
+        "source_version": "synthetic-changes-v1",
+        "events": [{
+          "id": "chg-supported", "resource_id": "mock/order-service/prod", "kind": "RELEASE",
+          "started_at": "2026-08-18T09:50:00Z", "completed_at": "2026-08-18T09:55:00Z",
+          "from_version": "v1", "to_version": "v2", "owner": "order-team", "summary": "synthetic supported release",
+          "affected_instances": ["order-pod-a"], "affected_instances_complete": true
+        }],
+        "complete": true, "truncated": false
+      },
+      "expected": {
+        "outcome": "spike_detected",
+        "conclusive_finding_codes": ["error_spike","error_pattern_share","new_error_pattern","instance_distribution"],
+        "nonconclusive_finding_codes": [],
+        "recommendations": [
+          {"code":"inspect_top_error_pattern","evidence_names":["current","baseline"]},
+          {"code":"compare_recent_changes","evidence_names":["current","baseline"]},
+          {"code":"inspect_hot_instance","evidence_names":["current"]}
+        ],
+        "cause_status": "COMPLETE",
+        "cause_verdicts": [{"change_id":"chg-supported","verdict":"SUPPORTED_CANDIDATE"}],
+        "logical_sls_calls": 2, "provider_api_calls": 8, "change_source_calls": 1, "max_processed_bytes": 32768
+      }
+    },
+    {
+      "id": "no-significant-spike",
+      "description": "合成当前窗口与基线差异不足两倍，变更源不得被调用。",
+      "request": {
+        "service": "catalog-service", "environment": "prod",
+        "start_time": "2026-08-18T11:00:00Z", "end_time": "2026-08-18T11:30:00Z",
+        "requester": {"app_id":"mock-app","tenant_key":"mock-tenant","user_id":"mock-user"}
+      },
+      "current": {
+        "query_id":"synthetic-nospike-current","resource_id":"mock/catalog-service/prod","template_id":"error_analysis_v2","template_version":"error-analysis-v2","schema_fingerprint":"synthetic-schema-v1","policy_version":"synthetic-policy-v1","governance_fingerprint":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "progress":"Complete","complete":true,"truncated":false,"nanosecond_ordered_known":true,"nanosecond_ordered":true,"usage_known":true,"processed_rows":120,"processed_bytes":3840,"elapsed_millisecond":10,"api_calls":4,"redacted":false,
+        "error_count":30,"top_error":"timeout","top_error_count":20,
+        "error_patterns":[{"label":"timeout","count":20,"redacted":false},{"label":"other","count":10,"redacted":false}],
+        "instances":[{"label":"catalog-pod-a","count":20,"redacted":false},{"label":"catalog-pod-b","count":10,"redacted":false}],
+        "error_patterns_exhaustive":true,"instances_exhaustive":true,"pattern_limit":5,"instance_limit":5
+      },
+      "baseline": {
+        "query_id":"synthetic-nospike-baseline","resource_id":"mock/catalog-service/prod","template_id":"error_analysis_v2","template_version":"error-analysis-v2","schema_fingerprint":"synthetic-schema-v1","policy_version":"synthetic-policy-v1","governance_fingerprint":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "progress":"Complete","complete":true,"truncated":false,"nanosecond_ordered_known":true,"nanosecond_ordered":true,"usage_known":true,"processed_rows":80,"processed_bytes":2560,"elapsed_millisecond":10,"api_calls":4,"redacted":false,
+        "error_count":20,"top_error":"timeout","top_error_count":15,
+        "error_patterns":[{"label":"timeout","count":15,"redacted":false},{"label":"other","count":5,"redacted":false}],
+        "instances":[{"label":"catalog-pod-a","count":10,"redacted":false},{"label":"catalog-pod-b","count":10,"redacted":false}],
+        "error_patterns_exhaustive":true,"instances_exhaustive":true,"pattern_limit":5,"instance_limit":5
+      },
+      "change_set":{"complete":false,"truncated":false,"reason_code":"change_source_disabled"},
+      "expected": {
+        "outcome":"no_significant_spike",
+        "conclusive_finding_codes":["no_significant_spike","error_pattern_share","instance_distribution"],
+        "nonconclusive_finding_codes":[],
+        "recommendations":[{"code":"inspect_hot_instance","evidence_names":["current"]}],
+        "cause_status":"SKIPPED_NO_SPIKE","cause_verdicts":[],
+        "logical_sls_calls":2,"provider_api_calls":8,"change_source_calls":0,"max_processed_bytes":8192
+      }
+    },
+    {
+      "id": "incomplete-observation",
+      "description": "合成当前观察不完整，必须降级为证据不足且不调用变更源。",
+      "request": {
+        "service":"payment-service","environment":"prod","start_time":"2026-08-18T12:00:00Z","end_time":"2026-08-18T12:30:00Z",
+        "requester":{"app_id":"mock-app","tenant_key":"mock-tenant","user_id":"mock-user"}
+      },
+      "current": {
+        "query_id":"synthetic-incomplete-current","resource_id":"mock/payment-service/prod","template_id":"error_analysis_v2","template_version":"error-analysis-v2","schema_fingerprint":"synthetic-schema-v1","policy_version":"synthetic-policy-v1","governance_fingerprint":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "progress":"Incomplete","complete":false,"truncated":false,"nanosecond_ordered_known":true,"nanosecond_ordered":true,"usage_known":true,"incomplete_reason":"synthetic_incomplete_fixture","processed_rows":480,"processed_bytes":15360,"elapsed_millisecond":15,"api_calls":4,"redacted":false,
+        "error_count":120,"top_error":"payment_timeout","top_error_count":90,
+        "error_patterns":[{"label":"payment_timeout","count":90,"redacted":false},{"label":"inventory_lock","count":20,"redacted":false},{"label":"signature_invalid","count":10,"redacted":false}],
+        "instances":[{"label":"payment-pod-a","count":80,"redacted":false},{"label":"payment-pod-b","count":30,"redacted":false},{"label":"payment-pod-c","count":10,"redacted":false}],
+        "error_patterns_exhaustive":true,"instances_exhaustive":true,"pattern_limit":5,"instance_limit":5
+      },
+      "baseline": {
+        "query_id":"synthetic-incomplete-baseline","resource_id":"mock/payment-service/prod","template_id":"error_analysis_v2","template_version":"error-analysis-v2","schema_fingerprint":"synthetic-schema-v1","policy_version":"synthetic-policy-v1","governance_fingerprint":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "progress":"Complete","complete":true,"truncated":false,"nanosecond_ordered_known":true,"nanosecond_ordered":true,"usage_known":true,"processed_rows":80,"processed_bytes":2560,"elapsed_millisecond":12,"api_calls":4,"redacted":false,
+        "error_count":20,"top_error":"inventory_lock","top_error_count":10,
+        "error_patterns":[{"label":"inventory_lock","count":10,"redacted":false},{"label":"database_timeout","count":5,"redacted":false},{"label":"payment_timeout","count":5,"redacted":false}],
+        "instances":[{"label":"payment-pod-b","count":10,"redacted":false},{"label":"payment-pod-c","count":10,"redacted":false}],
+        "error_patterns_exhaustive":true,"instances_exhaustive":true,"pattern_limit":5,"instance_limit":5
+      },
+      "change_set":{"complete":false,"truncated":false,"reason_code":"change_source_disabled"},
+      "expected": {
+        "outcome":"data_insufficient","conclusive_finding_codes":[],"nonconclusive_finding_codes":["data_insufficient"],
+        "recommendations":[{"code":"retry_with_narrower_window","evidence_names":["current","baseline"]}],
+        "cause_status":"INCONCLUSIVE","cause_verdicts":[],"logical_sls_calls":2,"provider_api_calls":8,"change_source_calls":0,"max_processed_bytes":32768
+      }
+    },
+    {
+      "id": "spike-refuted",
+      "description": "合成完整实例分布与变更影响范围零重叠，变更候选应被反证。",
+      "request": {
+        "service":"checkout-service","environment":"prod","start_time":"2026-08-18T13:00:00Z","end_time":"2026-08-18T13:30:00Z",
+        "requester":{"app_id":"mock-app","tenant_key":"mock-tenant","user_id":"mock-user"}
+      },
+      "current": {
+        "query_id":"synthetic-refuted-current","resource_id":"mock/checkout-service/prod","template_id":"error_analysis_v2","template_version":"error-analysis-v2","schema_fingerprint":"synthetic-schema-v1","policy_version":"synthetic-policy-v1","governance_fingerprint":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "progress":"Complete","complete":true,"truncated":false,"nanosecond_ordered_known":true,"nanosecond_ordered":true,"usage_known":true,"processed_rows":480,"processed_bytes":15360,"elapsed_millisecond":15,"api_calls":4,"redacted":false,
+        "error_count":120,"top_error":"payment_timeout","top_error_count":90,
+        "error_patterns":[{"label":"payment_timeout","count":90,"redacted":false},{"label":"inventory_lock","count":20,"redacted":false},{"label":"signature_invalid","count":10,"redacted":false}],
+        "instances":[{"label":"checkout-pod-a","count":80,"redacted":false},{"label":"checkout-pod-b","count":30,"redacted":false},{"label":"checkout-pod-c","count":10,"redacted":false}],
+        "error_patterns_exhaustive":true,"instances_exhaustive":true,"pattern_limit":5,"instance_limit":5
+      },
+      "baseline": {
+        "query_id":"synthetic-refuted-baseline","resource_id":"mock/checkout-service/prod","template_id":"error_analysis_v2","template_version":"error-analysis-v2","schema_fingerprint":"synthetic-schema-v1","policy_version":"synthetic-policy-v1","governance_fingerprint":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "progress":"Complete","complete":true,"truncated":false,"nanosecond_ordered_known":true,"nanosecond_ordered":true,"usage_known":true,"processed_rows":80,"processed_bytes":2560,"elapsed_millisecond":12,"api_calls":4,"redacted":false,
+        "error_count":20,"top_error":"inventory_lock","top_error_count":10,
+        "error_patterns":[{"label":"inventory_lock","count":10,"redacted":false},{"label":"database_timeout","count":5,"redacted":false},{"label":"payment_timeout","count":5,"redacted":false}],
+        "instances":[{"label":"checkout-pod-b","count":10,"redacted":false},{"label":"checkout-pod-c","count":10,"redacted":false}],
+        "error_patterns_exhaustive":true,"instances_exhaustive":true,"pattern_limit":5,"instance_limit":5
+      },
+      "change_set": {
+        "source_version":"synthetic-changes-v1","events":[{
+          "id":"chg-refuted","resource_id":"mock/checkout-service/prod","kind":"CONFIG","started_at":"2026-08-18T12:50:00Z","completed_at":"2026-08-18T12:55:00Z",
+          "owner":"checkout-team","summary":"synthetic unrelated config","affected_instances":["other-pod"],"affected_instances_complete":true
+        }],"complete":true,"truncated":false
+      },
+      "expected": {
+        "outcome":"spike_detected","conclusive_finding_codes":["error_spike","error_pattern_share","new_error_pattern","instance_distribution"],"nonconclusive_finding_codes":[],
+        "recommendations":[
+          {"code":"inspect_top_error_pattern","evidence_names":["current","baseline"]},
+          {"code":"compare_recent_changes","evidence_names":["current","baseline"]},
+          {"code":"inspect_hot_instance","evidence_names":["current"]}
+        ],
+        "cause_status":"COMPLETE","cause_verdicts":[{"change_id":"chg-refuted","verdict":"REFUTED"}],
+        "logical_sls_calls":2,"provider_api_calls":8,"change_source_calls":1,"max_processed_bytes":32768
+      }
+    },
+    {
+      "id": "spike-inconclusive",
+      "description": "合成变更集合覆盖不完整，相关性必须保持不确定。",
+      "request": {
+        "service":"shipping-service","environment":"prod","start_time":"2026-08-18T14:00:00Z","end_time":"2026-08-18T14:30:00Z",
+        "requester":{"app_id":"mock-app","tenant_key":"mock-tenant","user_id":"mock-user"}
+      },
+      "current": {
+        "query_id":"synthetic-inconclusive-current","resource_id":"mock/shipping-service/prod","template_id":"error_analysis_v2","template_version":"error-analysis-v2","schema_fingerprint":"synthetic-schema-v1","policy_version":"synthetic-policy-v1","governance_fingerprint":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "progress":"Complete","complete":true,"truncated":false,"nanosecond_ordered_known":true,"nanosecond_ordered":true,"usage_known":true,"processed_rows":480,"processed_bytes":15360,"elapsed_millisecond":15,"api_calls":4,"redacted":false,
+        "error_count":120,"top_error":"payment_timeout","top_error_count":90,
+        "error_patterns":[{"label":"payment_timeout","count":90,"redacted":false},{"label":"inventory_lock","count":20,"redacted":false},{"label":"signature_invalid","count":10,"redacted":false}],
+        "instances":[{"label":"shipping-pod-a","count":80,"redacted":false},{"label":"shipping-pod-b","count":30,"redacted":false},{"label":"shipping-pod-c","count":10,"redacted":false}],
+        "error_patterns_exhaustive":true,"instances_exhaustive":true,"pattern_limit":5,"instance_limit":5
+      },
+      "baseline": {
+        "query_id":"synthetic-inconclusive-baseline","resource_id":"mock/shipping-service/prod","template_id":"error_analysis_v2","template_version":"error-analysis-v2","schema_fingerprint":"synthetic-schema-v1","policy_version":"synthetic-policy-v1","governance_fingerprint":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "progress":"Complete","complete":true,"truncated":false,"nanosecond_ordered_known":true,"nanosecond_ordered":true,"usage_known":true,"processed_rows":80,"processed_bytes":2560,"elapsed_millisecond":12,"api_calls":4,"redacted":false,
+        "error_count":20,"top_error":"inventory_lock","top_error_count":10,
+        "error_patterns":[{"label":"inventory_lock","count":10,"redacted":false},{"label":"database_timeout","count":5,"redacted":false},{"label":"payment_timeout","count":5,"redacted":false}],
+        "instances":[{"label":"shipping-pod-b","count":10,"redacted":false},{"label":"shipping-pod-c","count":10,"redacted":false}],
+        "error_patterns_exhaustive":true,"instances_exhaustive":true,"pattern_limit":5,"instance_limit":5
+      },
+      "change_set": {
+        "source_version":"synthetic-changes-v1","events":[{
+          "id":"chg-inconclusive","resource_id":"mock/shipping-service/prod","kind":"RELEASE","started_at":"2026-08-18T13:50:00Z","completed_at":"2026-08-18T13:55:00Z",
+          "from_version":"v1","to_version":"v2","owner":"shipping-team","summary":"synthetic bounded release","affected_instances":["shipping-pod-a"],"affected_instances_complete":true
+        }],"complete":false,"truncated":false,"reason_code":"synthetic_change_coverage_incomplete"
+      },
+      "expected": {
+        "outcome":"spike_detected","conclusive_finding_codes":["error_spike","error_pattern_share","new_error_pattern","instance_distribution"],"nonconclusive_finding_codes":[],
+        "recommendations":[
+          {"code":"inspect_top_error_pattern","evidence_names":["current","baseline"]},
+          {"code":"compare_recent_changes","evidence_names":["current","baseline"]},
+          {"code":"inspect_hot_instance","evidence_names":["current"]}
+        ],
+        "cause_status":"INCONCLUSIVE","cause_verdicts":[{"change_id":"chg-inconclusive","verdict":"INCONCLUSIVE"}],
+        "logical_sls_calls":2,"provider_api_calls":8,"change_source_calls":1,"max_processed_bytes":32768
+      }
+    }
+  ]
+}

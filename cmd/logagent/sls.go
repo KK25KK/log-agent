@@ -15,6 +15,7 @@ import (
 	"logagent/internal/adapters/resourcecatalog"
 	"logagent/internal/adapters/slsmock"
 	"logagent/internal/adapters/sqlite"
+	"logagent/internal/application"
 	queryapp "logagent/internal/application/query"
 	"logagent/internal/config"
 	"logagent/internal/domain"
@@ -22,11 +23,11 @@ import (
 	"logagent/internal/ports"
 )
 
-func newMockExecutor() ports.SLSExecutor {
+func newMockExecutor() application.GovernedSLSExecutor {
 	return &slsmock.Executor{}
 }
 
-func buildWorkerExecutor(config config.Config, auditor ports.QueryAuditor) (ports.SLSExecutor, error) {
+func buildWorkerExecutor(config config.Config, auditor ports.QueryAuditor) (application.GovernedSLSExecutor, error) {
 	if config.SLS.Mode == "mock" {
 		return newMockExecutor(), nil
 	}

@@ -18,6 +18,11 @@ import (
 	"logagent/internal/ports"
 )
 
+// GraphVersion is emitted by the offline evaluation report so changes to the
+// deterministic orchestration contract can be compared with the dataset and
+// gate-policy versions that produced a result.
+const GraphVersion = "error-spike-investigation-v1"
+
 type graphInput struct {
 	InvestigationID string
 	Request         domain.InvestigationRequest
@@ -191,6 +196,7 @@ func executeQueries(ctx context.Context, executor ports.SLSExecutor, plan queryP
 			TemplateVersion:         result.TemplateVersion,
 			SchemaFingerprint:       result.SchemaFingerprint,
 			PolicyVersion:           result.PolicyVersion,
+			GovernanceFingerprint:   result.GovernanceFingerprint,
 			Name:                    spec.Name,
 			StartTime:               spec.StartTime,
 			EndTime:                 spec.EndTime,
@@ -217,7 +223,34 @@ func executeQueries(ctx context.Context, executor ports.SLSExecutor, plan queryP
 			InstanceLimit:           result.InstanceLimit,
 		})
 	}
+	if err := validateCrossWindowGovernance(evidence); err != nil {
+		return queryObservations{}, err
+	}
 	return queryObservations{InvestigationID: plan.InvestigationID, Evidence: evidence}, nil
+}
+
+func validateCrossWindowGovernance(evidence []domain.Evidence) error {
+	if len(evidence) != 2 {
+		return errors.New("current and baseline governance evidence are required")
+	}
+	current, baseline := evidence[0], evidence[1]
+	if !validSHA256Fingerprint(current.GovernanceFingerprint) || current.GovernanceFingerprint != baseline.GovernanceFingerprint {
+		return errors.New("current and baseline query governance fingerprints differ")
+	}
+	if current.ResourceID == "" || current.ResourceID != baseline.ResourceID {
+		return errors.New("current and baseline governed resources differ")
+	}
+	if current.TemplateID == "" || current.TemplateID != baseline.TemplateID ||
+		current.TemplateVersion == "" || current.TemplateVersion != baseline.TemplateVersion {
+		return errors.New("current and baseline governed templates differ")
+	}
+	if current.SchemaFingerprint == "" || current.SchemaFingerprint != baseline.SchemaFingerprint {
+		return errors.New("current and baseline governed schemas differ")
+	}
+	if current.PolicyVersion == "" || current.PolicyVersion != baseline.PolicyVersion {
+		return errors.New("current and baseline query policies differ")
+	}
+	return nil
 }
 
 func buildReport(observations queryObservations, generatedAt time.Time) graphOutput {
@@ -771,6 +804,9 @@ func validateQueryResult(result domain.QueryResult) error {
 	if result.QueryID == "" {
 		return errors.New("query ID is required")
 	}
+	if !validSHA256Fingerprint(result.GovernanceFingerprint) {
+		return errors.New("query governance fingerprint is required")
+	}
 	if result.ErrorCount < 0 || result.TopErrorCount < 0 || result.TopErrorCount > result.ErrorCount {
 		return errors.New("error counts are inconsistent")
 	}
@@ -805,6 +841,14 @@ func validateQueryResult(result domain.QueryResult) error {
 		return errors.New("top error does not match the first error-pattern bucket")
 	}
 	return nil
+}
+
+func validSHA256Fingerprint(value string) bool {
+	if len(value) != sha256.Size*2 {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil
 }
 
 func validateBuckets(name string, buckets []domain.CountBucket, limit int, total int64) (int64, error) {

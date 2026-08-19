@@ -39,7 +39,7 @@ func (s *ActionService) Handle(ctx context.Context, command domain.ActionCommand
 	if err := validateActionCommand(command); err != nil {
 		return domain.ActionResult{}, fmt.Errorf("%w: %v", ports.ErrActionInvalid, err)
 	}
-	if command.Action == domain.ActionRerun || command.Action == domain.ActionExpandWindow {
+	if command.Action == domain.ActionRerun || command.Action == domain.ActionRerunWithCostAck || command.Action == domain.ActionExpandWindow {
 		replayedID, replayErr := s.store.ResolveActionReplay(
 			ctx,
 			command.Principal.AppID,
@@ -99,6 +99,9 @@ func (s *ActionService) Handle(ctx context.Context, command domain.ActionCommand
 
 	switch command.Action {
 	case domain.ActionViewReport:
+		if investigation.Status == domain.StatusNeedsReview {
+			return domain.ActionResult{View: domain.ActionViewNeedsReviewCard, Investigation: investigation}, nil
+		}
 		return domain.ActionResult{View: domain.ActionViewReportCard, Investigation: investigation}, nil
 	case domain.ActionViewEvidence:
 		if investigation.Report == nil {
@@ -107,7 +110,7 @@ func (s *ActionService) Handle(ctx context.Context, command domain.ActionCommand
 		return domain.ActionResult{View: domain.ActionViewEvidenceCard, Investigation: investigation}, nil
 	case domain.ActionCancel:
 		return s.cancel(ctx, investigation, command)
-	case domain.ActionRerun, domain.ActionExpandWindow:
+	case domain.ActionRerun, domain.ActionRerunWithCostAck, domain.ActionExpandWindow:
 		return s.derive(ctx, investigation, command)
 	default:
 		return domain.ActionResult{}, fmt.Errorf("%w: unsupported action", ports.ErrActionInvalid)
@@ -141,8 +144,16 @@ func (s *ActionService) derive(ctx context.Context, source domain.Investigation,
 	if command.EventID == "" {
 		return domain.ActionResult{}, fmt.Errorf("%w: callback event ID is required", ports.ErrActionInvalid)
 	}
-	if source.Status != domain.StatusSucceeded && source.Status != domain.StatusFailed && source.Status != domain.StatusCancelled {
+	if source.Status != domain.StatusSucceeded && source.Status != domain.StatusFailed && source.Status != domain.StatusCancelled && source.Status != domain.StatusNeedsReview {
 		return domain.ActionResult{}, fmt.Errorf("%w: investigation is not terminal", ports.ErrActionInvalid)
+	}
+	requiresCostAck := source.Status == domain.StatusNeedsReview ||
+		(source.Status == domain.StatusCancelled && source.LastError == domain.CancelReasonExternalQueryOutcomeUnknown)
+	if requiresCostAck && command.Action != domain.ActionRerunWithCostAck {
+		return domain.ActionResult{}, fmt.Errorf("%w: an unknown external outcome requires explicit cost acknowledgement", ports.ErrActionInvalid)
+	}
+	if !requiresCostAck && command.Action == domain.ActionRerunWithCostAck {
+		return domain.ActionResult{}, fmt.Errorf("%w: cost acknowledgement is not valid for this investigation", ports.ErrActionInvalid)
 	}
 	request := source.Request
 	if command.Action == domain.ActionExpandWindow {
@@ -178,6 +189,8 @@ func actionViewForInvestigation(investigation domain.Investigation) domain.Actio
 		return domain.ActionViewRunningCard
 	case domain.StatusCancelled:
 		return domain.ActionViewCancelledCard
+	case domain.StatusNeedsReview:
+		return domain.ActionViewNeedsReviewCard
 	default:
 		return domain.ActionViewReportCard
 	}
@@ -187,7 +200,7 @@ func validateActionCommand(command domain.ActionCommand) error {
 	if !command.Principal.Complete() || command.InvestigationID == "" || command.ChatID == "" || command.CardMessageID == "" {
 		return errors.New("trusted identity, investigation, chat, and card message are required")
 	}
-	if (command.Action == domain.ActionCancel || command.Action == domain.ActionExpandWindow || command.Action == domain.ActionRerun) && command.EventID == "" {
+	if (command.Action == domain.ActionCancel || command.Action == domain.ActionExpandWindow || command.Action == domain.ActionRerun || command.Action == domain.ActionRerunWithCostAck) && command.EventID == "" {
 		return errors.New("mutating actions require a callback event ID")
 	}
 	return nil

@@ -85,7 +85,7 @@ func deliverySequence(kind domain.DeliveryKind) (int, error) {
 		return 10, nil
 	case domain.DeliveryRunning:
 		return 20, nil
-	case domain.DeliverySucceeded, domain.DeliveryFailed, domain.DeliveryCancelled:
+	case domain.DeliverySucceeded, domain.DeliveryFailed, domain.DeliveryCancelled, domain.DeliveryNeedsReview:
 		return 30, nil
 	default:
 		return 0, fmt.Errorf("unknown delivery kind %q", kind)

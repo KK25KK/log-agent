@@ -6,11 +6,12 @@ import "time"
 type DeliveryKind string
 
 const (
-	DeliveryQueued    DeliveryKind = "QUEUED"
-	DeliveryRunning   DeliveryKind = "RUNNING"
-	DeliverySucceeded DeliveryKind = "SUCCEEDED"
-	DeliveryFailed    DeliveryKind = "FAILED"
-	DeliveryCancelled DeliveryKind = "CANCELLED"
+	DeliveryQueued      DeliveryKind = "QUEUED"
+	DeliveryRunning     DeliveryKind = "RUNNING"
+	DeliverySucceeded   DeliveryKind = "SUCCEEDED"
+	DeliveryFailed      DeliveryKind = "FAILED"
+	DeliveryCancelled   DeliveryKind = "CANCELLED"
+	DeliveryNeedsReview DeliveryKind = "NEEDS_REVIEW"
 )
 
 // DeliveryStatus is the local Feishu delivery lifecycle.
@@ -53,6 +54,9 @@ const (
 	ActionCancel       InvestigationAction = "cancel"
 	ActionExpandWindow InvestigationAction = "expand_window"
 	ActionRerun        InvestigationAction = "rerun"
+	// ActionRerunWithCostAck is emitted only by cards that explicitly warn
+	// that a previous metered query may already have executed.
+	ActionRerunWithCostAck InvestigationAction = "rerun_with_cost_ack"
 )
 
 type ActionCommand struct {
@@ -68,11 +72,12 @@ type ActionCommand struct {
 type ActionView string
 
 const (
-	ActionViewReportCard    ActionView = "REPORT"
-	ActionViewEvidenceCard  ActionView = "EVIDENCE"
-	ActionViewQueuedCard    ActionView = "QUEUED"
-	ActionViewRunningCard   ActionView = "RUNNING"
-	ActionViewCancelledCard ActionView = "CANCELLED"
+	ActionViewReportCard      ActionView = "REPORT"
+	ActionViewEvidenceCard    ActionView = "EVIDENCE"
+	ActionViewQueuedCard      ActionView = "QUEUED"
+	ActionViewRunningCard     ActionView = "RUNNING"
+	ActionViewCancelledCard   ActionView = "CANCELLED"
+	ActionViewNeedsReviewCard ActionView = "NEEDS_REVIEW"
 )
 
 type ActionResult struct {

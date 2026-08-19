@@ -98,6 +98,8 @@ func renderDeliveryCard(delivery domain.DeliveryJob) (cardDocument, error) {
 		return renderFailedCard(delivery.Investigation), nil
 	case domain.DeliveryCancelled:
 		return renderCancelledCard(delivery.Investigation), nil
+	case domain.DeliveryNeedsReview:
+		return renderNeedsReviewCard(delivery.Investigation), nil
 	default:
 		return cardDocument{}, fmt.Errorf("unsupported delivery kind %q", delivery.Kind)
 	}
@@ -111,6 +113,8 @@ func renderActionCard(result domain.ActionResult) (cardDocument, error) {
 		return renderRunningCard(result.Investigation), nil
 	case domain.ActionViewCancelledCard:
 		return renderCancelledCard(result.Investigation), nil
+	case domain.ActionViewNeedsReviewCard:
+		return renderNeedsReviewCard(result.Investigation), nil
 	case domain.ActionViewReportCard:
 		return renderReportCard(result.Investigation), nil
 	case domain.ActionViewEvidenceCard:
@@ -385,12 +389,34 @@ func renderFailedCard(investigation domain.Investigation) cardDocument {
 
 func renderCancelledCard(investigation domain.Investigation) cardDocument {
 	elements := summaryElements(investigation)
+	if investigation.LastError == domain.CancelReasonExternalQueryOutcomeUnknown {
+		// The stable reason code is used only as a branch condition and is never
+		// rendered. It cannot contain provider or deployment diagnostics.
+		elements = append(elements,
+			cardDivider{Tag: "hr"},
+			markdown("**状态：** 已取消，但查询结果未知\n\n取消已生效，系统不会接收或自动重试上一次结果；该只读查询可能已经到达云端。确认潜在重复查询成本后，才能新建调查。"),
+			buttonRow(investigation.ID, buttonSpec{label: "确认成本并重新运行", action: domain.ActionRerunWithCostAck, style: "primary"}),
+		)
+		return newCard("日志调查已取消：需要确认", "orange", elements)
+	}
 	elements = append(elements,
 		cardDivider{Tag: "hr"},
 		markdown("**状态：** 已取消\n\n该调查不会再提交新的有效结果。"),
 		buttonRow(investigation.ID, buttonSpec{label: "重新运行", action: domain.ActionRerun, style: "primary"}),
 	)
 	return newCard("日志调查已取消", "grey", elements)
+}
+
+func renderNeedsReviewCard(investigation domain.Investigation) cardDocument {
+	elements := summaryElements(investigation)
+	// LastError is intentionally excluded: the review state communicates only
+	// the bounded recovery contract, never provider or deployment diagnostics.
+	elements = append(elements,
+		cardDivider{Tag: "hr"},
+		markdown("**状态：** 需要人工确认\n\n上一次只读查询可能已执行但结果未落盘；系统没有自动重试；确认潜在重复查询成本后可新建调查。"),
+		buttonRow(investigation.ID, buttonSpec{label: "确认成本并重新运行", action: domain.ActionRerunWithCostAck, style: "primary"}),
+	)
+	return newCard("日志调查需要确认", "orange", elements)
 }
 
 func summaryElements(investigation domain.Investigation) []any {
