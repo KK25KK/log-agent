@@ -1,8 +1,8 @@
 # M5-B：Agent 自观测与离线回放
 
-> 阶段：第七期 B1 + 第八期 B2
+> 阶段：第七期 B1 + 第八期 B2 + 第九期 B3
 >
-> 当前状态：B1 事件/版本合同和 B2 append-only 回放历史均已完成主体代码与离线验收；B3 趋势比较与反馈闭环未开始
+> 当前状态：B1 事件/版本合同、B2 append-only 回放历史和 B3 兼容快照比较均已完成主体代码与离线验收；真实反馈闭环仍待 M5-C
 >
 > 数据边界：五个 Case、SLS 聚合、变更事件和全部外部边界均为仓库内置合成 Mock；不读取凭据，外部网络调用为 0
 >
@@ -19,7 +19,7 @@ M5-A 已能判断“合成 Case 的最终报告是否正确”，但只看最终
 - 数据集、Graph、模板、策略或评测规则变化后，两次数字是否仍在同一版本合同下；
 - Trace 丢事件、层级断裂或混入不允许内容时，离线门禁能否失败。
 
-B1 因此先落地一个框架无关、隐私有界的 Agent 事件合同和统一版本清单。B2 在这个稳定合同之上追加严格快照和当前二进制回放，让“最终结果正确”和“执行路径可验证”都能作为历史制品保存；跨运行趋势比较仍留给 B3。
+B1 因此先落地一个框架无关、隐私有界的 Agent 事件合同和统一版本清单。B2 在这个稳定合同之上追加严格快照和当前二进制回放，让“最终结果正确”和“执行路径可验证”都能作为历史制品保存；B3 再对兼容快照进行只读比较，识别回归、恢复和版本变化。
 
 ```text
 synthetic-m5a-v1 数据集
@@ -110,7 +110,7 @@ SHA-256 用于完整性、关联和版本识别，不是匿名化手段；敏感
 
 版本指纹绑定的是规范化行为合同，不包含主机名或墙上时钟。任一清单字段变化都应形成新指纹，不能把不同合同下的评测数字直接视为同一条趋势。
 
-`evaluation-replay-v1` 已成为 B2 快照的实际 Schema，并继续纳入版本指纹。B2 已提供独立 Evaluation Run Store 和 `replay` 命令；`replay-compare` 仍属于 B3。
+`evaluation-replay-v1` 是 B2 快照 Schema，并继续纳入版本指纹；B3 的临时比较投影使用 `evaluation-replay-comparison-v1`。比较结果不写回快照 Store，也不改变运行版本指纹。
 
 ## 4. Trace 门禁如何判定
 
@@ -175,6 +175,34 @@ go run ./cmd/logagent replay --snapshot-dir .\data\evaluation-runs --run-id eval
 
 回放不会调用飞书、SLS、发布平台或模型服务，也不会执行源快照对应的历史代码。它只回答“当前二进制在同一内置合成输入上现在会得到什么结果”。
 
+### 5.3 比较两个已保存快照
+
+```powershell
+go run ./cmd/logagent replay-compare `
+  --snapshot-dir .\data\evaluation-runs `
+  --base-run-id evalrun_base `
+  --candidate-run-id evalrun_candidate
+```
+
+命令严格读取并校验两个文件，但不会运行 Eino Graph、Fixture Mock 或任何外部客户端。只有以下边界完全相同才会返回 `COMPARABLE`：
+
+- Dataset Schema、ID 和内容指纹；
+- `DataBoundary` 的数据来源、真实故障数、专家标签数、凭据、外部网络和生产声明标志；
+- Executor Profile；
+- Case ID 集合。
+
+Graph、模板、策略、原因方法、评测规则与 Prompt/模型元数据发生变化时不会被静默忽略，而是进入 `version_changes`。Trace/Replay Schema 不是运行时可比较版本字段：当前严格 Reader 只接受当前关闭集合的 Schema 版本，版本不匹配会在加载快照时直接 fail closed，不会进入比较结果。兼容结果还包含：
+
+- Evaluation 状态和快照安全失败码变化；
+- 每个固定 Gate 的通过、失败、新增、移除和恢复状态；候选删除基线中任何既有 Gate 都记为回归；
+- `newly_failed`、`recovered`、`still_failed` Case；
+- 27 项关闭集合的质量、成本代理、工具、Trace 和本机时延观测差值；
+- `sls.current`、`sls.baseline`、`change_source.list` 三个固定工具的 Span、调用和字节差值；
+- 关闭集合 Agent failure code 的计数变化；
+- 按固定高优/低优方向推导的 `regressions`。
+
+数据集、边界、执行 Profile 或 Case 集不兼容时，结果为 `INCOMPARABLE`，只包含两个不可变 Run 引用和稳定原因码，不包含版本、指标、工具、Gate 或 Case 差值；命令在打印 JSON 后以非零状态退出。时延是观察值，不参与生产 SLO 判定。
+
 ## 6. 离线验收记录
 
 | 检查 | 结果 |
@@ -186,13 +214,15 @@ go run ./cmd/logagent replay --snapshot-dir .\data\evaluation-runs --run-id eval
 | 工具用量核对 | 10 次逻辑 SLS 观察、40 次 Provider 调用代理、3 次 Change Source 调用、78,080 processed bytes |
 | append-only 快照 | 一次保存 + 一次回放形成两个不同 Run 文件；子快照绑定源 Run 与源 SHA-256 |
 | 严格读取 | 重复 Run、未知字段/Schema、篡改哈希、非法路径和不兼容数据集均有离线拒绝测试 |
+| `replay-compare` | 两个同合同快照返回 `COMPARABLE`、27 项指标、3 个工具维度、0 回归；版本变化、Case 回归/恢复和安全失败码有离线测试 |
+| 不兼容比较 | Dataset Schema/ID/指纹、数据边界、Executor Profile 或 Case 集不一致时返回 delta-free `INCOMPARABLE` |
 | 数据与运行边界 | `SYNTHETIC_MOCK`；真实故障 0、专家标注 0、外部网络调用 0、不需要凭据 |
 | 数据集 / 版本指纹 | `caf2714c80a646c5da15134c6557879565ffc8e083a66da1f1c9e49d3d0dc1f8` / `14db14acf992ebd06d9d4d71f89056be2a2b984baeb6bf5de2c136db442f7c53` |
 | `go test -race ./...` | 未执行；当前 Windows 环境 `CGO_ENABLED=0` 且未安装 GCC，不能记为通过 |
 
 验收数字只说明当前二进制在仓库内置五个合成 Case 上满足固定工程合同。它没有验证真实飞书、真实 SLS、发布平台、跨进程 Trace、生产并发、网络抖动、采样保留或 SLO。
 
-## 7. 后续切片
+## 7. 切片状态与后续输入
 
 ### B2：append-only 离线回放历史（代码与离线验收完成）
 
@@ -201,11 +231,12 @@ go run ./cmd/logagent replay --snapshot-dir .\data\evaluation-runs --run-id eval
 - `evaluate --snapshot-dir` 与只使用当前二进制/合成 Mock 的 `replay` 命令已落地；复现旧实现仍依赖旧 Git Commit 或构建制品；
 - 重复写入、篡改、未知 Schema/字段、非法路径、不完整文件和不兼容数据边界都会 fail closed。
 
-### B3：趋势比较与反馈闭环（未开始）
+### B3：趋势比较与反馈闭环（代码与离线验收完成）
 
-- 比较兼容快照的质量门禁、失败 Case、安全错误代码、工具调用、Trace 完整性和成本代理；
-- 数据集边界或 Executor Profile 不兼容时返回 `INCOMPARABLE`，不制造伪精确差值；
-- 为后续真实专家反馈保留关联接口，但不把合成标签冒充真实反馈。
+- 已比较兼容快照的质量门禁、失败 Case、安全错误代码、工具调用、Trace 完整性、成本代理和观测时延；
+- 数据集边界、Executor Profile 或 Case 集不兼容时返回 delta-free `INCOMPARABLE`；
+- 结果只引用安全 Run/Case/Gate/版本/指标代码，没有复制报告、日志、查询或自由文本；
+- 当前只形成未来反馈关联所需的稳定 Run/Case 身份，尚未接入真实专家反馈，不能把合成标签冒充真实反馈。
 
 ### 真实系统能力（不在 B1/B2/B3 内自动获得）
 

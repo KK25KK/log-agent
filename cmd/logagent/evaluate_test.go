@@ -153,11 +153,89 @@ func TestExecuteArchivedEvaluationPersistsGateFailure(t *testing.T) {
 	}
 }
 
+func TestExecuteReplayComparisonLoadsStrictSnapshotsWithoutReexecution(t *testing.T) {
+	dataset, err := evaluation.LoadSyntheticV1()
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := replayfs.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := func() time.Time { return time.Date(2026, 8, 20, 11, 0, 0, 0, time.UTC) }
+	base, err := executeArchivedEvaluation(context.Background(), dataset, store, nil, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := executeArchivedEvaluation(context.Background(), dataset, store, nil, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	comparison, err := executeReplayComparison(context.Background(), store, base.EvaluationRunID, candidate.EvaluationRunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if comparison.Status != replay.ComparisonComparable || comparison.Base != base.Reference() || comparison.Candidate != candidate.Reference() {
+		t.Fatalf("unexpected comparison: %#v", comparison)
+	}
+	if len(comparison.Regressions) != 0 || comparison.CaseTransitions == nil || len(comparison.CaseTransitions.NewlyFailed) != 0 || len(comparison.ToolDeltas) != 3 {
+		t.Fatalf("identical synthetic runs drifted: %#v", comparison)
+	}
+}
+
+func TestExecuteReplayComparisonReturnsDeltaFreeIncomparableBoundary(t *testing.T) {
+	dataset, err := evaluation.LoadSyntheticV1()
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := replayfs.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := func() time.Time { return time.Date(2026, 8, 20, 11, 30, 0, 0, time.UTC) }
+	base, err := executeArchivedEvaluation(context.Background(), dataset, store, nil, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidateReport := base.Report
+	candidateReport.EvaluationRunID = "evalrun_incompatible_boundary"
+	candidateReport.DataBoundary.ExpertLabelCount++
+	for caseIndex := range candidateReport.Cases {
+		candidateReport.Cases[caseIndex].AgentTrace.EvaluationRunID = candidateReport.EvaluationRunID
+		for eventIndex := range candidateReport.Cases[caseIndex].AgentTrace.Events {
+			candidateReport.Cases[caseIndex].AgentTrace.Events[eventIndex].EvaluationRunID = candidateReport.EvaluationRunID
+		}
+	}
+	candidate, err := replay.New(candidateReport, nil, nil, now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Append(context.Background(), candidate); err != nil {
+		t.Fatal(err)
+	}
+	comparison, err := executeReplayComparison(context.Background(), store, base.EvaluationRunID, candidate.EvaluationRunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if comparison.Status != replay.ComparisonIncomparable || len(comparison.IncompatibilityCodes) == 0 || len(comparison.MetricDeltas) != 0 || comparison.CaseTransitions != nil || len(comparison.Regressions) != 0 {
+		t.Fatalf("incomparable boundary emitted pseudo-deltas: %#v", comparison)
+	}
+}
+
 func TestEvaluationAndReplayOptionParsingFailsClosed(t *testing.T) {
 	if _, err := parseEvaluateOptions([]string{"unexpected"}); err == nil {
 		t.Fatal("evaluate accepted a positional argument")
 	}
 	if _, _, err := parseReplayOptions([]string{"--snapshot-dir", t.TempDir()}); err == nil {
 		t.Fatal("replay accepted a missing run ID")
+	}
+	if _, _, _, err := parseReplayCompareOptions([]string{"--snapshot-dir", t.TempDir(), "--base-run-id", "base"}); err == nil {
+		t.Fatal("replay-compare accepted a missing candidate run ID")
+	}
+	directory, baseRunID, candidateRunID, err := parseReplayCompareOptions([]string{
+		"--snapshot-dir", t.TempDir(), "--base-run-id", "base", "--candidate-run-id", "candidate",
+	})
+	if err != nil || directory == "" || baseRunID != "base" || candidateRunID != "candidate" {
+		t.Fatalf("valid replay-compare options were rejected: dir=%q base=%q candidate=%q err=%v", directory, baseRunID, candidateRunID, err)
 	}
 }

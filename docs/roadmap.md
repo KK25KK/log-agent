@@ -154,18 +154,42 @@ M5-A 的指标只说明代码对受控合成样例没有回归，不是历史真
 - `evaluate --snapshot-dir` 保存成功与门禁失败运行；`replay` 严格验证源快照后追加带父引用的新运行。
 - 同一 Run 不覆盖；重复写入、未知字段/Schema、内容哈希变化、非法路径和不兼容合成数据边界均 fail closed。
 
-#### B3：趋势比较与反馈闭环（未开始）
+#### B3：趋势比较与反馈闭环（代码与离线验收完成）
 
-- `replay-compare` 比较质量门禁、失败 Case、错误分类、Trace 完整性、工具调用和成本代理。
+- `replay-compare` 比较质量门禁、失败 Case、错误分类、Trace 完整性、工具调用和成本代理；候选删除任何既有 Gate 都记为回归。
 - 数据集边界或执行 Profile 不兼容时返回 `INCOMPARABLE`，不输出伪精确差值。
 - 回放趋势与失败样例归档为后续真实专家反馈提供接口，但不冒充真实标注。
 
+验收：比较命令只读加载两个已校验快照，不执行 Graph 或 Provider；兼容运行输出显式版本变化、固定质量/成本/工具/Trace/时延观测差值、门禁变化及 recovered/newly-failed/still-failed Case，不兼容运行只输出稳定原因码并以非零状态结束。当前验证数据全部为仓库内置合成 Mock，真实专家反馈仍未接入。
+
 当前无 LLM，因此 Prompt、Model、Token 指标继续标记为不适用；`evaluation-replay-v1` 在 B1 中只作为版本合同存在，不代表已经保存回放快照。真实 Trace 后端、采样/保留策略、生产 SLO 和真实反馈仍延期。
 
-### M5-C：真实试点灰度（等待真实输入）
+### M5-C：反馈、灰度决策与真实试点（合同草案，待确认）
+
+目标：把离线评测、兼容快照比较、专家反馈和灰度停止条件连接成一条可审计决策链。C1/C2 继续 Mock-first，只能输出演练结论；C3 才能进入真实试点。
+
+#### C1：Mock 专家反馈账本（第十期候选）
+
+- 每条反馈绑定候选快照 Run/内容哈希/版本指纹和 Case ID，Reviewer 身份由适配层提供，不能来自报告或消息正文。
+- Verdict 与 Reason 使用关闭集合；不保存自由文本、报告、Evidence、日志、查询、凭据或 Provider 错误。
+- 反馈 append-only；纠正通过 `supersedes` 追加，不覆盖历史，跨 Run/Case/Reviewer 或分叉/循环链路 fail closed。
+- 内置两个虚拟 Reviewer 覆盖五个合成 Case；真实身份数、真实专家标签数和外部网络调用均为 0。
+
+验收：严格 Feedback Store 能拒绝重复、未知字段、篡改、越界和非法纠正链；同一候选快照可稳定解析每个 Case 的活动反馈与 Reviewer quorum；未产生任何灰度动作。
+
+#### C2：离线灰度与回滚决策演练
+
+- 严格加载 base/candidate 快照，复用 B3 比较结果，再结合活动反馈和版本化策略生成关闭集合演练结论。
+- `REHEARSAL_PASSED` 要求候选通过、可比、零回归、Gate 完整且通过、Case 反馈全覆盖、Reviewer quorum 达标且无不安全/不确定/分歧。
+- 不可比、覆盖不足或 quorum 不足返回 `REHEARSAL_INSUFFICIENT_EVIDENCE`；失败/回归/不安全反馈在预检阶段返回 `REHEARSAL_BLOCKED`，仅模拟已放量阶段可返回 `REHEARSAL_ROLLBACK_RECOMMENDED`。
+- 输出始终带 `SYNTHETIC_MOCK` 与 `production_action_allowed=false`，不能操作飞书可用范围、Worker、SLS、流量、开关或部署。
+
+验收：全通过、缺反馈、Reviewer 分歧、不安全反馈、候选 Gate 删除/失败、质量/成本回归、不兼容数据边界和模拟回滚均有离线测试与结构化 CLI 输出。
+
+#### C3：真实试点灰度（等待真实输入）
 
 - 脱敏后的历史故障回放集和专家标注集。
-- 真实飞书试点群、真实 SLS 试点资源、反馈收集和一键回滚方案。
-- 团队批准的准确率、安全、时延和成本门槛。
+- 真实 Reviewer 身份/权限/留存策略、真实飞书试点群、真实 SLS 试点资源和生产持久化。
+- 团队批准的准确率、安全、时延和成本门槛，以及明确的停止/回滚 Runbook。
 
-完整验收：只有 M5-C 达到团队批准的真实数据门槛后，才能扩大服务和用户范围。
+完整验收：只有 C3 在团队批准的真实数据、身份、阈值和试点范围内通过后，才能扩大服务和用户范围。C1/C2 的 Mock 演练永远不能替代该批准。

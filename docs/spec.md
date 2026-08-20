@@ -2,8 +2,8 @@
 
 | Metadata | Value |
 | --- | --- |
-| Version | 0.8 |
-| Status | M5-B contract frozen; B1 bounded Agent event/version slice and B2 append-only replay history implemented and offline verified; B3 trend comparison, live M4-B/M4-C, and real gray rollout pending |
+| Version | 1.0-draft |
+| Status | M5-B/B1-B3 implemented and offline verified; M5-C mock-first feedback and rollout-readiness contract drafted for review; no M5-C implementation or real gray rollout yet |
 | Date | 2026-08-20 |
 
 ## 1. Overview
@@ -44,7 +44,9 @@ Users can ask the bot to investigate an error spike for a known service, environ
 - Offline quality gates for expected outcome, exact Finding and Recommendation labels, conclusive-finding safety, the same production Worker output validator, QuerySpec-to-Evidence binding, evidence-reference coverage, cause-verdict agreement, fixed query budget, and processed-byte cost proxy.
 - A framework-neutral, privacy-bounded Agent event contract for synthetic Engine runs, fixed Graph nodes, and Mock tool calls.
 - A normalized runtime-version manifest and fingerprint that distinguishes dataset, Graph, policy, cause method, trace schema, replay schema, executor profile, and actual Prompt/model usage.
-- Planned append-only offline evaluation-run history plus strict replay comparison for later M5-B B2/B3 slices; neither is implemented by B1.
+- Append-only offline evaluation-run history plus a strict, read-only comparison of compatible replay snapshots. Comparison never executes the Graph or an external provider.
+- A mock-first rollout-readiness control plane that binds bounded reviewer feedback to exact immutable evaluation snapshots before producing a non-actionable rehearsal decision.
+- An append-only feedback history with explicit correction lineage, reviewer quorum, closed verdict/reason codes, and deterministic rollout-policy evaluation.
 
 ## 4. Non-goals
 
@@ -71,6 +73,10 @@ Users can ask the bot to investigate an error spike for a known service, environ
 - Reusing query audit or query checkpoints as generic tracing storage, or allowing telemetry to change retry, recovery, authorization, or investigation state.
 - Raw messages, identities, resources, SQL, log content, bucket labels, change summaries, natural-language findings/recommendations, callback payloads, provider errors, model inputs, or arbitrary attributes in Agent events.
 - A live telemetry backend, production sampling/retention policy, host identity, real LLM/Token telemetry, historical-binary execution, or production latency SLO in M5-B.
+- Treating synthetic reviewer fixtures or rehearsal decisions as real expert labels, production approval, permission to widen traffic, or proof that rollback works in a live system.
+- Automatically changing Feishu availability, SLS resources, worker deployment, feature flags, traffic, or production state from a rollout-readiness decision.
+- Free-form reviewer comments, raw report text, raw Evidence, identities from message text, credentials, or provider data in the feedback ledger.
+- A real reviewer directory, production feedback UI, team-approved thresholds, deployment controller, or live rollback executor before M5-C/C3.
 
 ## 5. Core design and architecture
 
@@ -114,6 +120,16 @@ Bounded Agent Observer
     -> stable failure codes, usage counters, duration, and version fingerprint only
     -> bounded in-memory Trace for B1
     -> append-only replay snapshot and strict trend comparison in B2/B3
+
+M5-C rollout-readiness rehearsal
+    -> strict base and candidate replay snapshots
+    -> compatible B3 comparison
+    -> append-only reviewer feedback bound to candidate hash and Case ID
+    -> active-feedback resolution and reviewer quorum
+    -> versioned rollout policy
+    -> REHEARSAL_PASSED | REHEARSAL_BLOCKED
+       | REHEARSAL_ROLLBACK_RECOMMENDED | REHEARSAL_INSUFFICIENT_EVIDENCE
+    -> production_action_allowed=false
 ```
 
 The M3 Change Source is enrichment-only. It is called only after governed SLS evidence has established the resource identity and a conclusive spike. Change-source absence or failure cannot erase an M2 fact or fail the investigation; it produces an explicit unavailable or inconclusive cause-analysis status.
@@ -248,7 +264,21 @@ An explicit diagnostic command loads the same catalog and credentials as a real 
 6. B2 optionally saves successful and failed evaluation runs through `evaluate --snapshot-dir <directory>`. Each append-only `evaluation-replay-v1` snapshot contains the complete evaluation report, version manifest, Case Traces, a safe terminal failure code, creation time, optional parent replay reference, and a SHA-256 over the canonical snapshot body. Existing run IDs are never overwritten.
 7. `replay --snapshot-dir <directory> --run-id <evaluation-run-id>` strictly loads and verifies the source snapshot before execution. Unknown fields or Schema, a changed content hash, an invalid or duplicate run identity, an incomplete file, or a source whose synthetic dataset boundary is incompatible with the current embedded fixture fails closed before the Graph runs.
 8. Replay means executing the current binary again against fixed synthetic input and appending a new child snapshot that references the verified source run and hash. It does not claim byte-for-byte equivalence with the source, and reproducing an older implementation still requires its Git commit or build artifact.
-9. B3 compares only runs with compatible dataset identity, data boundary, and executor profile; incompatible runs return `INCOMPARABLE` rather than a misleading delta.
+9. `replay-compare --snapshot-dir <directory> --base-run-id <id> --candidate-run-id <id>` strictly loads and verifies two existing snapshots and never executes the Graph, a Mock tool, or an external provider.
+10. B3 emits numeric quality, cost-proxy, tool, Trace, latency-observation and gate transitions only when dataset Schema/ID/fingerprint, data boundary, executor profile, and Case ID set match exactly. Graph, template, policy, cause, evaluation, Prompt and model metadata changes remain comparable but are listed explicitly as version changes. Trace and Replay Schema versions are strict reader boundaries: the current reader accepts only the current closed Schema versions, and a mismatch is rejected during snapshot loading before comparison.
+11. An incompatible pair returns a structured `INCOMPARABLE` result containing only stable incompatibility codes and immutable run references. It must not emit numeric deltas, regressions, gate transitions, or recovered/newly failed Cases.
+12. A comparable result reports recovered, newly failed and still-failed Case IDs; top-level safe failure-code changes; gate transitions; closed quality/cost/Trace metric deltas; fixed tool-span and tool-usage deltas; and closed Agent failure-code count deltas. A candidate that removes any Gate present in the base run is a regression. Other regression labels are derived only from fixed metric direction metadata. Local latency remains observational and is never a production SLO.
+
+### Rehearse reviewer feedback and rollout readiness
+
+1. C1 accepts feedback only for a strictly loaded immutable candidate snapshot. Each record binds the exact evaluation-run ID, snapshot content hash, version fingerprint, Case ID, an adapter-derived reviewer reference, a closed verdict, and a closed reason code.
+2. Feedback records are append-only and content-hashed. A correction appends a new record that explicitly supersedes one prior record from the same reviewer, snapshot, and Case; it never overwrites history. Branched, cyclic, cross-Case, cross-run, or cross-reviewer correction chains fail closed.
+3. The initial fixture uses two distinct synthetic reviewers per Case. It contains no real identity, free-form text, report body, Evidence body, query, log, provider error, credential, or network-derived data.
+4. C2 strictly loads base and candidate snapshots, obtains a B3 comparison, resolves the latest active feedback per reviewer and Case, and applies a versioned rollout policy. Invalid snapshots, invalid feedback, invalid policy, or inconsistent references return an error rather than a decision.
+5. A valid but incompatible comparison, missing Case coverage, insufficient reviewer quorum, an `UNSURE` verdict, or unresolved reviewer disagreement produces `REHEARSAL_INSUFFICIENT_EVIDENCE`.
+6. A failed candidate evaluation, a regression, or an `UNSAFE` review produces `REHEARSAL_BLOCKED` before a simulated pilot and `REHEARSAL_ROLLBACK_RECOMMENDED` only when the caller explicitly evaluates the simulated active-pilot phase.
+7. `REHEARSAL_PASSED` requires a passed candidate snapshot, a comparable result, no regressions, all required candidate Gates present and passing, full Case feedback coverage, the configured independent-reviewer quorum, and no unsafe, unsure, or disagreeing active review.
+8. Every decision contains only immutable run references, policy identity/fingerprint, aggregate feedback counts, closed reason codes, and the explicit boundary `data_source=SYNTHETIC_MOCK` and `production_action_allowed=false`. It never performs a rollout or rollback action.
 
 ## 7. Behavioral contracts and lifecycle
 
@@ -289,6 +319,8 @@ M5-B Agent events use a fixed schema and closed layer/name/phase enums. The init
 The runtime-version fingerprint is computed from a normalized manifest, not from host identity or wall-clock values. Synthetic and production query policies remain distinct through `executor_profile`; `prompt_used=false` requires Prompt/model/Token fields to remain absent or explicitly not applicable. Hashes provide integrity and correlation, not anonymization.
 
 The B1 gate version is `m5b-agent-trace-gate-v1`, the Agent event/Trace schema is `agent-trace-v1`, and the replay snapshot schema is `evaluation-replay-v1`. B1 and B2 execute only under `executor_profile=SYNTHETIC_MOCK`. B2 uses a dedicated evaluation-run store and never extends or reuses the production investigation Store, Query Audit, or QueryStep contracts. Snapshot hashes provide tamper detection, not confidentiality; the Trace and report privacy contracts still apply before persistence.
+
+M5-C feedback uses a store separate from both the production investigation Store and the replay snapshot Store. Content hashes detect accidental or unauthorized modification but do not authenticate a real reviewer. C1/C2 execute only with synthetic reviewer fixtures and must retain `production_action_allowed=false`; changing that boundary requires the real identity, authorization, audit, threshold-approval, and pilot dependencies defined by C3.
 
 ## 8. Constraints and compatibility
 
@@ -400,8 +432,18 @@ The B1 gate version is `m5b-agent-trace-gate-v1`, the Agent event/Trace schema i
 - [x] B1 proves the serialized Trace excludes forbidden message, identity, resource, query, log, bucket, change-summary, natural-language report, callback, provider-error, Prompt, and arbitrary-attribute content.
 - [x] B2 saves successful and failed evaluation runs as append-only strict snapshots with content hashes and duplicate/tamper rejection, without extending the production Store interface.
 - [x] B2 exposes an offline `replay` command that uses the current binary and fixture-backed Mock dependencies only.
-- [ ] B3 compares compatible replay snapshots, reports version changes, quality/cost/tool/Trace regressions and recovered or newly failed Cases, and returns `INCOMPARABLE` for incompatible data boundaries.
+- [x] B3 strictly loads two immutable snapshots without executing the Graph or any provider, compares only matching dataset/data-boundary/executor/Case contracts, reports explicit version changes plus quality/cost/tool/Trace and Case transitions, and returns delta-free `INCOMPARABLE` output for incompatible pairs.
 - [ ] Live telemetry export, production sampling/retention, real LLM/Token observability, historical build execution, real incident feedback, and production SLO approval remain explicitly deferred.
+
+### M5-C rollout readiness and real pilot
+
+- [ ] C1 defines a strict, bounded, content-hashed feedback record that binds one reviewer verdict to one immutable snapshot and Case.
+- [ ] C1 persists feedback append-only, rejects duplicate/tampered/unknown-field records, and resolves correction chains without losing audit history.
+- [ ] C1 provides a two-reviewer-per-Case synthetic fixture with zero credentials, real identities, free-form text, or external-network calls.
+- [ ] C2 produces only closed rehearsal decisions from strictly validated snapshots, a compatible B3 comparison, active feedback, and a versioned policy.
+- [ ] C2 fails closed on missing quorum, incomplete Case coverage, disagreement, unsafe feedback, comparison incompatibility, Gate removal/failure, metric regression, or invalid references.
+- [ ] C2 never mutates production state and always emits `data_source=SYNTHETIC_MOCK` and `production_action_allowed=false`.
+- [ ] C3 replaces synthetic incidents, reviewer identity, feedback transport, thresholds, persistence, and pilot operations only after the required real inputs and team approval exist.
 
 ## 10. Open deployment inputs
 
@@ -412,3 +454,6 @@ The B1 gate version is `m5b-agent-trace-gate-v1`, the Agent event/Trace schema i
 - Approved RAM role and resource-level read-only policy.
 - Organization-specific sensitive-value redaction patterns.
 - Approved owner/change metadata classification and the production change-system connector contract.
+- A real historical-incident dataset and its lawful retention/redaction rules.
+- An approved reviewer identity source, reviewer roles, quorum, conflict-resolution process, and feedback retention policy.
+- Team-approved quality, safety, latency, and cost thresholds plus the pilot cohort and explicit stop/rollback runbook.

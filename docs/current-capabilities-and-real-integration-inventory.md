@@ -3,7 +3,7 @@
 | 项目 | 内容 |
 | --- | --- |
 | 盘点日期 | 2026-08-20 |
-| 代码基线 | `870ec92` / `codex/m5b-replay-history` |
+| 代码基线 | 第九期 B3 当前工作树 / `codex/m5b-replay-comparison` |
 | 当前结论 | 主体业务链、治理、证据、恢复、评测和回放已经实现；外部数据与通信仍以 Mock 完成离线验收，真实 SLS/飞书代码已具备但尚未做试点端到端验收 |
 | 数据边界 | 当前自动化验收使用合成日志、合成飞书身份、合成变更和合成标签，不代表真实生产效果 |
 
@@ -81,6 +81,7 @@ flowchart LR
 | 合成黄金集评测 | 已完成 | 5 类严格 Fixture 运行真实 Eino Graph，对结果、证据、建议、Cause、成本和 Trace 做门禁 | `internal/evaluation`、`internal/adapters/evalmock` | 当前合成集 5/5 通过；失败门禁返回非零退出码 |
 | Agent 自观测 | 已完成离线切片 | 关闭枚举的 RUN/GRAPH_NODE/TOOL Span，有界 Recorder 和版本清单 | `internal/observability`、`internal/domain/agent_trace.go` | 评测可验证固定执行路径、调用数、字节数和事件完整性 |
 | 离线快照与回放 | 已完成 | append-only JSON 快照、SHA-256、严格 Schema、父引用和当前二进制重跑 | `internal/evaluation/replay`、`internal/adapters/replayfs` | 成功/失败评测可归档；重复、篡改和不兼容输入会拒绝 |
+| 兼容快照比较 | 已完成 | 只读比较版本、Gate、Case、质量、成本代理、工具和 Trace；不兼容时 delta-free | `internal/evaluation/replay/compare.go`、`cmd/logagent/evaluate.go` | 可识别新增失败、恢复和固定方向回归；不执行 Graph 或网络 |
 
 ## 5. 哪些部分目前用 Mock，分别负责什么
 
@@ -352,7 +353,6 @@ flowchart LR
 | 生产数据库与多实例全局配额 | 未实现 | SQLite 只用于本地和技术预览 |
 | Trace/指标/拓扑跨信号因果分析 | 未实现 | 当前只分析 SLS 聚合与静态 Change Source |
 | 真实发布平台/CMDB/SOP/错误码知识库 | 未实现 | 只有 ChangeSource 接口和静态目录 |
-| B3 回放趋势比较 | 未实现 | B2 能保存/重跑，尚不能输出兼容运行间差异 |
 | M5-C 真实试点灰度 | 未实现 | 缺真实历史集、专家标签、团队门槛和试点验收 |
 | LLM 解释器 | 未实现且当前非必需 | 现有 Graph 是确定性规则；未来模型只能解释证据，不能决定权限和事实 |
 
@@ -360,7 +360,7 @@ flowchart LR
 
 ### 可以宣称
 
-- 主体 Go 架构、Eino 固定 Graph、状态机、证据链、查询治理、恢复、离线评测与回放已实现。
+- 主体 Go 架构、Eino 固定 Graph、状态机、证据链、查询治理、恢复、离线评测、回放与兼容快照比较已实现。
 - Mock 飞书 + Mock SLS 可以完成可重复的离线端到端验收。
 - 真实飞书和阿里云 SLS SDK 适配器已经存在，并有明确配置入口。
 - 当前合成黄金集 5/5 通过，Trace 合同完整，外部网络调用为 0。
@@ -403,6 +403,9 @@ go run ./cmd/logagent evaluate
 # 保存与回放离线评测快照
 go run ./cmd/logagent evaluate --snapshot-dir .\data\evaluation-runs
 go run ./cmd/logagent replay --snapshot-dir .\data\evaluation-runs --run-id evalrun_xxx
+
+# 只读比较两个兼容快照；不兼容时输出 INCOMPARABLE 并非零退出
+go run ./cmd/logagent replay-compare --snapshot-dir .\data\evaluation-runs --base-run-id evalrun_base --candidate-run-id evalrun_candidate
 
 # 真实 SLS 接入后才运行
 go run ./cmd/logagent sls-check

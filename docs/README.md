@@ -9,7 +9,7 @@
 | [`local-mock-e2e.md`](local-mock-e2e.md) | 飞书 + SLS 双 Mock 的运行、输出与边界 | Mock 行为变化时同步更新 |
 | [`m4-recoverable-query-steps.md`](m4-recoverable-query-steps.md) | 第五期 M4-A 的检查点、结果未知与恢复合同 | M4-A 行为或验收变化时同步更新 |
 | [`m5-offline-evaluation-gate.md`](m5-offline-evaluation-gate.md) | 第六期 M5-A 的全合成离线评测数据、指标、门禁与声明边界 | 数据集、评测规则或 CLI 行为变化时同步更新 |
-| [`m5-agent-observability-replay.md`](m5-agent-observability-replay.md) | 第七/八期 M5-B 的 Agent 自观测与离线回放合同；B1/B2 已完成，B3 待实现 | Agent 事件、版本清单、Trace 门禁或回放边界变化时同步更新 |
+| [`m5-agent-observability-replay.md`](m5-agent-observability-replay.md) | 第七至九期 M5-B 的 Agent 自观测、离线回放和兼容快照比较合同；B1～B3 已完成 | Agent 事件、版本清单、Trace 门禁或回放/比较边界变化时同步更新 |
 | [`m6-real-system-entry-guide.md`](m6-real-system-entry-guide.md) | 真实系统接入地图：SLS/飞书/存储/变更源各真实入口与组装点 | 生产化接入前保持与启动组装和接口边界一致 |
 | [`current-capabilities-and-real-integration-inventory.md`](current-capabilities-and-real-integration-inventory.md) | 当前功能、Mock 边界、真实系统职责、接入步骤和预期效果的统一盘点 | 阶段完成状态、外部适配器或生产接入方式变化时同步更新 |
 | [`../README.md`](../README.md) | 运行、配置和项目入口 | 必须与当前代码一致 |
@@ -24,8 +24,9 @@
 | M3 / 第四期 | [`m3-change-correlation-evidence.md`](m3-change-correlation-evidence.md) | 代码与离线验收完成；真实系统联调待部署阶段 |
 | M4-A / 第五期首个切片 | [`m4-recoverable-query-steps.md`](m4-recoverable-query-steps.md) | 代码与离线验收完成；不代表完整 M4 或生产验收 |
 | M5-A / 第六期首个切片 | [`m5-offline-evaluation-gate.md`](m5-offline-evaluation-gate.md) | 代码与离线验收完成；全合成 Mock，不代表真实准确率或灰度批准 |
-| M5-B/B1 / 第七期首个切片 | [`m5-agent-observability-replay.md`](m5-agent-observability-replay.md) | 事件/版本合同与 Engine 级离线 Trace 已完成；后续 B2 也已完成，B3 比较未开始 |
-| M5-B/B2 / 第八期首个切片 | [`m5-agent-observability-replay.md`](m5-agent-observability-replay.md) | append-only 快照与当前二进制离线回放已完成；B3 趋势比较未开始 |
+| M5-B/B1 / 第七期首个切片 | [`m5-agent-observability-replay.md`](m5-agent-observability-replay.md) | 事件/版本合同与 Engine 级离线 Trace 已完成 |
+| M5-B/B2 / 第八期首个切片 | [`m5-agent-observability-replay.md`](m5-agent-observability-replay.md) | append-only 快照与当前二进制离线回放已完成 |
+| M5-B/B3 / 第九期首个切片 | [`m5-agent-observability-replay.md`](m5-agent-observability-replay.md) | 兼容快照比较、回归/恢复识别和 `INCOMPARABLE` 门禁已完成；仍为全合成 Mock |
 
 阶段归档记录“当时为什么这样做、相对上一期增加了什么、当时验证到哪里”，不会被重写成当前实现。归档中的源码路径默认指向当前工作树，除非文档明确给出 tag/commit；M0、M1 没有可恢复的独立源码快照。
 

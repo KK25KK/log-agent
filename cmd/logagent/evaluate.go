@@ -57,6 +57,47 @@ type replayCommandOutput struct {
 	Snapshot replay.Snapshot        `json:"snapshot"`
 }
 
+func runReplayCompareCommand(args []string) error {
+	snapshotDirectory, baseRunID, candidateRunID, err := parseReplayCompareOptions(args)
+	if err != nil {
+		return err
+	}
+	store, err := replayfs.New(snapshotDirectory)
+	if err != nil {
+		return err
+	}
+	comparison, err := executeReplayComparison(context.Background(), store, baseRunID, candidateRunID)
+	if err != nil {
+		return err
+	}
+	if err := printJSON(comparison); err != nil {
+		return err
+	}
+	if comparison.Status == replay.ComparisonIncomparable {
+		return replay.ErrComparisonIncomparable
+	}
+	return nil
+}
+
+func executeReplayComparison(ctx context.Context, store replay.Store, baseRunID, candidateRunID string) (replay.Comparison, error) {
+	if store == nil {
+		return replay.Comparison{}, errors.New("evaluation replay store is required")
+	}
+	base, err := store.Load(ctx, baseRunID)
+	if err != nil {
+		return replay.Comparison{}, fmt.Errorf("load base evaluation replay snapshot: %w", err)
+	}
+	candidate, err := store.Load(ctx, candidateRunID)
+	if err != nil {
+		return replay.Comparison{}, fmt.Errorf("load candidate evaluation replay snapshot: %w", err)
+	}
+	comparison, err := replay.Compare(base, candidate)
+	if err != nil {
+		return replay.Comparison{}, fmt.Errorf("compare evaluation replay snapshots: %w", err)
+	}
+	return comparison, nil
+}
+
 func runReplayCommand(args []string) error {
 	snapshotDirectory, evaluationRunID, err := parseReplayOptions(args)
 	if err != nil {
@@ -129,6 +170,21 @@ func parseReplayOptions(args []string) (string, string, error) {
 		return "", "", errors.New("usage: logagent replay --snapshot-dir <directory> --run-id <evaluation-run-id>")
 	}
 	return *snapshotDirectory, *evaluationRunID, nil
+}
+
+func parseReplayCompareOptions(args []string) (string, string, string, error) {
+	flags := flag.NewFlagSet("replay-compare", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	snapshotDirectory := flags.String("snapshot-dir", "", "directory containing append-only evaluation snapshots")
+	baseRunID := flags.String("base-run-id", "", "baseline evaluation run ID")
+	candidateRunID := flags.String("candidate-run-id", "", "candidate evaluation run ID")
+	if err := flags.Parse(args); err != nil {
+		return "", "", "", fmt.Errorf("usage: logagent replay-compare --snapshot-dir <directory> --base-run-id <evaluation-run-id> --candidate-run-id <evaluation-run-id>: %w", err)
+	}
+	if flags.NArg() != 0 || *snapshotDirectory == "" || *baseRunID == "" || *candidateRunID == "" {
+		return "", "", "", errors.New("usage: logagent replay-compare --snapshot-dir <directory> --base-run-id <evaluation-run-id> --candidate-run-id <evaluation-run-id>")
+	}
+	return *snapshotDirectory, *baseRunID, *candidateRunID, nil
 }
 
 func executeSyntheticEvaluation(ctx context.Context, dataset evaluation.Dataset) (evaluation.EvaluationReport, error) {
