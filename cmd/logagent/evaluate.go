@@ -10,11 +10,13 @@ import (
 	"logagent/internal/adapters/evalmock"
 	"logagent/internal/domain"
 	"logagent/internal/evaluation"
+	"logagent/internal/observability"
 )
 
-// runEvaluate executes the repository-owned synthetic M5-A golden set. The
-// command intentionally has no configuration or credential inputs, so this
-// path cannot instantiate real Feishu, SLS, or change-platform clients.
+// runEvaluate executes the repository-owned synthetic golden set and the
+// M5-B/B1 trace gate. The command intentionally has no configuration or
+// credential inputs, so this path cannot instantiate real Feishu, SLS, or
+// change-platform clients.
 func runEvaluate() error {
 	dataset, err := evaluation.LoadSyntheticV1()
 	if err != nil {
@@ -33,8 +35,13 @@ func executeSyntheticEvaluation(ctx context.Context, dataset evaluation.Dataset)
 	versions := evaluation.DefaultVersionInfo()
 	versions.GraphVersion = eino.GraphVersion
 	return evaluation.EvaluateWithVersions(ctx, dataset, versions, func(ctx context.Context, evaluationCase evaluation.EvaluationCase) (domain.Report, evaluation.ExecutionStats, error) {
-		investigationID := "eval_" + evaluationCase.ID
-		scenario, err := evalmock.New(evaluationCase, investigationID)
+		run, ok := observability.RunContextFrom(ctx)
+		if !ok {
+			return domain.Report{}, evaluation.ExecutionStats{}, fmt.Errorf("evaluation case %q has no Agent run context", evaluationCase.ID)
+		}
+		recorder := observability.NewBoundedRecorder(32, run)
+		investigationID := "eval_" + evaluationCase.ID + "_" + run.RunID
+		scenario, err := evalmock.New(evaluationCase, investigationID, evalmock.WithObserver(recorder))
 		if err != nil {
 			return domain.Report{}, evaluation.ExecutionStats{}, err
 		}
@@ -44,13 +51,17 @@ func executeSyntheticEvaluation(ctx context.Context, dataset evaluation.Dataset)
 			scenario.Executor,
 			func() time.Time { return generatedAt },
 			eino.WithChangeSource(scenario.ChangeSource),
+			eino.WithObserver(recorder),
 		)
 		if err != nil {
-			return domain.Report{}, scenario.ExecutionStats(), err
+			stats := scenario.ExecutionStats()
+			stats.AgentTrace = recorder.Snapshot()
+			return domain.Report{}, stats, err
 		}
 		evidence, report, err := engine.Run(ctx, investigationID, evaluationCase.Request)
 		stats := scenario.ExecutionStats()
 		stats.EngineEvidence = append([]domain.Evidence(nil), evidence...)
+		stats.AgentTrace = recorder.Snapshot()
 		return report, stats, err
 	})
 }

@@ -15,9 +15,14 @@ import (
 	"logagent/internal/application"
 	"logagent/internal/domain"
 	"logagent/internal/fingerprint"
+	"logagent/internal/ids"
+	"logagent/internal/observability"
 )
 
-const GatePolicyVersion = "m5a-synthetic-gate-v1"
+const (
+	GatePolicyVersion            = "m5b-agent-trace-gate-v1"
+	SyntheticMockExecutorProfile = "SYNTHETIC_MOCK"
+)
 
 var ErrGateFailed = errors.New("evaluation gate failed")
 
@@ -35,6 +40,7 @@ type ExecutionStats struct {
 	ProviderAPICalls   int                `json:"provider_api_calls"`
 	ChangeSourceCalls  int                `json:"change_source_calls"`
 	ProcessedBytes     int64              `json:"processed_bytes"`
+	AgentTrace         domain.AgentTrace  `json:"agent_trace"`
 }
 
 type ExecuteCase func(context.Context, EvaluationCase) (domain.Report, ExecutionStats, error)
@@ -50,6 +56,7 @@ type GatePolicy struct {
 	MinProductionOutputAccuracy float64 `json:"min_production_output_accuracy"`
 	MinEvidenceContractAccuracy float64 `json:"min_evidence_contract_accuracy"`
 	MinQueryContractAccuracy    float64 `json:"min_query_contract_accuracy"`
+	MinTraceContractAccuracy    float64 `json:"min_trace_contract_accuracy"`
 	MaxMisleadingRate           float64 `json:"max_misleading_rate"`
 	MinConclusiveRecall         float64 `json:"min_conclusive_recall"`
 	MinEvidenceCoverage         float64 `json:"min_evidence_coverage"`
@@ -62,6 +69,7 @@ type GatePolicy struct {
 	ExpectedProviderAPICalls    int     `json:"expected_provider_api_calls"`
 	MaxChangeSourceCalls        int     `json:"max_change_source_calls"`
 	MaxProcessedBytesPerCase    int64   `json:"max_processed_bytes_per_case"`
+	MaxTraceDroppedEvents       uint64  `json:"max_trace_dropped_events"`
 }
 
 var fixedGatePolicy = GatePolicy{
@@ -73,6 +81,7 @@ var fixedGatePolicy = GatePolicy{
 	MinProductionOutputAccuracy: 1,
 	MinEvidenceContractAccuracy: 1,
 	MinQueryContractAccuracy:    1,
+	MinTraceContractAccuracy:    1,
 	MaxMisleadingRate:           0,
 	MinConclusiveRecall:         1,
 	MinEvidenceCoverage:         1,
@@ -85,6 +94,7 @@ var fixedGatePolicy = GatePolicy{
 	ExpectedProviderAPICalls:    ExpectedProviderAPICalls,
 	MaxChangeSourceCalls:        1,
 	MaxProcessedBytesPerCase:    MaxProcessedBytesPerCase,
+	MaxTraceDroppedEvents:       0,
 }
 
 type EvaluationStatus string
@@ -95,17 +105,20 @@ const (
 )
 
 type EvaluationReport struct {
-	EvaluationVersion  string           `json:"evaluation_version"`
-	DatasetID          string           `json:"dataset_id"`
-	DatasetVersion     string           `json:"dataset_version"`
-	DatasetFingerprint string           `json:"dataset_fingerprint"`
-	Versions           VersionInfo      `json:"versions"`
-	DataBoundary       DataBoundary     `json:"data_boundary"`
-	Policy             GatePolicy       `json:"gate_policy"`
-	Status             EvaluationStatus `json:"status"`
-	Metrics            Metrics          `json:"metrics"`
-	Gates              []GateResult     `json:"gates"`
-	Cases              []CaseResult     `json:"cases"`
+	EvaluationRunID    string                      `json:"evaluation_run_id"`
+	EvaluationVersion  string                      `json:"evaluation_version"`
+	DatasetID          string                      `json:"dataset_id"`
+	DatasetVersion     string                      `json:"dataset_version"`
+	DatasetFingerprint string                      `json:"dataset_fingerprint"`
+	Versions           VersionInfo                 `json:"versions"`
+	VersionManifest    domain.AgentVersionManifest `json:"version_manifest"`
+	VersionFingerprint string                      `json:"version_fingerprint"`
+	DataBoundary       DataBoundary                `json:"data_boundary"`
+	Policy             GatePolicy                  `json:"gate_policy"`
+	Status             EvaluationStatus            `json:"status"`
+	Metrics            Metrics                     `json:"metrics"`
+	Gates              []GateResult                `json:"gates"`
+	Cases              []CaseResult                `json:"cases"`
 }
 
 // VersionInfo makes every synthetic score traceable to deterministic product
@@ -116,6 +129,7 @@ type VersionInfo struct {
 	QueryTemplateVersion string `json:"query_template_version"`
 	QueryPolicyVersion   string `json:"query_policy_version"`
 	CauseMethod          string `json:"cause_method"`
+	ExecutorProfile      string `json:"executor_profile"`
 	PromptUsed           bool   `json:"prompt_used"`
 	PromptVersion        string `json:"prompt_version,omitempty"`
 }
@@ -127,6 +141,7 @@ func DefaultVersionInfo() VersionInfo {
 		QueryTemplateVersion: domain.ErrorAnalysisTemplateVersion,
 		QueryPolicyVersion:   "synthetic-policy-v1",
 		CauseMethod:          domain.CauseConfidenceMethod,
+		ExecutorProfile:      SyntheticMockExecutorProfile,
 		PromptUsed:           false,
 	}
 }
@@ -155,6 +170,11 @@ type Metrics struct {
 	EvidenceContractAccuracy     float64 `json:"evidence_contract_accuracy"`
 	EvidenceContractFailures     int     `json:"evidence_contract_failures"`
 	QueryContractAccuracy        float64 `json:"query_contract_accuracy"`
+	TraceContractAccuracy        float64 `json:"trace_contract_accuracy"`
+	TraceContractFailures        int     `json:"trace_contract_failures"`
+	TraceEvents                  int     `json:"trace_events"`
+	TraceToolSpans               int     `json:"trace_tool_spans"`
+	TraceDroppedEvents           uint64  `json:"trace_dropped_events"`
 	ExpectedConclusiveFindings   int     `json:"expected_conclusive_findings"`
 	ActualConclusiveFindings     int     `json:"actual_conclusive_findings"`
 	MatchedConclusiveFindings    int     `json:"matched_conclusive_findings"`
@@ -200,6 +220,11 @@ type CaseResult struct {
 	ProductionOutputValid      bool                       `json:"production_output_valid"`
 	EvidenceContractPassed     bool                       `json:"evidence_contract_passed"`
 	QueryContractPassed        bool                       `json:"query_contract_passed"`
+	TraceContractPassed        bool                       `json:"trace_contract_passed"`
+	AgentTrace                 domain.AgentTrace          `json:"agent_trace"`
+	TraceEventCount            int                        `json:"trace_event_count"`
+	TraceToolSpans             int                        `json:"trace_tool_spans"`
+	TraceDroppedEvents         uint64                     `json:"trace_dropped_events"`
 	EvidenceCoveragePassed     bool                       `json:"evidence_coverage_passed"`
 	ExpectedCauseStatus        domain.CauseAnalysisStatus `json:"expected_cause_status"`
 	ActualCauseStatus          domain.CauseAnalysisStatus `json:"actual_cause_status,omitempty"`
@@ -266,12 +291,39 @@ func evaluateWithVersions(ctx context.Context, dataset Dataset, versions Version
 	if err != nil {
 		return EvaluationReport{}, err
 	}
+	manifest := domain.AgentVersionManifest{
+		DatasetSchemaVersion: dataset.SchemaVersion,
+		DatasetID:            dataset.DatasetID,
+		DatasetFingerprint:   fingerprint,
+		GraphVersion:         versions.GraphVersion,
+		TemplateID:           versions.QueryTemplateID,
+		TemplateVersion:      versions.QueryTemplateVersion,
+		PolicyVersion:        versions.QueryPolicyVersion,
+		CauseVersion:         versions.CauseMethod,
+		EvaluationVersion:    GatePolicyVersion,
+		TraceSchemaVersion:   domain.AgentTraceSchemaVersion,
+		ReplaySchemaVersion:  domain.ReplaySchemaVersion,
+		ExecutorProfile:      versions.ExecutorProfile,
+		PromptUsed:           versions.PromptUsed,
+		PromptVersion:        versions.PromptVersion,
+	}
+	versionFingerprint, err := manifest.Fingerprint()
+	if err != nil {
+		return EvaluationReport{}, fmt.Errorf("fingerprint evaluation version manifest: %w", err)
+	}
+	evaluationRunID, err := ids.New("evalrun")
+	if err != nil {
+		return EvaluationReport{}, err
+	}
 	result := EvaluationReport{
+		EvaluationRunID:    evaluationRunID,
 		EvaluationVersion:  GatePolicyVersion,
 		DatasetID:          dataset.DatasetID,
 		DatasetVersion:     dataset.SchemaVersion,
 		DatasetFingerprint: fingerprint,
 		Versions:           versions,
+		VersionManifest:    manifest,
+		VersionFingerprint: versionFingerprint,
 		DataBoundary: DataBoundary{
 			DataSource: dataset.DataSource, RealIncidentCount: dataset.RealIncidentCount,
 			ExpertLabelCount: dataset.ExpertLabelCount, CredentialsRequired: dataset.CredentialsRequired,
@@ -287,7 +339,22 @@ func evaluateWithVersions(ctx context.Context, dataset Dataset, versions Version
 		if err := ctx.Err(); err != nil {
 			return result, err
 		}
-		caseResult, caseMetrics := evaluateOne(ctx, evaluationCase, validateOutput, execute)
+		traceID, err := ids.New("trace")
+		if err != nil {
+			return result, err
+		}
+		runID, err := ids.New("run")
+		if err != nil {
+			return result, err
+		}
+		caseContext := observability.WithRunContext(ctx, observability.RunContext{
+			EvaluationRunID:    evaluationRunID,
+			TraceID:            traceID,
+			RunID:              runID,
+			CaseID:             evaluationCase.ID,
+			VersionFingerprint: versionFingerprint,
+		})
+		caseResult, caseMetrics := evaluateOne(caseContext, evaluationCase, validateOutput, execute)
 		result.Cases = append(result.Cases, caseResult)
 		durations = append(durations, caseResult.DurationMilliseconds)
 		metrics.add(caseMetrics)
@@ -324,11 +391,24 @@ func evaluateOne(ctx context.Context, evaluationCase EvaluationCase, validateOut
 	startedAt := time.Now()
 	report, stats, err := execute(ctx, evaluationCase)
 	result.DurationMilliseconds = time.Since(startedAt).Milliseconds()
+	result.AgentTrace = stats.AgentTrace
+	result.TraceEventCount = len(stats.AgentTrace.Events)
+	result.TraceDroppedEvents = stats.AgentTrace.DropCount
+	result.TraceContractPassed, result.TraceToolSpans = validTraceContract(ctx, evaluationCase, stats, err)
+	delta.TraceEvents = result.TraceEventCount
+	delta.TraceToolSpans = result.TraceToolSpans
+	delta.TraceDroppedEvents = result.TraceDroppedEvents
+	if result.TraceContractPassed {
+		delta.TraceContractAccuracy = 1
+	} else {
+		delta.TraceContractFailures = 1
+		result.FailureReasons = append(result.FailureReasons, "trace_contract_mismatch")
+	}
 	if err != nil {
 		delta.ExecutionFailures = 1
 		delta.MissingConclusiveFindings = len(expected.ConclusiveFindingCodes)
 		delta.MissingCauseVerdicts = len(expected.CauseVerdicts)
-		result.FailureReasons = []string{"execution_failed"}
+		result.FailureReasons = append(result.FailureReasons, "execution_failed")
 		return result, delta
 	}
 	expectedInvestigationID := ""
@@ -438,7 +518,7 @@ func evaluateOne(ctx context.Context, evaluationCase EvaluationCase, validateOut
 		result.FailureReasons = append(result.FailureReasons, "cost_budget_mismatch")
 	}
 
-	result.Passed = result.OutcomeCorrect && result.FindingsExact && result.RecommendationsExact && result.ProductionOutputValid && result.QueryContractPassed && result.EvidenceContractPassed && result.EvidenceCoveragePassed && result.CauseExact && result.CallBudgetPassed && result.CostBudgetPassed
+	result.Passed = result.OutcomeCorrect && result.FindingsExact && result.RecommendationsExact && result.ProductionOutputValid && result.QueryContractPassed && result.TraceContractPassed && result.EvidenceContractPassed && result.EvidenceCoveragePassed && result.CauseExact && result.CallBudgetPassed && result.CostBudgetPassed
 	if result.Passed {
 		delta.PassedCases = 1
 	}
@@ -458,6 +538,11 @@ func (metrics *Metrics) add(delta metricDelta) {
 	metrics.EvidenceContractAccuracy += delta.EvidenceContractAccuracy
 	metrics.EvidenceContractFailures += delta.EvidenceContractFailures
 	metrics.QueryContractAccuracy += delta.QueryContractAccuracy
+	metrics.TraceContractAccuracy += delta.TraceContractAccuracy
+	metrics.TraceContractFailures += delta.TraceContractFailures
+	metrics.TraceEvents += delta.TraceEvents
+	metrics.TraceToolSpans += delta.TraceToolSpans
+	metrics.TraceDroppedEvents += delta.TraceDroppedEvents
 	metrics.ExpectedConclusiveFindings += delta.ExpectedConclusiveFindings
 	metrics.ActualConclusiveFindings += delta.ActualConclusiveFindings
 	metrics.MatchedConclusiveFindings += delta.MatchedConclusiveFindings
@@ -486,6 +571,7 @@ func (metrics *Metrics) finish(durations []int64) {
 	metrics.ProductionOutputAccuracy = ratio(int(metrics.ProductionOutputAccuracy), metrics.TotalCases)
 	metrics.EvidenceContractAccuracy = ratio(int(metrics.EvidenceContractAccuracy), metrics.TotalCases)
 	metrics.QueryContractAccuracy = ratio(int(metrics.QueryContractAccuracy), metrics.TotalCases)
+	metrics.TraceContractAccuracy = ratio(int(metrics.TraceContractAccuracy), metrics.TotalCases)
 	metrics.MisleadingRate = ratioDefault(metrics.UnexpectedConclusiveFindings, metrics.ActualConclusiveFindings, 0)
 	metrics.ConclusiveRecall = ratioZero(metrics.MatchedConclusiveFindings, metrics.ExpectedConclusiveFindings)
 	metrics.EvidenceCoverage = ratioZero(metrics.ValidGroundingItems, metrics.GroundingItems)
@@ -539,6 +625,8 @@ func applyGates(metrics Metrics, policy GatePolicy) []GateResult {
 		gateMin("production_output_accuracy", metrics.ProductionOutputAccuracy, policy.MinProductionOutputAccuracy),
 		gateMin("evidence_contract_accuracy", metrics.EvidenceContractAccuracy, policy.MinEvidenceContractAccuracy),
 		gateMin("query_contract_accuracy", metrics.QueryContractAccuracy, policy.MinQueryContractAccuracy),
+		gateMin("trace_contract_accuracy", metrics.TraceContractAccuracy, policy.MinTraceContractAccuracy),
+		gateUintMax("trace_dropped_events", metrics.TraceDroppedEvents, policy.MaxTraceDroppedEvents),
 		gateMax("misleading_rate", metrics.MisleadingRate, policy.MaxMisleadingRate),
 		gateMin("conclusive_recall", metrics.ConclusiveRecall, policy.MinConclusiveRecall),
 		gateMin("evidence_coverage", metrics.EvidenceCoverage, policy.MinEvidenceCoverage),
@@ -563,6 +651,10 @@ func gateInt(code string, actual, expected int) GateResult {
 }
 
 func gateIntMax(code string, actual, expected int) GateResult {
+	return GateResult{Code: code, Passed: actual <= expected, Actual: fmt.Sprint(actual), Expected: fmt.Sprintf("<= %d", expected)}
+}
+
+func gateUintMax(code string, actual, expected uint64) GateResult {
 	return GateResult{Code: code, Passed: actual <= expected, Actual: fmt.Sprint(actual), Expected: fmt.Sprintf("<= %d", expected)}
 }
 
@@ -591,6 +683,9 @@ func validateVersions(dataset Dataset, versions VersionInfo) error {
 	}
 	if versions.CauseMethod != domain.CauseConfidenceMethod {
 		return errors.New("evaluation cause method does not match the deterministic engine contract")
+	}
+	if versions.ExecutorProfile != SyntheticMockExecutorProfile {
+		return errors.New("evaluation executor profile must remain SYNTHETIC_MOCK")
 	}
 	if versions.PromptUsed || versions.PromptVersion != "" {
 		return errors.New("M5-A deterministic evaluation cannot claim a prompt or LLM version")

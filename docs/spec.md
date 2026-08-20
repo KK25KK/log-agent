@@ -2,8 +2,8 @@
 
 | Metadata | Value |
 | --- | --- |
-| Version | 0.6 |
-| Status | M5-A synthetic offline evaluation gate implemented and verified; live M4-B/M4-C and real gray rollout pending |
+| Version | 0.7 |
+| Status | M5-B contract frozen; B1 bounded Agent event/version slice implemented and offline verified; B2 history, B3 trend comparison, live M4-B/M4-C, and real gray rollout pending |
 | Date | 2026-08-20 |
 
 ## 1. Overview
@@ -42,6 +42,9 @@ Users can ask the bot to investigate an error spike for a known service, environ
 - Fail-closed recovery when a metered SLS read has an unknown external outcome.
 - A versioned synthetic golden evaluation set that runs the real deterministic graph over fixture-backed Mock SLS and Mock change data.
 - Offline quality gates for expected outcome, exact Finding and Recommendation labels, conclusive-finding safety, the same production Worker output validator, QuerySpec-to-Evidence binding, evidence-reference coverage, cause-verdict agreement, fixed query budget, and processed-byte cost proxy.
+- A framework-neutral, privacy-bounded Agent event contract for synthetic Engine runs, fixed Graph nodes, and Mock tool calls.
+- A normalized runtime-version manifest and fingerprint that distinguishes dataset, Graph, policy, cause method, trace schema, replay schema, executor profile, and actual Prompt/model usage.
+- Planned append-only offline evaluation-run history plus strict replay comparison for later M5-B B2/B3 slices; neither is implemented by B1.
 
 ## 4. Non-goals
 
@@ -64,6 +67,10 @@ Users can ask the bot to investigate an error spike for a known service, environ
 - Live release-platform, configuration-center, CMDB, Trace, metric, error-code, SOP, or service-topology connectors.
 - Claiming that synthetic fixtures are historical incidents, expert labels, production accuracy, or permission to start a real gray rollout.
 - Real Feishu/SLS/change-platform traffic, credentials, model calls, Prompt quality, Token accounting, or production SLO validation in M5-A.
+- Claiming that the first Agent Trace is a distributed Feishu-to-delivery production Trace; it covers only the synthetic evaluation and Engine boundary.
+- Reusing query audit or query checkpoints as generic tracing storage, or allowing telemetry to change retry, recovery, authorization, or investigation state.
+- Raw messages, identities, resources, SQL, log content, bucket labels, change summaries, natural-language findings/recommendations, callback payloads, provider errors, model inputs, or arbitrary attributes in Agent events.
+- A live telemetry backend, production sampling/retention policy, host identity, real LLM/Token telemetry, historical-binary execution, or production latency SLO in M5-B.
 
 ## 5. Core design and architecture
 
@@ -99,6 +106,14 @@ Versioned synthetic evaluation dataset
     -> outcome / finding / evidence / cause / budget checks
     -> structured evaluation report
     -> non-zero process exit when an engineering regression gate fails
+
+Bounded Agent Observer
+    -> one synthetic evaluation-run identity
+    -> one Trace per evaluation Case
+    -> RUN / GRAPH_NODE / TOOL start and terminal events
+    -> stable failure codes, usage counters, duration, and version fingerprint only
+    -> bounded in-memory Trace for B1
+    -> append-only replay snapshot and strict trend comparison in B2/B3
 ```
 
 The M3 Change Source is enrichment-only. It is called only after governed SLS evidence has established the resource identity and a conclusive spike. Change-source absence or failure cannot erase an M2 fact or fail the investigation; it produces an explicit unavailable or inconclusive cause-analysis status.
@@ -223,6 +238,16 @@ An explicit diagnostic command loads the same catalog and credentials as a real 
 6. The JSON result records the dataset version and fingerprint plus an explicit `synthetic_mock` provenance marker, zero external-network calls, and no credential requirement.
 7. Any configured regression gate failure makes the command return a non-zero exit code after printing the complete structured report.
 
+### Observe and replay a synthetic Agent run
+
+1. The command creates a unique evaluation-run identity and a normalized runtime-version manifest before executing any Case.
+2. Every Case receives a privacy-safe Trace context. The Engine records one run span and the fixed `plan_queries`, `execute_queries`, `build_report`, and `correlate_changes` Graph-node spans.
+3. Fixture-backed adapters record only the typed `sls.current`, `sls.baseline`, and conditional `change_source.list` tool spans. Tool usage must reconcile with the evaluation report's logical calls, Provider-call proxy, and processed-byte proxy.
+4. The Observer never serializes callback input/output or arbitrary attributes. It records stable codes, counts, timestamps, durations, completion, hashes, and the runtime-version fingerprint.
+5. The default application Observer is a no-op. A bounded recorder never fails an investigation; overflow or invalid events make the Trace incomplete and make the offline replay gate fail closed.
+6. B2 saves successful and failed evaluation runs as append-only strict snapshots. B3 compares only runs with compatible dataset identity, data boundary, and executor profile; incompatible runs return `INCOMPARABLE` rather than a misleading delta.
+7. Replay means executing the current binary again against fixed synthetic input. Reproducing an older implementation still requires its Git commit or build artifact.
+
 ## 7. Behavioral contracts and lifecycle
 
 Investigation states are `QUEUED`, `RUNNING`, `SUCCEEDED`, `FAILED`, `CANCELLED`, and `NEEDS_REVIEW`.
@@ -256,6 +281,12 @@ Cause confidence uses the versioned deterministic method `change-correlation-v1`
 Change Source errors, disabled configuration, or incomplete source coverage never turn an otherwise valid M2 report into a failed investigation.
 
 M5-A is a deterministic engineering regression gate, not a production-readiness decision. Outcome, Finding, Recommendation, and cause-verdict agreement are measured only against repository-owned synthetic labels. Recommendation matching is exact by code and Evidence name, so an omitted, injected, duplicated, or misgrounded next step fails closed. Evidence coverage verifies reference integrity, not factual completeness outside the fixture. Processed bytes and fixed Provider-call counts are cost proxies rather than an Alibaba Cloud bill. Local elapsed time is recorded for trend inspection but is not a production latency SLO. Prompt and Token metrics are not applicable while the graph remains model-free.
+
+M5-B Agent events use a fixed schema and closed layer/name/phase enums. The initial hierarchy is evaluation run -> Case Trace -> Engine run -> Graph node or Mock tool. Each span has exactly one start and one terminal phase, parent references form an acyclic closed Trace, sequence numbers are unique and increasing, and terminal usage must agree with the governed evaluation counters. Events contain no arbitrary key/value map or raw error text. Safe failure classification is observational only and cannot alter M4 retry or recovery semantics.
+
+The runtime-version fingerprint is computed from a normalized manifest, not from host identity or wall-clock values. Synthetic and production query policies remain distinct through `executor_profile`; `prompt_used=false` requires Prompt/model/Token fields to remain absent or explicitly not applicable. Hashes provide integrity and correlation, not anonymization.
+
+The B1 gate version is `m5b-agent-trace-gate-v1`, the Agent event/Trace schema is `agent-trace-v1`, and the reserved replay snapshot schema is `evaluation-replay-v1`. B1 executes only under `executor_profile=SYNTHETIC_MOCK`. The replay schema value is part of the normalized version contract; it does not imply that the B2 append-only store or `replay` command exists.
 
 ## 8. Constraints and compatibility
 
@@ -356,7 +387,19 @@ M5-A is a deterministic engineering regression gate, not a production-readiness 
 - [x] A failed metric or per-case safety expectation prints a structured failure report and returns a non-zero process exit code.
 - [x] Dataset schema/version and content fingerprint are present in every evaluation report so future Graph and policy changes remain comparable.
 - [x] Offline tests, `go vet`, and the evaluation command pass without Feishu, SLS, change-platform, or model credentials.
-- [x] Real historical incidents, expert labels, agent telemetry, pilot groups, production thresholds, and gray-rollout approval remain explicitly deferred to M5-B/M5-C.
+- [x] Real historical incidents, expert labels, production Agent telemetry, pilot groups, production thresholds, and gray-rollout approval remain explicitly deferred to later M5-B/M5-C slices.
+
+### M5-B Agent observability and offline replay
+
+- [x] B1 defines and validates a closed, privacy-bounded Agent event schema, stable safe-failure taxonomy, normalized runtime-version manifest, and deterministic version fingerprint.
+- [x] B1 provides a no-op Observer and a concurrent bounded recorder whose overflow or invalid input is visible as an incomplete Trace without failing the business run.
+- [x] B1 records one complete synthetic Trace per Case with one Engine run, four fixed Graph-node spans, two SLS tool spans, and a conditional Change Source span; every span has one start and one terminal event.
+- [x] B1 reconciles Trace tool usage with evaluation QuerySpecs, logical/Provider call counts, processed-byte proxy, and change-source calls while retaining zero credentials and zero external-network calls.
+- [x] B1 proves the serialized Trace excludes forbidden message, identity, resource, query, log, bucket, change-summary, natural-language report, callback, provider-error, Prompt, and arbitrary-attribute content.
+- [ ] B2 saves successful and failed evaluation runs as append-only strict snapshots with content hashes and duplicate/tamper rejection, without extending the production Store interface.
+- [ ] B2 exposes an offline `replay` command that uses the current binary and fixture-backed Mock dependencies only.
+- [ ] B3 compares compatible replay snapshots, reports version changes, quality/cost/tool/Trace regressions and recovered or newly failed Cases, and returns `INCOMPARABLE` for incompatible data boundaries.
+- [ ] Live telemetry export, production sampling/retention, real LLM/Token observability, historical build execution, real incident feedback, and production SLO approval remain explicitly deferred.
 
 ## 10. Open deployment inputs
 

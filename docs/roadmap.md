@@ -133,11 +133,32 @@
 
 M5-A 的指标只说明代码对受控合成样例没有回归，不是历史真实故障准确率、专家评审结论、生产成本或灰度批准。
 
-### M5-B：Agent 自观测与回放（未开始，Mock-first）
+### M5-B：Agent 自观测与回放（已启动，Mock-first）
 
-- Graph、查询策略和后续 Prompt 的版本登记与对比。
-- Agent 自身日志、Trace、工具调用和失败分类；当前无 LLM，Token/Prompt 指标标记为不适用。
-- 回放结果趋势、失败样例归档和反馈闭环。
+目标：在不接真实平台、不扩大生产声明的前提下，让合成评测的执行过程可追踪、可归档、可比较。首版只覆盖 Engine/评测边界，不冒充飞书入站到投递的跨进程 Trace。
+
+#### B1：事件与版本合同（代码与离线验收完成）
+
+- 框架无关、字段有界的 `RUN / GRAPH_NODE / TOOL` 事件，只记录稳定代码、计数、耗时、哈希和版本指纹。
+- Graph、查询模板/策略、原因方法、评测规则、Trace/Replay Schema、执行 Profile 和真实 Prompt 使用情况形成统一版本清单。
+- Noop Observer 与线程安全有界 Recorder；遥测不能破坏调查，但事件丢失会让离线门禁失败。
+- 真实 Eino 固定节点以及 Mock `sls.current`、`sls.baseline`、`change_source.list` 工具调用形成闭合 Trace，并与现有调用/字节统计核对。
+
+验收：`m5b-agent-trace-gate-v1` 在五个合成 Case 上全部通过，`trace_contract_accuracy=1`；共形成 76 个 `agent-trace-v1` 事件、13 个工具 Span、0 个丢弃事件，并与 10 次逻辑 SLS 观察、40 次 Provider 调用代理、3 次 Change Source 调用和 78,080 processed bytes 一致。执行 Profile 固定为 `SYNTHETIC_MOCK`，不读取凭据、外部网络调用为 0。实现与边界见 [`m5-agent-observability-replay.md`](m5-agent-observability-replay.md)。
+
+#### B2：离线回放历史（未开始）
+
+- 成功和失败评测都保存为 append-only 严格快照，包含报告、版本、Trace、失败 Case 和内容哈希。
+- 独立 Evaluation Run Store，不扩展生产 `ports.Store`，也不复用 Query Audit/QueryStep。
+- `replay` 命令只用当前二进制和合成 Mock；历史实现仍需旧 Commit 或旧制品。
+
+#### B3：趋势比较与反馈闭环（未开始）
+
+- `replay-compare` 比较质量门禁、失败 Case、错误分类、Trace 完整性、工具调用和成本代理。
+- 数据集边界或执行 Profile 不兼容时返回 `INCOMPARABLE`，不输出伪精确差值。
+- 回放趋势与失败样例归档为后续真实专家反馈提供接口，但不冒充真实标注。
+
+当前无 LLM，因此 Prompt、Model、Token 指标继续标记为不适用；`evaluation-replay-v1` 在 B1 中只作为版本合同存在，不代表已经保存回放快照。真实 Trace 后端、采样/保留策略、生产 SLO 和真实反馈仍延期。
 
 ### M5-C：真实试点灰度（等待真实输入）
 
