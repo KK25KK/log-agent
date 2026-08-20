@@ -26,6 +26,18 @@ func TestLoadDefaultsToOfflineMock(t *testing.T) {
 	if config.ChangeCatalogPath != "" {
 		t.Fatalf("change catalog must be disabled by default: %q", config.ChangeCatalogPath)
 	}
+	if config.Quota.Window != time.Hour || config.Quota.MaxObservations != 100 || config.Quota.MaxAPICalls != 400 ||
+		config.Quota.ReservedBytesPerObservation != config.SLS.MaxProcessedBytes || config.Quota.MaxProcessedBytes <= config.Quota.ReservedBytesPerObservation {
+		t.Fatalf("unexpected tenant quota defaults: %#v", config.Quota)
+	}
+}
+
+func TestLoadRejectsQuotaReservationAboveWindowBudget(t *testing.T) {
+	t.Setenv("LOG_AGENT_TENANT_QUOTA_MAX_PROCESSED_BYTES", "1024")
+	t.Setenv("LOG_AGENT_TENANT_QUOTA_RESERVED_BYTES", "2048")
+	if _, err := Load(); err == nil {
+		t.Fatal("want invalid tenant quota reservation error")
+	}
 }
 
 func TestLoadRejectsUnsafeSLSConfiguration(t *testing.T) {

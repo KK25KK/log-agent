@@ -17,7 +17,7 @@ var (
 type DeliveryStore interface {
 	ClaimDelivery(ctx context.Context, workerID string, now time.Time, leaseDuration time.Duration) (domain.DeliveryJob, bool, error)
 	CompleteDelivery(ctx context.Context, delivery domain.DeliveryJob, remoteMessageID string, now time.Time) error
-	FailDelivery(ctx context.Context, delivery domain.DeliveryJob, reason string, retryAt time.Time, dead bool, now time.Time) error
+	FailDelivery(ctx context.Context, delivery domain.DeliveryJob, failure domain.DeliveryFailure, retryAt time.Time, dead bool, now time.Time) error
 }
 
 // DeliverySender is implemented by the Feishu adapter without leaking SDK types.

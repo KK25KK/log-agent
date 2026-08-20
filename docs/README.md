@@ -8,6 +8,7 @@
 | [`roadmap.md`](roadmap.md) | 当前阶段边界、完成状态和后续计划 | 只写可独立验收的阶段 |
 | [`local-mock-e2e.md`](local-mock-e2e.md) | 飞书 + SLS 双 Mock 的运行、输出与边界 | Mock 行为变化时同步更新 |
 | [`m4-recoverable-query-steps.md`](m4-recoverable-query-steps.md) | 第五期 M4-A 的检查点、结果未知与恢复合同 | M4-A 行为或验收变化时同步更新 |
+| [`m4b-reliability-governance.md`](m4b-reliability-governance.md) | M4-B 的投递失败分类、死信安全重放、租户额度/成本熔断和审批合同 | M4-B 状态机、额度或运维 CLI 变化时同步更新 |
 | [`m5-offline-evaluation-gate.md`](m5-offline-evaluation-gate.md) | 第六期 M5-A 的全合成离线评测数据、指标、门禁与声明边界 | 数据集、评测规则或 CLI 行为变化时同步更新 |
 | [`m5-agent-observability-replay.md`](m5-agent-observability-replay.md) | 第七至九期 M5-B 的 Agent 自观测、离线回放和兼容快照比较合同；B1～B3 已完成 | Agent 事件、版本清单、Trace 门禁或回放/比较边界变化时同步更新 |
 | [`offline-feedback-and-rollout-rehearsal.md`](offline-feedback-and-rollout-rehearsal.md) | 严格 Mock Reviewer 反馈账本、纠正链和非行动性灰度/回滚演练 | Feedback Schema、策略、quorum、CLI 或安全边界变化时同步更新 |
@@ -24,6 +25,7 @@
 | M2 / 第三期 | [`m2-error-spike-investigation-loop.md`](m2-error-spike-investigation-loop.md) | 历史叙事归档；当前树仍可对照其主体实现 |
 | M3 / 第四期 | [`m3-change-correlation-evidence.md`](m3-change-correlation-evidence.md) | 代码与离线验收完成；真实系统联调待部署阶段 |
 | M4-A / 第五期首个切片 | [`m4-recoverable-query-steps.md`](m4-recoverable-query-steps.md) | 代码与离线验收完成；不代表完整 M4 或生产验收 |
+| M4-B / 第十一期可靠性切片 | [`m4b-reliability-governance.md`](m4b-reliability-governance.md) | 代码与离线验收完成；SQLite 技术预览，不代表多实例生产治理 |
 | M5-A / 第六期首个切片 | [`m5-offline-evaluation-gate.md`](m5-offline-evaluation-gate.md) | 代码与离线验收完成；全合成 Mock，不代表真实准确率或灰度批准 |
 | M5-B/B1 / 第七期首个切片 | [`m5-agent-observability-replay.md`](m5-agent-observability-replay.md) | 事件/版本合同与 Engine 级离线 Trace 已完成 |
 | M5-B/B2 / 第八期首个切片 | [`m5-agent-observability-replay.md`](m5-agent-observability-replay.md) | append-only 快照与当前二进制离线回放已完成 |

@@ -19,6 +19,7 @@ type Config struct {
 	ChangeCatalogPath string
 	Delivery          DeliveryConfig
 	SLS               SLSConfig
+	Quota             QuotaConfig
 	SmokePrincipal    SmokePrincipal
 }
 
@@ -48,6 +49,14 @@ type SLSConfig struct {
 	MaxProcessedBytes int64
 	MaxConcurrent     int
 	SchemaTTL         time.Duration
+}
+
+type QuotaConfig struct {
+	Window                      time.Duration
+	MaxObservations             int64
+	MaxAPICalls                 int64
+	MaxProcessedBytes           int64
+	ReservedBytesPerObservation int64
 }
 
 type SmokePrincipal struct {
@@ -163,6 +172,32 @@ func Load() (Config, error) {
 	config.SLS.MaxConcurrent, err = intOrDefault("LOG_AGENT_SLS_MAX_CONCURRENT", 2)
 	if err != nil {
 		return Config{}, err
+	}
+	config.Quota.Window, err = durationOrDefault("LOG_AGENT_TENANT_QUOTA_WINDOW", time.Hour)
+	if err != nil {
+		return Config{}, err
+	}
+	if config.Quota.Window < time.Minute || config.Quota.Window > 24*time.Hour {
+		return Config{}, fmt.Errorf("LOG_AGENT_TENANT_QUOTA_WINDOW must be between 1m and 24h")
+	}
+	config.Quota.MaxObservations, err = int64OrDefault("LOG_AGENT_TENANT_QUOTA_MAX_OBSERVATIONS", 100)
+	if err != nil {
+		return Config{}, err
+	}
+	config.Quota.MaxAPICalls, err = int64OrDefault("LOG_AGENT_TENANT_QUOTA_MAX_API_CALLS", 400)
+	if err != nil {
+		return Config{}, err
+	}
+	config.Quota.MaxProcessedBytes, err = int64OrDefault("LOG_AGENT_TENANT_QUOTA_MAX_PROCESSED_BYTES", 8*1024*1024*1024)
+	if err != nil {
+		return Config{}, err
+	}
+	config.Quota.ReservedBytesPerObservation, err = int64OrDefault("LOG_AGENT_TENANT_QUOTA_RESERVED_BYTES", config.SLS.MaxProcessedBytes)
+	if err != nil {
+		return Config{}, err
+	}
+	if config.Quota.ReservedBytesPerObservation > config.Quota.MaxProcessedBytes {
+		return Config{}, fmt.Errorf("LOG_AGENT_TENANT_QUOTA_RESERVED_BYTES cannot exceed LOG_AGENT_TENANT_QUOTA_MAX_PROCESSED_BYTES")
 	}
 	return config, nil
 }

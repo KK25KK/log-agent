@@ -267,28 +267,44 @@ WHERE investigation_id = ? AND card_message_id = ?`,
 	if bound != 1 {
 		return ports.ErrLeaseLost
 	}
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO delivery_attempts(
+    delivery_id, investigation_id, attempt, outcome,
+    failure_disposition, reason_code, occurred_at
+) VALUES (?, ?, ?, ?, '', '', ?)`,
+		delivery.ID, delivery.Investigation.ID, delivery.Attempt,
+		domain.DeliveryAttemptSent, nowMillis); err != nil {
+		return fmt.Errorf("audit successful delivery attempt: %w", err)
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit delivery completion: %w", err)
 	}
 	return nil
 }
 
-func (s *Store) FailDelivery(ctx context.Context, delivery domain.DeliveryJob, reason string, retryAt time.Time, dead bool, now time.Time) error {
-	if len(reason) > 128 {
-		reason = reason[:128]
+func (s *Store) FailDelivery(ctx context.Context, delivery domain.DeliveryJob, failure domain.DeliveryFailure, retryAt time.Time, dead bool, now time.Time) error {
+	if err := validateDeliveryFailure(failure); err != nil {
+		return err
 	}
 	status := domain.DeliveryPending
+	outcome := domain.DeliveryAttemptRetry
 	if dead {
 		status = domain.DeliveryDead
+		outcome = domain.DeliveryAttemptDead
 	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin delivery failure: %w", err)
+	}
+	defer tx.Rollback()
 	nowMillis := now.UTC().UnixMilli()
-	result, err := s.db.ExecContext(ctx, `
+	result, err := tx.ExecContext(ctx, `
 UPDATE delivery_events
 SET status = ?, lease_owner = '', lease_until = 0,
     available_at = ?, last_error = ?, updated_at = ?
 WHERE id = ? AND investigation_id = ? AND status = ?
   AND lease_owner = ? AND attempts = ? AND lease_until >= ?`,
-		status, retryAt.UTC().UnixMilli(), reason, nowMillis,
+		status, retryAt.UTC().UnixMilli(), failure.ReasonCode, nowMillis,
 		delivery.ID, delivery.Investigation.ID, domain.DeliverySending,
 		delivery.LeaseOwner, delivery.Attempt, nowMillis)
 	if err != nil {
@@ -300,6 +316,28 @@ WHERE id = ? AND investigation_id = ? AND status = ?
 	}
 	if updated != 1 {
 		return ports.ErrLeaseLost
+	}
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO delivery_attempts(
+    delivery_id, investigation_id, attempt, outcome,
+    failure_disposition, reason_code, occurred_at
+) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		delivery.ID, delivery.Investigation.ID, delivery.Attempt, outcome,
+		failure.Disposition, failure.ReasonCode, nowMillis); err != nil {
+		return fmt.Errorf("audit failed delivery attempt: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit delivery failure: %w", err)
+	}
+	return nil
+}
+
+func validateDeliveryFailure(failure domain.DeliveryFailure) error {
+	if err := ports.ValidateFailureDisposition(failure.Disposition); err != nil {
+		return err
+	}
+	if !boundedSafeCode(failure.ReasonCode, 1, 128) {
+		return errors.New("delivery failure reason code is invalid")
 	}
 	return nil
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"logagent/internal/domain"
 	"logagent/internal/ports"
 )
 
@@ -62,9 +63,13 @@ func (w *DeliveryWorker) RunOne(ctx context.Context) (bool, error) {
 	}
 	now := w.now().UTC()
 	if sendErr != nil {
-		dead := delivery.Attempt >= w.maxAttempts
+		failure := ports.ClassifyOperationError(sendErr)
+		if failure.Disposition == domain.FailureCancelled && ctx.Err() != nil {
+			return true, ctx.Err()
+		}
+		dead := failure.Disposition == domain.FailurePermanent || delivery.Attempt >= w.maxAttempts
 		retryAt := now.Add(w.retryDelay(delivery.Attempt))
-		if err := w.store.FailDelivery(ctx, delivery, "feishu_send_failed", retryAt, dead, now); err != nil {
+		if err := w.store.FailDelivery(ctx, delivery, failure, retryAt, dead, now); err != nil {
 			return true, fmt.Errorf("send Feishu delivery: %v; persist failure: %w", sendErr, err)
 		}
 		return true, fmt.Errorf("send Feishu delivery %q: %w", delivery.ID, sendErr)

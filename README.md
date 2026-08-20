@@ -1,6 +1,6 @@
 # Log Agent
 
-这是一个用 Go 开发的“证据驱动”日志调查 Agent。M0～M3、M4-A、M5-A、M5-B/B1～B3，以及 M5-C 的 Mock Reviewer 反馈账本和离线灰度决策演练已经完成主体代码与离线测试；M4-B/M4-C、必需的 LLM 证据摘要和 M5-C 真实灰度仍未完成。由于仓库没有真实飞书/SLS/发布平台凭据、生产数据库、历史故障标注集与试点资源，当前只能称为“具备试点条件”，不能称为日常可用或生产可用。
+这是一个用 Go 开发的“证据驱动”日志调查 Agent。M0～M3、M4-A/M4-B、M5-A、M5-B/B1～B3，以及 M5-C 的 Mock Reviewer 反馈账本和离线灰度决策演练已经完成主体代码与离线测试；M4-C、必需的 LLM 证据摘要和 M5-C 真实灰度仍未完成。由于仓库没有真实飞书/SLS/发布平台凭据、生产数据库、历史故障标注集与试点资源，当前只能称为“具备试点条件”，不能称为日常可用或生产可用。
 
 ```text
 飞书消息
@@ -60,6 +60,8 @@ Eino 只负责流程编排，不负责业务状态、权限、幂等、审计和
 
 - 调查状态事务同步写入 `QUEUED/RUNNING/SUCCEEDED/FAILED/CANCELLED` 卡片事件。
 - 独立 Delivery Worker 使用租约、attempt fencing 和有限退避发送卡片。
+- 飞书失败归一为可重试、永久、结果未知或取消；永久错误立即死信，每次发送结果追加审计。
+- `delivery-dlq-list` 查看安全投影，`delivery-dlq-replay` 只重放不会覆盖更新卡片状态的事件。
 - 第一次 Reply 创建 JSON 2.0 交互卡，后续 Patch 同一个 Card Message ID。
 - 卡片支持查看证据、取消、扩大时间窗和重新运行。
 - 按 App、Tenant、Chat、Card 和原请求者做授权；按钮不能携带资源或查询内容。
@@ -136,6 +138,8 @@ go run ./cmd/logagent mock-e2e
 7. 通过真实 Delivery Worker 模拟飞书卡片 `REPLY(QUEUED) -> PATCH(RUNNING) -> PATCH(SUCCEEDED)`。
 
 输出中的 `safety.external_network_calls=0`、`credentials_required=false` 表示当前运行完全离线；`schema_calls=1`、`backend_execute_calls=2`、`provider_api_calls=8`、`query_audit_events=4` 和 `query_step_checkpoints=2` 分别证明固定 Schema、当前/基线观察、四聚合调用元数据、开始/终态审计和两个持久化步骤已经经过真实应用链路。固定的 120/20 条错误、发布事件和飞书标识全部是测试数据，不代表真实阿里云或飞书结果。完整 Mock 边界见 [`docs/local-mock-e2e.md`](docs/local-mock-e2e.md)，恢复合同见 [`docs/m4-recoverable-query-steps.md`](docs/m4-recoverable-query-steps.md)。
+
+`tenant_quota` 还证明两个逻辑观察经过 SQLite 固定窗额度预留/结算且没有打开成本代理熔断。该值是 Mock usage，不是阿里云账单。
 
 ## 运行第六至八期离线评测与 Trace 门禁
 
@@ -294,6 +298,25 @@ $env:LOG_AGENT_SLS_ECS_RAM_ROLE_NAME = "your-role-name"
 
 `LOG_AGENT_DELIVERY_LEASE_DURATION` 必须严格大于 `LOG_AGENT_DELIVERY_SEND_TIMEOUT`。
 
+租户查询额度默认配置：
+
+| 配置 | 默认值 | 含义 |
+| --- | ---: | --- |
+| `LOG_AGENT_TENANT_QUOTA_WINDOW` | `1h` | 本地固定 UTC 额度窗口 |
+| `LOG_AGENT_TENANT_QUOTA_MAX_OBSERVATIONS` | `100` | 每租户逻辑观察上限 |
+| `LOG_AGENT_TENANT_QUOTA_MAX_API_CALLS` | `400` | 每租户 Provider 调用代理上限 |
+| `LOG_AGENT_TENANT_QUOTA_MAX_PROCESSED_BYTES` | `8589934592` | 每租户处理字节代理上限 |
+| `LOG_AGENT_TENANT_QUOTA_RESERVED_BYTES` | `268435456` | 每个未结算观察预留的字节代理 |
+
+这些额度由可信 App/Tenant 哈希隔离，只是 SQLite 技术预览，不是多实例全局限额或费用账单。死信运维命令：
+
+```powershell
+go run ./cmd/logagent delivery-dlq-list --db .\data\logagent.db --limit 50
+go run ./cmd/logagent delivery-dlq-replay --db .\data\logagent.db --delivery-id delivery:inv_xxx:SUCCEEDED --operator ops-user-1
+```
+
+重放会在事务内检查当前卡片绑定和后续投影；不安全的旧进度或已重绑事件会拒绝。详见 [`docs/m4b-reliability-governance.md`](docs/m4b-reliability-governance.md)。
+
 ### 3. 先检查资源元数据
 
 ```powershell
@@ -387,7 +410,7 @@ internal/adapters/feishumock         离线飞书收件与卡片投递模拟，�
 internal/adapters/aliyunsls           唯一允许导入阿里云 SLS SDK 的包
 internal/adapters/resourcecatalog     JSON 资源目录与静态 ACL
 internal/adapters/changecatalog       M3 版本化发布/配置变更目录
-internal/adapters/sqlite              本地持久化、查询审计、查询 Checkpoint 与卡片事件
+internal/adapters/sqlite              本地持久化、查询审计/Checkpoint、卡片死信、租户额度与审批合同
 internal/adapters/slsmock             离线确定性数据
 internal/adapters/evalmock            M5-A 逐 Case 的 SLS 与 Change Source Fixture Mock
 internal/adapters/replayfs             B2 append-only 评测快照文件存储与严格读取
@@ -410,7 +433,7 @@ internal/observability                Noop Observer、Trace 上下文与线程�
 - 扫描字节和真实费用无法在执行前精确获知；当前在返回后用 `processed_bytes` 做硬门禁，超限结果只能成为非结论性证据。
 - 查询仅返回聚合，不返回原始日志。通用敏感信息识别不可能完全可靠，生产前仍需按企业字段规范补充脱敏模式。
 - Schema 缓存过期后刷新失败会 fail closed，不会无限使用旧 Schema。
-- SQLite 继续用于本地技术验证；卡片发送只有有限本地重试，不承诺 exactly-once。M2 按单个飞书/Delivery 进程部署；多实例卡片发送的全局顺序、Delivery 死信安全重放、生产数据库、全局配额和审批仍在 M4-B/M4-C。
+- SQLite 继续用于本地技术验证；卡片发送只有分类后的有限本地重试，不承诺 exactly-once。M4-B 已提供安全死信重放、本地租户额度/成本代理熔断和审批状态合同；多实例卡片全局顺序、生产数据库、组织级全局配额、真实 DLQ RBAC 与审批执行仍在 M4-C。
 - SQLite 技术预览当前没有 schema version、正式迁移和回滚工具；升级已有数据库前必须备份，本地试验环境可按阶段说明重建。
 - M3 Change Catalog 是启动时加载的静态文件，不是已接通的发布平台、配置中心或 CMDB；关联候选、权重和阈值尚未经过企业历史故障集校准。
 - M3 不增加 SLS 查询，也没有版本分布、首次出现时间、Trace、指标、拓扑或知识库证据；相关性不会被表述成已确认根因。

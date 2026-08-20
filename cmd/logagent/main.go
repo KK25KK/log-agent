@@ -28,7 +28,7 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: logagent <evaluate|replay|replay-compare|feedback-seed|rollout-rehearse|mock-e2e|demo|worker|feishu|sls-check|sls-smoke>")
+		return errors.New("usage: logagent <evaluate|replay|replay-compare|feedback-seed|rollout-rehearse|delivery-dlq-list|delivery-dlq-replay|mock-e2e|demo|worker|feishu|sls-check|sls-smoke>")
 	}
 	switch args[0] {
 	case "evaluate":
@@ -41,6 +41,10 @@ func run(args []string) error {
 		return runFeedbackSeedCommand(args[1:])
 	case "rollout-rehearse":
 		return runRolloutRehearseCommand(args[1:])
+	case "delivery-dlq-list":
+		return runDeliveryDLQListCommand(args[1:])
+	case "delivery-dlq-replay":
+		return runDeliveryDLQReplayCommand(args[1:])
 	case "mock-e2e":
 		if len(args) != 1 {
 			return errors.New("usage: logagent mock-e2e")
@@ -88,7 +92,7 @@ func run(args []string) error {
 		}
 		return runSLSSmoke(loaded, args[1], args[2], args[3])
 	default:
-		return fmt.Errorf("unknown command %q; use evaluate, replay, replay-compare, feedback-seed, rollout-rehearse, mock-e2e, demo, worker, feishu, sls-check, or sls-smoke", args[0])
+		return fmt.Errorf("unknown command %q; use evaluate, replay, replay-compare, feedback-seed, rollout-rehearse, delivery-dlq-list, delivery-dlq-replay, mock-e2e, demo, worker, feishu, sls-check, or sls-smoke", args[0])
 	}
 }
 

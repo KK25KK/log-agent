@@ -27,15 +27,27 @@ func newMockExecutor() application.GovernedSLSExecutor {
 	return &slsmock.Executor{}
 }
 
-func buildWorkerExecutor(config config.Config, auditor ports.QueryAuditor) (application.GovernedSLSExecutor, error) {
+type workerGovernanceStore interface {
+	ports.QueryAuditor
+	ports.QueryQuotaStore
+}
+
+func buildWorkerExecutor(config config.Config, store workerGovernanceStore) (application.GovernedSLSExecutor, error) {
+	var base application.GovernedSLSExecutor
 	if config.SLS.Mode == "mock" {
-		return newMockExecutor(), nil
+		base = newMockExecutor()
+	} else {
+		catalog, backend, err := buildAliyunDependencies(config)
+		if err != nil {
+			return nil, err
+		}
+		gateway, err := queryapp.NewGateway(catalog, backend, store, queryBudget(config.SLS))
+		if err != nil {
+			return nil, err
+		}
+		base = gateway
 	}
-	catalog, backend, err := buildAliyunDependencies(config)
-	if err != nil {
-		return nil, err
-	}
-	return queryapp.NewGateway(catalog, backend, auditor, queryBudget(config.SLS))
+	return application.NewQuotaExecutor(base, store, tenantQuotaPolicy(config.Quota), time.Now)
 }
 
 func buildChangeSource(config config.Config) (ports.ChangeSource, error) {
@@ -75,6 +87,17 @@ func queryBudget(config config.SLSConfig) queryapp.Budget {
 		MaxProcessedBytes: config.MaxProcessedBytes,
 		MaxConcurrent:     config.MaxConcurrent,
 		SchemaTTL:         config.SchemaTTL,
+	}
+}
+
+func tenantQuotaPolicy(config config.QuotaConfig) domain.TenantQuotaPolicy {
+	return domain.TenantQuotaPolicy{
+		Version:                     application.TenantQuotaPolicyVersion,
+		Window:                      config.Window,
+		MaxObservations:             config.MaxObservations,
+		MaxAPICalls:                 config.MaxAPICalls,
+		MaxProcessedBytes:           config.MaxProcessedBytes,
+		ReservedBytesPerObservation: config.ReservedBytesPerObservation,
 	}
 }
 

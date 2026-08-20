@@ -174,6 +174,8 @@ func deterministicQueryFailure(err error) (string, bool) {
 		return "query_budget_exceeded", true
 	case errors.Is(err, ports.ErrInvalidQuerySchema):
 		return "invalid_query_schema", true
+	case errors.Is(err, ports.ErrTenantQuotaExceeded):
+		return "tenant_query_quota_exceeded", true
 	default:
 		return "", false
 	}

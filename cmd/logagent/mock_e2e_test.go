@@ -43,6 +43,9 @@ func TestExecuteMockE2ECoversInboundAnalysisAndCardLifecycle(t *testing.T) {
 	if result.AlibabaSLS.Mode != "mock" || result.AlibabaSLS.LogicalObservations != 2 || result.AlibabaSLS.SchemaCalls != 1 || result.AlibabaSLS.BackendExecuteCalls != 2 || result.AlibabaSLS.ProviderAPICalls != 8 || result.AlibabaSLS.QueryAuditEvents != 4 || result.AlibabaSLS.QueryStepCheckpoints != 2 || result.AlibabaSLS.RawLogRowsReturned != 0 {
 		t.Fatalf("unexpected mock SLS summary: %#v", result.AlibabaSLS)
 	}
+	if result.TenantQuota.Observations != 2 || result.TenantQuota.APICalls != 8 || result.TenantQuota.ProcessedBytes <= 0 || result.TenantQuota.CircuitOpen {
+		t.Fatalf("unexpected mock tenant quota: %#v", result.TenantQuota)
+	}
 	if result.Investigation.Status != domain.StatusSucceeded || result.Investigation.Report == nil || result.Investigation.Report.Outcome != "spike_detected" {
 		t.Fatalf("unexpected investigation: %#v", result.Investigation)
 	}

@@ -15,6 +15,7 @@ import (
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 
 	"logagent/internal/domain"
+	"logagent/internal/ports"
 )
 
 type fakeSDKMessageAPI struct {
@@ -237,6 +238,27 @@ func TestSDKClientUsesReplyAndPatchCardAPIs(t *testing.T) {
 	}
 	if requests[1].method != http.MethodPatch || requests[1].path != "/open-apis/im/v1/messages/om_created" {
 		t.Fatalf("unexpected patch request: %#v", requests[1])
+	}
+}
+
+func TestResponseFailureUsesClosedRetryDisposition(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name   string
+		status int
+		want   domain.FailureDisposition
+	}{
+		{name: "rate limited", status: http.StatusTooManyRequests, want: domain.FailureRetryable},
+		{name: "server error", status: http.StatusServiceUnavailable, want: domain.FailureRetryable},
+		{name: "gateway timeout", status: http.StatusGatewayTimeout, want: domain.FailureOutcomeUnknown},
+		{name: "bad request", status: http.StatusBadRequest, want: domain.FailurePermanent},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			failure := ports.ClassifyOperationError(responseFailure("feishu_rejected", &larkcore.ApiResp{StatusCode: test.status}))
+			if failure.Disposition != test.want || failure.ReasonCode != "feishu_rejected" {
+				t.Fatalf("unexpected classification: %+v", failure)
+			}
+		})
 	}
 }
 

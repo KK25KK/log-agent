@@ -2,8 +2,8 @@
 
 | Metadata | Value |
 | --- | --- |
-| Version | 1.1-draft |
-| Status | M5-C synthetic feedback ledger and rollout rehearsal implemented and offline verified; real gray rollout, production reliability slices, and the required LLM evidence summary remain pending |
+| Version | 1.2-draft |
+| Status | M4-B local reliability governance implemented and offline verified; M4-C production infrastructure, real gray rollout, and the required LLM evidence summary remain pending |
 | Date | 2026-08-20 |
 
 ## 1. Overview
@@ -48,6 +48,9 @@ Users can ask the bot to investigate an error spike for a known service, environ
 - A mock-first rollout-readiness control plane that binds bounded reviewer feedback to exact immutable evaluation snapshots before producing a non-actionable rehearsal decision.
 - An append-only feedback history with explicit correction lineage, reviewer quorum, closed verdict/reason codes, and deterministic rollout-policy evaluation.
 - A required provider-neutral LLM summary stage that can use a Mock implementation offline and a guarded Volcengine Ark adapter in deployment. It may summarize only validated Findings, Evidence references, cause-analysis status, limitations, and deterministic recommendations.
+- A provider-neutral delivery-failure taxonomy, bounded retry, append-only attempt audit, operator-visible dead letters, and transactionally guarded replay of the existing card queue.
+- A SQLite technical-preview tenant quota ledger that reserves fixed query-call and processed-byte proxies before the governed executor and settles success, deterministic denial, or unknown external outcome without retrying paid reads.
+- A closed high-risk approval state contract with immutable request hashes and one-time consumption; no high-risk tool is registered in the current read-only runtime.
 
 ## 4. Non-goals
 
@@ -58,11 +61,13 @@ Users can ask the bot to investigate an error spike for a known service, environ
 - Token-by-token Feishu streaming cards or high-risk approval actions.
 - Raw-log samples in Feishu or model context.
 - Claiming that absence from a bounded Top-K result proves historical absence.
-- A production-grade notification Outbox with unbounded retry, dead-letter operations, or exactly-once delivery.
+- Exactly-once notification delivery, blind dead-letter replay, or an unbounded delivery retry loop.
 - Model-generated facts, confidence, authorization, queries, or root-cause verdicts. The required LLM stage may only summarize governed evidence and must fall back to the deterministic report when unavailable or invalid.
 - A production database migration or a new organization-wide message queue.
 - Exact RMB cost prediction; processed bytes are the first cost proxy.
 - Cross-process global concurrency quotas; the first implementation limits each worker process.
+- Treating the SQLite tenant quota ledger as an organization-wide or multi-region production quota service.
+- Executing a high-risk tool merely because an approval record exists; production identity, tool registration, policy and executor integration remain M4-C inputs.
 - Automatic retry of a paid query whose external outcome is unknown.
 - Provider exactly-once query execution; SLS does not accept an application idempotency key.
 - Treating a correlated release, configuration change, error pattern, or instance as a confirmed root cause.
@@ -176,6 +181,12 @@ Unknown, unauthorized, invalid-schema, or preflight-over-budget requests fail cl
 SQLite validates local durability, deduplication, leases, restart behavior, and query audit semantics. Production persistence remains behind application-owned interfaces and will use the organization's approved relational database.
 
 The minimal Feishu delivery queue is also persisted in SQLite. Business-state commits enqueue deterministic delivery events transactionally. A separate delivery worker claims them with a lease and updates one investigation card. The initial reply uses a stable Feishu UUID; repeated card patches are content-idempotent. This is at-least-once local delivery, not an exactly-once guarantee.
+
+M4-B keeps that same queue. Adapter failures are reduced to closed `RETRYABLE`, `PERMANENT`, `OUTCOME_UNKNOWN`, or `CANCELLED` dispositions plus safe reason codes. Permanent failures become `DEAD` immediately; retryable and outcome-unknown sends use bounded exponential backoff and retain the at-least-once boundary. Every completed attempt is append-only audited. Dead-letter replay is allowed only when the card is still bound and the event is the latest safe projection, or when it is the initial queued receipt and no card exists. Superseded/rebound progress and any replay that could overwrite a newer card state fail closed.
+
+The first tenant-governance implementation is a SQLite technical preview. A trusted `(app_id, tenant_key)` is hashed into a local tenant key. One logical current/baseline observation reserves fixed API-call and processed-byte proxies in a fixed UTC window before the governed executor runs. Success settles actual usage, a deterministic pre-provider denial releases the reservation, and an ambiguous provider outcome remains charged as `UNKNOWN`. Reusing a usage key never calls the provider again. Crossing the configured observation, call, or byte ceiling opens a durable cost-proxy circuit for the rest of that window.
+
+High-risk approval is a separate closed state machine: `PENDING -> APPROVED | REJECTED | EXPIRED`, and `APPROVED -> CONSUMED` exactly once. Requests bind the trusted tenant, requester, investigation, action code, immutable payload hash and expiry. This version intentionally registers no write/remediation tool, so approval data cannot trigger an external side effect.
 
 ## 6. User and system workflows
 
@@ -312,7 +323,7 @@ Redaction changes only the displayed aggregate label; it does not change the agg
 
 Query audit is append-only and excludes credentials, raw log bodies, and raw provider query strings. A query-spec fingerprint includes the resolved resource, template and policy versions, selectors, time range, and enforced limits.
 
-Notification delivery states are `PENDING`, `RUNNING`, `SENT`, and `DEAD`. Claims use owner, lease expiry, and attempt fencing. A delivery failure never rolls back or changes the investigation business state. M2 uses a small bounded retry policy; production retry classification, operational replay, and dead-letter tooling remain future work.
+Notification delivery states are `PENDING`, `RUNNING`, `SENT`, and `DEAD`. Claims use owner, lease expiry, and attempt fencing. A delivery failure never rolls back or changes the investigation business state. M4-B uses a closed failure disposition, append-only attempt audit and bounded retry. Operational replay must pass the latest-card-projection transaction guard and is itself audited.
 
 M2 runs one Feishu/delivery process. Database fencing protects local claims and stale attempts, but globally ordered remote patches from multiple delivery processes require the production outbox/dispatcher work planned for M4.
 
@@ -426,7 +437,20 @@ M5-C feedback uses a store separate from both the production investigation Store
 - [x] Checkpoints contain only normalized aggregate `QueryResult` data and exclude raw logs, SQL, credentials, and raw Provider errors.
 - [x] The offline mock flow traverses the checkpoint wrapper and still performs exactly two logical observations and eight Provider calls.
 - [x] `gofmt`, offline tests, `go vet`, and the mock end-to-end command pass; race testing remains separately reported according to toolchain availability.
-- [x] Automatic transient retries, operator resolution of unknown steps, delivery dead-letter replay, durable tenant quotas, approvals, and a production database remain explicitly deferred to later M4 slices.
+- [x] Operator resolution of unknown paid-query steps and a production database remain explicitly deferred to later M4 slices; M4-B does not weaken the no-automatic-retry rule for ambiguous SLS reads.
+
+### M4-B delivery recovery and tenant governance
+
+- [x] Feishu adapter failures map to a closed provider-neutral disposition and safe reason code; permanent errors die immediately while retryable/unknown sends retain bounded backoff.
+- [x] Every completed delivery attempt is append-only audited without provider error text or card content.
+- [x] Dead letters are operator-visible, and replay is transactionally rejected for rebound interactions or any event that could overwrite a newer card projection.
+- [x] The initial dead queued receipt can be replayed to unblock card creation, while stale progress cannot be replayed over a later terminal projection.
+- [x] A trusted app/tenant maps to a hashed fixed-window quota key; observation, API-call, and processed-byte proxy ceilings are atomically enforced before the governed executor.
+- [x] Successful queries settle actual usage, deterministic pre-provider failures release it, and ambiguous external outcomes retain their reserved cost proxy.
+- [x] Reusing one quota usage key performs zero additional Provider calls, and Checkpoint reuse bypasses new quota reservation.
+- [x] High-risk approval requires an immutable payload hash, same-tenant independent approver, expiry, and exactly-once consumption; no high-risk executor is registered.
+- [x] The full Mock E2E traverses the quota wrapper with two observations/eight Provider-call proxies and zero credentials/network calls.
+- [ ] Production DB migrations, multi-instance global quota, real DLQ RBAC, real approval UI/identity/tool execution, and live failure-code calibration remain M4-C inputs.
 
 ### M5-A synthetic offline evaluation gate
 

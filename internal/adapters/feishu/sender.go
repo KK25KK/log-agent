@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/http"
 	"time"
 
 	lark "github.com/larksuite/oapi-sdk-go/v3"
@@ -61,15 +62,15 @@ func newSender(appID string, messages cardMessageClient) (*Sender, error) {
 
 func (s *Sender) Deliver(ctx context.Context, delivery domain.DeliveryJob) (string, error) {
 	if err := s.validateDelivery(delivery); err != nil {
-		return "", err
+		return "", ports.NewOperationError(domain.FailurePermanent, "feishu_delivery_contract_invalid", err)
 	}
 	card, err := renderDeliveryCard(delivery)
 	if err != nil {
-		return "", err
+		return "", ports.NewOperationError(domain.FailurePermanent, "feishu_card_render_failed", err)
 	}
 	content, err := marshalCard(card)
 	if err != nil {
-		return "", err
+		return "", ports.NewOperationError(domain.FailurePermanent, "feishu_card_encode_failed", err)
 	}
 
 	if delivery.Target.CardMessageID == "" {
@@ -128,13 +129,13 @@ func (c *sdkCardMessageClient) ReplyCard(ctx context.Context, sourceMessageID, c
 		return "", safeTransportError(ctx, "reply Feishu receipt", err)
 	}
 	if resp == nil {
-		return "", errors.New("reply Feishu receipt: empty response")
+		return "", ports.NewOperationError(domain.FailureOutcomeUnknown, "feishu_empty_response", nil)
 	}
 	if !resp.Success() {
-		return "", fmt.Errorf("reply Feishu receipt: code=%d request_id=%s", resp.Code, responseRequestID(resp.ApiResp))
+		return "", responseFailure("feishu_reply_rejected", resp.ApiResp)
 	}
 	if resp.Data == nil || resp.Data.MessageId == nil || *resp.Data.MessageId == "" {
-		return "", errors.New("reply Feishu receipt: response message ID is missing")
+		return "", ports.NewOperationError(domain.FailureOutcomeUnknown, "feishu_message_id_missing", nil)
 	}
 	return *resp.Data.MessageId, nil
 }
@@ -149,10 +150,10 @@ func (c *sdkCardMessageClient) PatchCard(ctx context.Context, cardMessageID, con
 		return safeTransportError(ctx, "patch Feishu card", err)
 	}
 	if resp == nil {
-		return errors.New("patch Feishu card: empty response")
+		return ports.NewOperationError(domain.FailureOutcomeUnknown, "feishu_empty_response", nil)
 	}
 	if !resp.Success() {
-		return fmt.Errorf("patch Feishu card: code=%d request_id=%s", resp.Code, responseRequestID(resp.ApiResp))
+		return responseFailure("feishu_patch_rejected", resp.ApiResp)
 	}
 	return nil
 }
@@ -167,24 +168,38 @@ func receiptUUID(delivery domain.DeliveryJob) string {
 	return "la_" + hex.EncodeToString(digest[:16])
 }
 
-func responseRequestID(resp *larkcore.ApiResp) string {
-	if resp == nil {
-		return ""
-	}
-	return resp.RequestId()
-}
-
 func safeTransportError(ctx context.Context, operation string, err error) error {
 	if ctxErr := ctx.Err(); ctxErr != nil {
-		return fmt.Errorf("%s: %w", operation, ctxErr)
+		disposition := domain.FailureCancelled
+		code := "feishu_send_cancelled"
+		if errors.Is(ctxErr, context.DeadlineExceeded) {
+			disposition = domain.FailureOutcomeUnknown
+			code = "feishu_send_timeout_unknown"
+		}
+		return ports.NewOperationError(disposition, code, ctxErr)
 	}
 	if errors.Is(err, context.Canceled) {
-		return fmt.Errorf("%s: %w", operation, context.Canceled)
+		return ports.NewOperationError(domain.FailureCancelled, "feishu_send_cancelled", context.Canceled)
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
-		return fmt.Errorf("%s: %w", operation, context.DeadlineExceeded)
+		return ports.NewOperationError(domain.FailureOutcomeUnknown, "feishu_send_timeout_unknown", context.DeadlineExceeded)
 	}
-	return fmt.Errorf("%s: transport failure", operation)
+	return ports.NewOperationError(domain.FailureRetryable, "feishu_transport_retryable", fmt.Errorf("%s: transport failure", operation))
+}
+
+func responseFailure(code string, resp *larkcore.ApiResp) error {
+	status := 0
+	if resp != nil {
+		status = resp.StatusCode
+	}
+	disposition := domain.FailurePermanent
+	switch {
+	case status == http.StatusRequestTimeout || status == http.StatusGatewayTimeout:
+		disposition = domain.FailureOutcomeUnknown
+	case status == http.StatusTooManyRequests || status >= http.StatusInternalServerError:
+		disposition = domain.FailureRetryable
+	}
+	return ports.NewOperationError(disposition, code, nil)
 }
 
 var _ ports.DeliverySender = (*Sender)(nil)

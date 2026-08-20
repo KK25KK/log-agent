@@ -277,7 +277,7 @@ func TestDeadProgressDeliveryDoesNotBlockTerminalDelivery(t *testing.T) {
 	if err != nil || !ok || running.Kind != domain.DeliveryRunning {
 		t.Fatalf("claim running: delivery=%+v ok=%v err=%v", running, ok, err)
 	}
-	if err := store.FailDelivery(ctx, running, "Feishu unavailable", now.Add(4*time.Second), true, now.Add(4*time.Second)); err != nil {
+	if err := store.FailDelivery(ctx, running, domain.DeliveryFailure{Disposition: domain.FailureRetryable, ReasonCode: "feishu_unavailable"}, now.Add(4*time.Second), true, now.Add(4*time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.FinishFailure(ctx, job, "provider unavailable", now.Add(5*time.Second)); err != nil {
@@ -304,7 +304,7 @@ func TestDeadReceiptDeliveryContinuesToBlockLaterUpdates(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("claim queued: ok=%v err=%v", ok, err)
 	}
-	if err := store.FailDelivery(ctx, queued, "Feishu unavailable", now.Add(time.Second), true, now.Add(time.Second)); err != nil {
+	if err := store.FailDelivery(ctx, queued, domain.DeliveryFailure{Disposition: domain.FailureRetryable, ReasonCode: "feishu_unavailable"}, now.Add(time.Second), true, now.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	job, ok, err := store.ClaimNext(ctx, "investigation-worker", now.Add(2*time.Second), time.Minute)
@@ -357,7 +357,7 @@ func TestDeadDerivedQueuedPatchDoesNotBlockLaterUpdates(t *testing.T) {
 	if err != nil || !ok || childQueued.Kind != domain.DeliveryQueued || childQueued.Investigation.ID != "inv-child-patch" {
 		t.Fatalf("claim derived queued patch: delivery=%+v ok=%v err=%v", childQueued, ok, err)
 	}
-	if err := store.FailDelivery(ctx, childQueued, "Feishu unavailable", now.Add(5*time.Second), true, now.Add(5*time.Second)); err != nil {
+	if err := store.FailDelivery(ctx, childQueued, domain.DeliveryFailure{Disposition: domain.FailureRetryable, ReasonCode: "feishu_unavailable"}, now.Add(5*time.Second), true, now.Add(5*time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	job, ok, err := store.ClaimNext(ctx, "investigation-worker", now.Add(6*time.Second), time.Minute)

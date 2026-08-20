@@ -8,6 +8,7 @@ import (
 
 	"logagent/internal/application"
 	"logagent/internal/domain"
+	"logagent/internal/ports"
 )
 
 type deliveryStoreStub struct {
@@ -35,11 +36,11 @@ func (s *deliveryStoreStub) CompleteDelivery(_ context.Context, _ domain.Deliver
 	return nil
 }
 
-func (s *deliveryStoreStub) FailDelivery(_ context.Context, _ domain.DeliveryJob, reason string, retryAt time.Time, dead bool, _ time.Time) error {
+func (s *deliveryStoreStub) FailDelivery(_ context.Context, _ domain.DeliveryJob, failure domain.DeliveryFailure, retryAt time.Time, dead bool, _ time.Time) error {
 	s.failed = true
 	s.dead = dead
 	s.retryAt = retryAt
-	s.failReason = reason
+	s.failReason = failure.ReasonCode
 	return nil
 }
 
@@ -84,7 +85,7 @@ func TestDeliveryWorkerBoundsRetryAndMarksExhaustionDead(t *testing.T) {
 			store := &deliveryStoreStub{delivery: domain.DeliveryJob{
 				ID: "delivery-fail", Attempt: test.attempt, Investigation: domain.Investigation{ID: "inv-fail"},
 			}}
-			sender := &deliverySenderStub{err: errors.New("temporary remote failure")}
+			sender := &deliverySenderStub{err: ports.NewOperationError(domain.FailureRetryable, "feishu_transport_retryable", errors.New("temporary remote failure"))}
 			worker, err := application.NewDeliveryWorker(store, sender, "delivery-worker", time.Minute, 5*time.Second, 3, time.Second)
 			if err != nil {
 				t.Fatal(err)
@@ -93,9 +94,24 @@ func TestDeliveryWorkerBoundsRetryAndMarksExhaustionDead(t *testing.T) {
 			if !run || runErr == nil || !store.failed || store.completed || store.dead != test.dead {
 				t.Fatalf("unexpected failure handling: run=%v err=%v store=%+v", run, runErr, store)
 			}
-			if store.failReason != "feishu_send_failed" || store.retryAt.IsZero() {
+			if store.failReason != "feishu_transport_retryable" || store.retryAt.IsZero() {
 				t.Fatalf("unsafe or missing retry state: %+v", store)
 			}
 		})
+	}
+}
+
+func TestDeliveryWorkerMarksPermanentFailureDeadImmediately(t *testing.T) {
+	t.Parallel()
+	store := &deliveryStoreStub{delivery: domain.DeliveryJob{
+		ID: "delivery-permanent", Attempt: 1, Investigation: domain.Investigation{ID: "inv-permanent"},
+	}}
+	sender := &deliverySenderStub{err: ports.NewOperationError(domain.FailurePermanent, "feishu_delivery_contract_invalid", errors.New("invalid card"))}
+	worker, err := application.NewDeliveryWorker(store, sender, "delivery-worker", time.Minute, 5*time.Second, 5, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run, runErr := worker.RunOne(context.Background()); !run || runErr == nil || !store.dead || store.failReason != "feishu_delivery_contract_invalid" {
+		t.Fatalf("permanent failure was retried: run=%v err=%v store=%+v", run, runErr, store)
 	}
 }

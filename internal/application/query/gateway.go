@@ -425,6 +425,9 @@ func safeFailureReason(err error) string {
 	if errors.Is(err, context.Canceled) {
 		return "cancelled"
 	}
+	if errors.Is(err, ports.ErrTenantQuotaExceeded) {
+		return "tenant_query_quota_exceeded"
+	}
 	return "provider_error"
 }
 

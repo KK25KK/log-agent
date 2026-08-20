@@ -139,6 +139,77 @@ CREATE TABLE IF NOT EXISTS delivery_events (
     FOREIGN KEY (investigation_id) REFERENCES investigations(id)
 );
 
+CREATE TABLE IF NOT EXISTS delivery_attempts (
+    delivery_id TEXT NOT NULL,
+    investigation_id TEXT NOT NULL,
+    attempt INTEGER NOT NULL,
+    outcome TEXT NOT NULL,
+    failure_disposition TEXT NOT NULL DEFAULT '',
+    reason_code TEXT NOT NULL DEFAULT '',
+    occurred_at INTEGER NOT NULL,
+    PRIMARY KEY (delivery_id, attempt),
+    FOREIGN KEY (delivery_id) REFERENCES delivery_events(id),
+    FOREIGN KEY (investigation_id) REFERENCES investigations(id)
+);
+
+CREATE TABLE IF NOT EXISTS delivery_operations (
+    operation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    delivery_id TEXT NOT NULL,
+    operation TEXT NOT NULL,
+    operator_ref TEXT NOT NULL,
+    reason_code TEXT NOT NULL,
+    occurred_at INTEGER NOT NULL,
+    FOREIGN KEY (delivery_id) REFERENCES delivery_events(id)
+);
+
+CREATE TABLE IF NOT EXISTS query_quota_reservations (
+    usage_key TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL,
+    investigation_id TEXT NOT NULL,
+    query_name TEXT NOT NULL,
+    window_start INTEGER NOT NULL,
+    window_end INTEGER NOT NULL,
+    reserved_api_calls INTEGER NOT NULL,
+    reserved_bytes INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    actual_api_calls INTEGER NOT NULL DEFAULT 0,
+    actual_bytes INTEGER NOT NULL DEFAULT 0,
+    reason_code TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS query_quota_events (
+    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    usage_key TEXT NOT NULL,
+    tenant_id TEXT NOT NULL,
+    outcome TEXT NOT NULL,
+    reason_code TEXT NOT NULL,
+    api_calls INTEGER NOT NULL,
+    processed_bytes INTEGER NOT NULL,
+    occurred_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS approval_requests (
+    id TEXT PRIMARY KEY,
+    investigation_id TEXT NOT NULL,
+    tenant_id TEXT NOT NULL,
+    action TEXT NOT NULL,
+    payload_hash TEXT NOT NULL,
+    requester_app_id TEXT NOT NULL,
+    requester_tenant_key TEXT NOT NULL,
+    requester_user_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    decider_app_id TEXT NOT NULL DEFAULT '',
+    decider_tenant_key TEXT NOT NULL DEFAULT '',
+    decider_user_id TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    decided_at INTEGER NOT NULL DEFAULT 0,
+    consumed_at INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY (investigation_id) REFERENCES investigations(id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_jobs_claim
 ON jobs(status, lease_until, created_at);
 
@@ -157,6 +228,21 @@ WHERE card_message_id <> '';
 
 CREATE INDEX IF NOT EXISTS idx_delivery_claim
 ON delivery_events(status, available_at, lease_until, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_delivery_attempts_investigation
+ON delivery_attempts(investigation_id, occurred_at);
+
+CREATE INDEX IF NOT EXISTS idx_delivery_operations_delivery
+ON delivery_operations(delivery_id, operation_id);
+
+CREATE INDEX IF NOT EXISTS idx_query_quota_window
+ON query_quota_reservations(tenant_id, window_start, window_end, status);
+
+CREATE INDEX IF NOT EXISTS idx_query_quota_events_tenant
+ON query_quota_events(tenant_id, occurred_at);
+
+CREATE INDEX IF NOT EXISTS idx_approval_status
+ON approval_requests(status, expires_at);
 `
 
 // Store is the SQLite technical-preview implementation of the durable contracts.

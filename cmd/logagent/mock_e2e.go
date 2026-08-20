@@ -18,12 +18,13 @@ import (
 )
 
 type mockE2EResult struct {
-	Scenario      string               `json:"scenario"`
-	Safety        mockSafetySummary    `json:"safety"`
-	Feishu        mockFeishuSummary    `json:"feishu"`
-	AlibabaSLS    mockSLSSummary       `json:"aliyun_sls"`
-	ChangeSource  string               `json:"change_source"`
-	Investigation domain.Investigation `json:"investigation"`
+	Scenario      string                  `json:"scenario"`
+	Safety        mockSafetySummary       `json:"safety"`
+	Feishu        mockFeishuSummary       `json:"feishu"`
+	AlibabaSLS    mockSLSSummary          `json:"aliyun_sls"`
+	TenantQuota   domain.TenantQuotaUsage `json:"tenant_quota"`
+	ChangeSource  string                  `json:"change_source"`
+	Investigation domain.Investigation    `json:"investigation"`
 }
 
 type mockSafetySummary struct {
@@ -176,8 +177,19 @@ func executeMockE2E(ctx context.Context) (mockE2EResult, error) {
 	if err != nil {
 		return mockE2EResult{}, err
 	}
+	quotaPolicy := domain.TenantQuotaPolicy{
+		Version: application.TenantQuotaPolicyVersion, Window: time.Hour,
+		MaxObservations: 10, MaxAPICalls: 40, MaxProcessedBytes: 10 << 20,
+		ReservedBytesPerObservation: 1 << 20,
+	}
+	quotaExecutor, err := application.NewQuotaExecutor(
+		queryGateway, store, quotaPolicy, func() time.Time { return messageAt.Add(time.Second) },
+	)
+	if err != nil {
+		return mockE2EResult{}, err
+	}
 	gatedExecutor := &gatedMockExecutor{
-		delegate: queryGateway,
+		delegate: quotaExecutor,
 		started:  make(chan struct{}),
 		release:  make(chan struct{}),
 	}
@@ -316,6 +328,16 @@ func executeMockE2E(ctx context.Context) (mockE2EResult, error) {
 	if queryStepCheckpoints != 2 {
 		return mockE2EResult{}, fmt.Errorf("unexpected mock query checkpoint count %d", queryStepCheckpoints)
 	}
+	quotaStart := messageAt.Add(time.Second).Truncate(time.Hour)
+	quotaUsage, err := store.GetTenantQuotaUsage(
+		ctx, application.TenantQuotaID(mockPrincipal), quotaStart, quotaStart.Add(time.Hour), quotaPolicy,
+	)
+	if err != nil {
+		return mockE2EResult{}, err
+	}
+	if quotaUsage.Observations != 2 || quotaUsage.APICalls != int64(providerCalls) || quotaUsage.CircuitOpen {
+		return mockE2EResult{}, fmt.Errorf("unexpected mock tenant quota usage %#v", quotaUsage)
+	}
 
 	return mockE2EResult{
 		Scenario: "feishu_to_sls_investigation_full_mock",
@@ -344,6 +366,7 @@ func executeMockE2E(ctx context.Context) (mockE2EResult, error) {
 			CurrentErrorCount:    currentErrors,
 			BaselineErrorCount:   baselineErrors,
 		},
+		TenantQuota:   quotaUsage,
 		ChangeSource:  "mock",
 		Investigation: investigation,
 	}, nil
