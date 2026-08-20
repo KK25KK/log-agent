@@ -1,6 +1,6 @@
 # Log Agent
 
-这是一个用 Go 开发的“证据驱动”日志调查 Agent。M0～M3、M4-A 可恢复查询切片、M5-A 全合成离线评测门禁和第七期 M5-B/B1 Agent 事件与版本合同的主体代码与离线测试已经完成；M4-B/M4-C、M5-B/B2 回放历史、M5-B/B3 趋势比较和 M5-C 真实灰度仍未完成。由于仓库没有真实飞书/SLS/发布平台凭据、生产数据库、历史故障标注集与试点资源，当前只能称为“具备试点条件”，不能称为日常可用或生产可用。
+这是一个用 Go 开发的“证据驱动”日志调查 Agent。M0～M3、M4-A 可恢复查询切片、M5-A 全合成离线评测门禁、第七期 M5-B/B1 Agent 事件与版本合同和第八期 M5-B/B2 离线回放历史的主体代码与离线测试已经完成；M4-B/M4-C、M5-B/B3 趋势比较和 M5-C 真实灰度仍未完成。由于仓库没有真实飞书/SLS/发布平台凭据、生产数据库、历史故障标注集与试点资源，当前只能称为“具备试点条件”，不能称为日常可用或生产可用。
 
 ```text
 飞书消息
@@ -97,13 +97,15 @@ Eino 只负责流程编排，不负责业务状态、权限、幂等、审计和
 - 全部请求、身份、聚合、变更和标签均为合成 Mock，真实故障数与专家标签数都是 0，不读取凭据、不访问网络。
 - 当前 Graph 不调用 LLM，因此 Prompt、Token 和模型成本指标明确为 `N/A`。M5-A 不是生产准确率、真实成本、SLO 或灰度批准，完整设计见 [`docs/m5-offline-evaluation-gate.md`](docs/m5-offline-evaluation-gate.md)。
 
-### M5-B/B1 Agent 事件与版本合同
+### M5-B Agent 事件、版本合同与离线回放
 
 - `evaluate` 在执行 Case 前生成统一版本清单，并对规范化清单计算 SHA-256；清单绑定数据集、Graph、查询模板/策略、原因方法、评测门禁、Trace/Replay Schema、执行 Profile 和真实 Prompt 使用情况。
 - `agent-trace-v1` 使用关闭枚举的 `RUN / GRAPH_NODE / TOOL` 事件；每个 Case 固定包含一个 Engine 根 Span、四个 Graph 节点、current/baseline 两个工具 Span，确有变更源调用的 Case 再增加一个 `change_source.list` Span。
 - 默认 Observer 是 Noop；评测使用线程安全有界 Recorder。遥测无效或溢出不会改变调查结果，但 Trace 会变成不完整并使离线门禁失败。
 - Trace 只保存有界身份、稳定代码、时间、耗时、哈希和调用/字节计数，不保存飞书消息或身份、资源、查询、日志/桶标签、变更摘要、自然语言报告、回调、Provider 原始错误、Prompt 正文或任意属性。
-- 当前只完成 Engine/evaluation 级 Trace，不是飞书入站到卡片投递的分布式 Trace，也不是生产可观测、采样/保留策略或 SLO。`evaluation-replay-v1` 目前只是未来快照的版本合同；B2 存储/命令和 B3 比较均未实现。完整设计与验收见 [`docs/m5-agent-observability-replay.md`](docs/m5-agent-observability-replay.md)。
+- B2 使用独立 Evaluation Run Store，把成功和门禁失败的评测追加为 `evaluation-replay-v1` 严格快照；快照包含完整评测报告、版本清单、逐 Case Trace、安全失败码、父回放引用和内容哈希。同一 Run ID 不能覆盖，未知字段/Schema、文件篡改和不兼容数据边界会 fail closed。
+- `replay` 只会用当前二进制与仓库内置合成 Mock 重跑，并追加一个引用已校验源快照的新快照；它不执行历史二进制，也不进行 B3 趋势比较。
+- 当前仍只覆盖 Engine/evaluation 级 Trace，不是飞书入站到卡片投递的分布式 Trace，也不是生产可观测、采样/保留策略或 SLO。完整设计与验收见 [`docs/m5-agent-observability-replay.md`](docs/m5-agent-observability-replay.md)。
 
 ## 先运行飞书 + SLS 双 Mock
 
@@ -125,7 +127,7 @@ go run ./cmd/logagent mock-e2e
 
 输出中的 `safety.external_network_calls=0`、`credentials_required=false` 表示当前运行完全离线；`schema_calls=1`、`backend_execute_calls=2`、`provider_api_calls=8`、`query_audit_events=4` 和 `query_step_checkpoints=2` 分别证明固定 Schema、当前/基线观察、四聚合调用元数据、开始/终态审计和两个持久化步骤已经经过真实应用链路。固定的 120/20 条错误、发布事件和飞书标识全部是测试数据，不代表真实阿里云或飞书结果。完整 Mock 边界见 [`docs/local-mock-e2e.md`](docs/local-mock-e2e.md)，恢复合同见 [`docs/m4-recoverable-query-steps.md`](docs/m4-recoverable-query-steps.md)。
 
-## 运行第六/七期离线评测与 Trace 门禁
+## 运行第六至八期离线评测与 Trace 门禁
 
 ```powershell
 go run ./cmd/logagent evaluate
@@ -136,6 +138,24 @@ go run ./cmd/logagent evaluate
 命令输出结构化 JSON，包含数据集身份与指纹、规范化版本清单及其 SHA-256、逐 Case 完整 Agent Trace、聚合指标和门禁状态。通过时退出码为 `0`；数据集非法、Graph 执行失败、标签不一致、出现意外确定性结论、证据引用失效、Trace 不闭合/丢事件，或查询/成本代理合同越界时返回非零退出码。脚本和 CI 应检查退出码，不能只匹配输出文字。
 
 评测数字只描述受控合成回归集：它不是历史真实故障或专家标注上的准确率，`processed_bytes`/API 调用数不是阿里云账单，本机耗时也不是生产 SLO。
+
+## 保存并回放第八期离线快照
+
+保存一次成功或失败的评测运行：
+
+```powershell
+go run ./cmd/logagent evaluate --snapshot-dir .\data\evaluation-runs
+```
+
+输出顶层的 `evaluation_run_id` 是快照文件名和后续回放键。回放时传入这个 ID：
+
+```powershell
+go run ./cmd/logagent replay --snapshot-dir .\data\evaluation-runs --run-id evalrun_xxx
+```
+
+`replay` 会先严格加载并核对源文件的 SHA-256、Schema、运行身份、版本清单、合成数据边界和 Case Trace，再用当前二进制重跑内置 Fixture Mock。成功执行后会在同一目录追加新快照，`replay_of` 指向源 Run 与源哈希；源文件永远不会被覆盖。快照目录在 `data/` 下时默认不会被 Git 跟踪。
+
+这不是历史实现复现或结果趋势比较：要复现旧实现仍需切换到对应 Git commit/制品，B3 才负责兼容快照之间的变化比较。
 
 ## 只查看离线报告 Demo（可选）
 
@@ -307,7 +327,7 @@ go run ./cmd/logagent demo
 
 默认测试全部离线，不读取云凭据、不访问 SLS 或发布平台。只有显式运行 `sls-check`、`sls-smoke`，或以 `LOG_AGENT_SLS_MODE=aliyun` 启动 Worker，才会访问真实 SLS。
 
-本轮 M5-B/B1 验收中，`gofmt`、`go test -count=1 ./...`、`go vet ./...`、`evaluate` 和 `mock-e2e` 均通过。`evaluate` 的 5/5 个合成 Case 全部通过，`trace_contract_accuracy=1`；共记录 76 个事件、13 个工具 Span、0 个丢弃事件，并与 10 次逻辑 SLS 观察、40 次 Provider 调用代理、3 次 Change Source 调用和 78,080 processed bytes 完全核对。数据集指纹为 `caf2714c80a646c5da15134c6557879565ffc8e083a66da1f1c9e49d3d0dc1f8`，本次规范化版本指纹为 `14db14acf992ebd06d9d4d71f89056be2a2b984baeb6bf5de2c136db442f7c53`。这些仍只是全合成 Mock 的离线工程回归结果。`go test -race ./...` 未执行，因为当前 Windows 环境 `CGO_ENABLED=0` 且未安装 GCC，不能写成已通过。
+本轮 M5-B/B2 验收中，`gofmt`、`go test -count=1 ./...`、`go vet ./...`、普通 `evaluate`、保存快照的 `evaluate --snapshot-dir`、`replay` 和 `mock-e2e` 均通过。`evaluate` 的 5/5 个合成 Case 全部通过，`trace_contract_accuracy=1`；共记录 76 个事件、13 个工具 Span、0 个丢弃事件，并与 10 次逻辑 SLS 观察、40 次 Provider 调用代理、3 次 Change Source 调用和 78,080 processed bytes 完全核对。一次保存加一次回放会形成两个不同 Run ID 的不可覆盖文件，子快照精确引用源 Run 与源内容哈希，外部网络调用仍为 0。数据集指纹为 `caf2714c80a646c5da15134c6557879565ffc8e083a66da1f1c9e49d3d0dc1f8`，规范化版本指纹仍为 `14db14acf992ebd06d9d4d71f89056be2a2b984baeb6bf5de2c136db442f7c53`。这些仍只是全合成 Mock 的离线工程回归结果。`go test -race ./...` 未执行，因为当前 Windows 环境 `CGO_ENABLED=0` 且未安装 GCC，不能写成已通过。
 
 ## 代码边界
 
@@ -326,7 +346,9 @@ internal/adapters/changecatalog       M3 版本化发布/配置变更目录
 internal/adapters/sqlite              本地持久化、查询审计、查询 Checkpoint 与卡片事件
 internal/adapters/slsmock             离线确定性数据
 internal/adapters/evalmock            M5-A 逐 Case 的 SLS 与 Change Source Fixture Mock
+internal/adapters/replayfs             B2 append-only 评测快照文件存储
 internal/evaluation                   严格合成数据集、质量/Trace 指标和离线门禁
+internal/evaluation/replay            B2 快照 Schema、内容哈希和兼容性门禁
 internal/observability                Noop Observer、Trace 上下文与线程安全有界 Recorder
 ```
 
@@ -345,10 +367,10 @@ internal/observability                Noop Observer、Trace 上下文与线程�
 - SQLite 技术预览当前没有 schema version、正式迁移和回滚工具；升级已有数据库前必须备份，本地试验环境可按阶段说明重建。
 - M3 Change Catalog 是启动时加载的静态文件，不是已接通的发布平台、配置中心或 CMDB；关联候选、权重和阈值尚未经过企业历史故障集校准。
 - M3 不增加 SLS 查询，也没有版本分布、首次出现时间、Trace、指标、拓扑或知识库证据；相关性不会被表述成已确认根因。
-- M5-A 数据集没有真实故障和专家标注，只能发现已编码合成场景上的回归；它不测量生产泛化能力，也不能批准灰度。M5-B/B1 只补齐合成 Engine 执行的有界 Trace 和版本合同；append-only 回放历史、`replay` 命令、趋势比较和真实反馈仍未实现，真实数据集、团队阈值、试点群和回滚验收属于 M5-C。
-- M5-B/B1 不是飞书接单、SQLite Worker、SLS 网络请求到卡片投递的跨进程分布式 Trace，也没有生产 Trace 后端、采样/保留策略或延迟 SLO。
+- M5-A 数据集没有真实故障和专家标注，只能发现已编码合成场景上的回归；它不测量生产泛化能力，也不能批准灰度。M5-B/B2 只补齐合成 Engine 执行的有界 Trace、版本合同和 append-only 离线回放历史；趋势比较和真实反馈仍未实现，真实数据集、团队阈值、试点群和回滚验收属于 M5-C。
+- M5-B/B2 不是飞书接单、SQLite Worker、SLS 网络请求到卡片投递的跨进程分布式 Trace，也没有生产 Trace 后端、采样/保留策略或延迟 SLO。内容哈希用于完整性检测，不是加密或身份认证。
 - 当前 Eino Graph 是确定性、无 LLM 的，因此版本清单明确为 `prompt_used=false`，不生成 Prompt/Token 指标；如果未来引入模型，必须先补版本、成本和安全评测合同。
 - 非文本消息、格式错误的命令和永久无效事件目前会被安全确认但不会回复用法提示；这是已知的交互限制。
 - 系统只有只读调查能力，不包含自动处置工具。
 
-文档入口见 [`docs/README.md`](docs/README.md)。其中 `spec.md` 是唯一当前规范，M0～M3 是历史阶段归档，M4-A 文档记录第五期已完成的恢复切片，M5-A 文档记录第六期的全合成离线评测门禁，M5-B 文档记录第七期已完成的 B1 事件/版本合同以及仍未开始的 B2/B3；这些都不代表完整生产验收。完整路线图见 [`docs/roadmap.md`](docs/roadmap.md)，迁移前生成的方案、用例图和 Canvas 文件保存在 [`artifacts/`](artifacts/README.md)。
+文档入口见 [`docs/README.md`](docs/README.md)。其中 `spec.md` 是唯一当前规范，M0～M3 是历史阶段归档，M4-A 文档记录第五期已完成的恢复切片，M5-A 文档记录第六期的全合成离线评测门禁，M5-B 文档记录第七期 B1 事件/版本合同、第八期 B2 回放历史以及尚未开始的 B3；这些都不代表完整生产验收。完整路线图见 [`docs/roadmap.md`](docs/roadmap.md)，迁移前生成的方案、用例图和 Canvas 文件保存在 [`artifacts/`](artifacts/README.md)。

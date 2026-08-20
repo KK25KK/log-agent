@@ -146,11 +146,13 @@ M5-A 的指标只说明代码对受控合成样例没有回归，不是历史真
 
 验收：`m5b-agent-trace-gate-v1` 在五个合成 Case 上全部通过，`trace_contract_accuracy=1`；共形成 76 个 `agent-trace-v1` 事件、13 个工具 Span、0 个丢弃事件，并与 10 次逻辑 SLS 观察、40 次 Provider 调用代理、3 次 Change Source 调用和 78,080 processed bytes 一致。执行 Profile 固定为 `SYNTHETIC_MOCK`，不读取凭据、外部网络调用为 0。实现与边界见 [`m5-agent-observability-replay.md`](m5-agent-observability-replay.md)。
 
-#### B2：离线回放历史（未开始）
+#### B2：离线回放历史（代码与离线验收完成）
 
 - 成功和失败评测都保存为 append-only 严格快照，包含报告、版本、Trace、失败 Case 和内容哈希。
 - 独立 Evaluation Run Store，不扩展生产 `ports.Store`，也不复用 Query Audit/QueryStep。
 - `replay` 命令只用当前二进制和合成 Mock；历史实现仍需旧 Commit 或旧制品。
+- `evaluate --snapshot-dir` 保存成功与门禁失败运行；`replay` 严格验证源快照后追加带父引用的新运行。
+- 同一 Run 不覆盖；重复写入、未知字段/Schema、内容哈希变化、非法路径和不兼容合成数据边界均 fail closed。
 
 #### B3：趋势比较与反馈闭环（未开始）
 

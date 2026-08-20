@@ -4,8 +4,11 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
+	"logagent/internal/adapters/replayfs"
 	"logagent/internal/evaluation"
+	"logagent/internal/evaluation/replay"
 )
 
 func TestExecuteSyntheticEvaluationPassesFixedGoldenSet(t *testing.T) {
@@ -86,5 +89,75 @@ func TestExecuteSyntheticEvaluationUsesUniqueRunIdentityAndStableVersionFingerpr
 	}
 	if first.VersionFingerprint == "" || first.VersionFingerprint != second.VersionFingerprint {
 		t.Fatalf("version fingerprint drifted across identical runs: first=%q second=%q", first.VersionFingerprint, second.VersionFingerprint)
+	}
+}
+
+func TestExecuteArchivedEvaluationPersistsRunAndReplayLineage(t *testing.T) {
+	dataset, err := evaluation.LoadSyntheticV1()
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := replayfs.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := func() time.Time { return time.Date(2026, 8, 20, 9, 0, 0, 0, time.UTC) }
+	first, err := executeArchivedEvaluation(context.Background(), dataset, store, nil, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := store.Load(context.Background(), first.EvaluationRunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.ContentHash != first.ContentHash || loaded.FailureCode != replay.FailureNone {
+		t.Fatalf("unexpected persisted source: %#v", loaded)
+	}
+	if err := replay.ValidateSourceCompatibility(loaded, dataset); err != nil {
+		t.Fatal(err)
+	}
+	reference := loaded.Reference()
+	second, err := executeArchivedEvaluation(context.Background(), dataset, store, &reference, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.EvaluationRunID == first.EvaluationRunID || second.ReplayOf == nil || *second.ReplayOf != reference {
+		t.Fatalf("replay lineage is invalid: source=%#v child=%#v", reference, second.ReplayOf)
+	}
+	if second.Report.DataBoundary.ExternalNetworkCalls != 0 || second.Report.DataBoundary.CredentialsRequired || second.Report.VersionManifest.ExecutorProfile != evaluation.SyntheticMockExecutorProfile {
+		t.Fatalf("replay escaped the synthetic boundary: %#v", second.Report.DataBoundary)
+	}
+}
+
+func TestExecuteArchivedEvaluationPersistsGateFailure(t *testing.T) {
+	dataset, err := evaluation.LoadSyntheticV1()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dataset.Cases[0].Expected.ConclusiveFindingCodes = []string{"error_spike"}
+	store, err := replayfs.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := executeArchivedEvaluation(context.Background(), dataset, store, nil, func() time.Time {
+		return time.Date(2026, 8, 20, 9, 0, 0, 0, time.UTC)
+	})
+	if !errors.Is(err, evaluation.ErrGateFailed) {
+		t.Fatalf("error=%v, want %v", err, evaluation.ErrGateFailed)
+	}
+	if snapshot.FailureCode != replay.FailureGate || snapshot.Report.Status != evaluation.EvaluationFailed {
+		t.Fatalf("failed evaluation was not archived safely: %#v", snapshot)
+	}
+	if _, err := store.Load(context.Background(), snapshot.EvaluationRunID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestEvaluationAndReplayOptionParsingFailsClosed(t *testing.T) {
+	if _, err := parseEvaluateOptions([]string{"unexpected"}); err == nil {
+		t.Fatal("evaluate accepted a positional argument")
+	}
+	if _, _, err := parseReplayOptions([]string{"--snapshot-dir", t.TempDir()}); err == nil {
+		t.Fatal("replay accepted a missing run ID")
 	}
 }

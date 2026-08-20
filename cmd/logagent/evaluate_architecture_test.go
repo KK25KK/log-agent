@@ -16,6 +16,7 @@ func TestEvaluationPathDoesNotImportRealProvidersOrNetwork(t *testing.T) {
 	for _, root := range []string{
 		filepath.Join("..", "..", "internal", "evaluation"),
 		filepath.Join("..", "..", "internal", "adapters", "evalmock"),
+		filepath.Join("..", "..", "internal", "adapters", "replayfs"),
 		filepath.Join("..", "..", "internal", "observability"),
 	} {
 		err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {

@@ -1,8 +1,8 @@
 # M5-B：Agent 自观测与离线回放
 
-> 阶段：第七期；当前完成 B1“事件与版本合同”
+> 阶段：第七期 B1 + 第八期 B2
 >
-> 当前状态：B1 主体代码与离线验收完成；B2 append-only 回放历史与命令、B3 趋势比较与反馈闭环均未开始
+> 当前状态：B1 事件/版本合同和 B2 append-only 回放历史均已完成主体代码与离线验收；B3 趋势比较与反馈闭环未开始
 >
 > 数据边界：五个 Case、SLS 聚合、变更事件和全部外部边界均为仓库内置合成 Mock；不读取凭据，外部网络调用为 0
 >
@@ -19,7 +19,7 @@ M5-A 已能判断“合成 Case 的最终报告是否正确”，但只看最终
 - 数据集、Graph、模板、策略或评测规则变化后，两次数字是否仍在同一版本合同下；
 - Trace 丢事件、层级断裂或混入不允许内容时，离线门禁能否失败。
 
-B1 因此先落地一个框架无关、隐私有界的 Agent 事件合同和统一版本清单。它把“最终结果正确”扩展为“执行路径也可验证”，但不在本切片内建设历史存储和比较命令。
+B1 因此先落地一个框架无关、隐私有界的 Agent 事件合同和统一版本清单。B2 在这个稳定合同之上追加严格快照和当前二进制回放，让“最终结果正确”和“执行路径可验证”都能作为历史制品保存；跨运行趋势比较仍留给 B3。
 
 ```text
 synthetic-m5a-v1 数据集
@@ -110,7 +110,7 @@ SHA-256 用于完整性、关联和版本识别，不是匿名化手段；敏感
 
 版本指纹绑定的是规范化行为合同，不包含主机名或墙上时钟。任一清单字段变化都应形成新指纹，不能把不同合同下的评测数字直接视为同一条趋势。
 
-`evaluation-replay-v1` 当前只是为 B2 快照预留并纳入版本指纹的 Schema 身份。B1 没有创建回放目录、Evaluation Run Store、`replay` 或 `replay-compare` 命令。
+`evaluation-replay-v1` 已成为 B2 快照的实际 Schema，并继续纳入版本指纹。B2 已提供独立 Evaluation Run Store 和 `replay` 命令；`replay-compare` 仍属于 B3。
 
 ## 4. Trace 门禁如何判定
 
@@ -147,7 +147,33 @@ go run ./cmd/logagent evaluate
 - 每个 Case 的 `agent_trace`、事件数、工具 Span 数、丢弃数和 Trace 合同结果；
 - 聚合的 `trace_contract_accuracy`、`trace_contract_failures`、`trace_events`、`trace_tool_spans` 和 `trace_dropped_events`。
 
-没有 `replay` 命令可运行；那属于 B2，而不是 B1。
+### 5.1 保存 append-only 快照
+
+```powershell
+go run ./cmd/logagent evaluate --snapshot-dir .\data\evaluation-runs
+```
+
+不传 `--snapshot-dir` 时，`evaluate` 保持原有只输出报告、不写文件的行为。传入目录后，成功和门禁失败都会写成一个以 `evaluation_run_id` 命名的不可覆盖 JSON 文件。顶层输出改为快照，完整评测报告位于 `report`。
+
+快照固定包含：
+
+- `evaluation-replay-v1` Schema 与 Run ID；
+- UTC 创建时间和关闭的安全失败码 `NONE / GATE_FAILED / EVALUATION_ABORTED`；
+- 完整 Evaluation Report、版本清单、逐 Case Trace、门禁和失败 Case；
+- 可选的 `replay_of` 源 Run/源哈希；
+- 覆盖除 `content_hash` 自身之外全部字段的 SHA-256。
+
+Store 通过独占创建文件实现 append-only：已存在的 Run ID 不覆盖；未知字段/Schema、尾随 JSON、超限文件、非法身份、版本映射漂移和内容哈希变化都拒绝加载。进程内写失败会清理未完成文件，异常强杀遗留的半文件会在后续加载时 fail closed。
+
+### 5.2 用当前二进制回放
+
+```powershell
+go run ./cmd/logagent replay --snapshot-dir .\data\evaluation-runs --run-id evalrun_xxx
+```
+
+命令先验证源快照，再要求源数据集 Schema/ID/指纹、数据来源边界和 `SYNTHETIC_MOCK` 执行 Profile 与当前内置 Fixture 一致。通过后才会重新执行当前 Graph，并在同一目录追加一个新的子快照。输出包含源引用和新快照；任何 Gate 失败仍会落盘并以非零状态退出。
+
+回放不会调用飞书、SLS、发布平台或模型服务，也不会执行源快照对应的历史代码。它只回答“当前二进制在同一内置合成输入上现在会得到什么结果”。
 
 ## 6. 离线验收记录
 
@@ -158,6 +184,8 @@ go run ./cmd/logagent evaluate
 | `go run ./cmd/logagent evaluate` | `PASSED`；5/5 Case 通过，`trace_contract_accuracy=1` |
 | Trace 规模 | 76 个事件、13 个工具 Span、0 个丢弃事件 |
 | 工具用量核对 | 10 次逻辑 SLS 观察、40 次 Provider 调用代理、3 次 Change Source 调用、78,080 processed bytes |
+| append-only 快照 | 一次保存 + 一次回放形成两个不同 Run 文件；子快照绑定源 Run 与源 SHA-256 |
+| 严格读取 | 重复 Run、未知字段/Schema、篡改哈希、非法路径和不兼容数据集均有离线拒绝测试 |
 | 数据与运行边界 | `SYNTHETIC_MOCK`；真实故障 0、专家标注 0、外部网络调用 0、不需要凭据 |
 | 数据集 / 版本指纹 | `caf2714c80a646c5da15134c6557879565ffc8e083a66da1f1c9e49d3d0dc1f8` / `14db14acf992ebd06d9d4d71f89056be2a2b984baeb6bf5de2c136db442f7c53` |
 | `go test -race ./...` | 未执行；当前 Windows 环境 `CGO_ENABLED=0` 且未安装 GCC，不能记为通过 |
@@ -166,12 +194,12 @@ go run ./cmd/logagent evaluate
 
 ## 7. 后续切片
 
-### B2：append-only 离线回放历史（未开始）
+### B2：append-only 离线回放历史（代码与离线验收完成）
 
-- 为成功和失败 Evaluation Run 保存严格快照、内容哈希、版本清单、逐 Case Trace 和失败原因；
-- 使用独立的 Evaluation Run Store，不扩展生产 `ports.Store`，也不把 Query Audit/QueryStep 冒充 Trace 存储；
-- 增加只使用当前二进制与合成 Mock 的 `replay` 命令；复现旧实现仍依赖旧 Git Commit 或构建制品；
-- 对重复写入、篡改、未知 Schema 和不完整快照 fail closed。
+- 成功和门禁失败 Evaluation Run 已保存为严格快照，包含内容哈希、版本清单、逐 Case Trace、安全失败码和可选父引用；
+- 独立的 Evaluation Run Store 没有扩展生产 `ports.Store`，也没有把 Query Audit/QueryStep 冒充 Trace 存储；
+- `evaluate --snapshot-dir` 与只使用当前二进制/合成 Mock 的 `replay` 命令已落地；复现旧实现仍依赖旧 Git Commit 或构建制品；
+- 重复写入、篡改、未知 Schema/字段、非法路径、不完整文件和不兼容数据边界都会 fail closed。
 
 ### B3：趋势比较与反馈闭环（未开始）
 

@@ -2,14 +2,18 @@ package main
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
+	"flag"
 	"fmt"
+	"io"
 	"time"
 
 	"logagent/internal/adapters/eino"
 	"logagent/internal/adapters/evalmock"
+	"logagent/internal/adapters/replayfs"
 	"logagent/internal/domain"
 	"logagent/internal/evaluation"
+	"logagent/internal/evaluation/replay"
 	"logagent/internal/observability"
 )
 
@@ -18,17 +22,113 @@ import (
 // credential inputs, so this path cannot instantiate real Feishu, SLS, or
 // change-platform clients.
 func runEvaluate() error {
+	return runEvaluateCommand(nil)
+}
+
+func runEvaluateCommand(args []string) error {
+	snapshotDirectory, err := parseEvaluateOptions(args)
+	if err != nil {
+		return err
+	}
 	dataset, err := evaluation.LoadSyntheticV1()
 	if err != nil {
 		return err
 	}
-	report, evaluationErr := executeSyntheticEvaluation(context.Background(), dataset)
-	payload, err := json.MarshalIndent(report, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encode evaluation report: %w", err)
+	if snapshotDirectory != "" {
+		store, err := replayfs.New(snapshotDirectory)
+		if err != nil {
+			return err
+		}
+		snapshot, evaluationErr := executeArchivedEvaluation(context.Background(), dataset, store, nil, time.Now)
+		if err := printJSON(snapshot); err != nil {
+			return err
+		}
+		return evaluationErr
 	}
-	fmt.Println(string(payload))
+	report, evaluationErr := executeSyntheticEvaluation(context.Background(), dataset)
+	if err := printJSON(report); err != nil {
+		return err
+	}
 	return evaluationErr
+}
+
+type replayCommandOutput struct {
+	Source   replay.SourceReference `json:"source"`
+	Snapshot replay.Snapshot        `json:"snapshot"`
+}
+
+func runReplayCommand(args []string) error {
+	snapshotDirectory, evaluationRunID, err := parseReplayOptions(args)
+	if err != nil {
+		return err
+	}
+	store, err := replayfs.New(snapshotDirectory)
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+	source, err := store.Load(ctx, evaluationRunID)
+	if err != nil {
+		return err
+	}
+	dataset, err := evaluation.LoadSyntheticV1()
+	if err != nil {
+		return err
+	}
+	if err := replay.ValidateSourceCompatibility(source, dataset); err != nil {
+		return err
+	}
+	reference := source.Reference()
+	snapshot, evaluationErr := executeArchivedEvaluation(ctx, dataset, store, &reference, time.Now)
+	if err := printJSON(replayCommandOutput{Source: reference, Snapshot: snapshot}); err != nil {
+		return err
+	}
+	return evaluationErr
+}
+
+func executeArchivedEvaluation(ctx context.Context, dataset evaluation.Dataset, store replay.Store, source *replay.SourceReference, now func() time.Time) (replay.Snapshot, error) {
+	if store == nil {
+		return replay.Snapshot{}, errors.New("evaluation replay store is required")
+	}
+	if now == nil {
+		return replay.Snapshot{}, errors.New("evaluation replay clock is required")
+	}
+	report, evaluationErr := executeSyntheticEvaluation(ctx, dataset)
+	snapshot, err := replay.New(report, evaluationErr, source, now())
+	if err != nil {
+		return replay.Snapshot{}, fmt.Errorf("build evaluation replay snapshot: %w", err)
+	}
+	if err := store.Append(ctx, snapshot); err != nil {
+		return replay.Snapshot{}, fmt.Errorf("append evaluation replay snapshot: %w", err)
+	}
+	return snapshot, evaluationErr
+}
+
+func parseEvaluateOptions(args []string) (string, error) {
+	flags := flag.NewFlagSet("evaluate", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	snapshotDirectory := flags.String("snapshot-dir", "", "append the evaluation snapshot to this directory")
+	if err := flags.Parse(args); err != nil {
+		return "", fmt.Errorf("usage: logagent evaluate [--snapshot-dir <directory>]: %w", err)
+	}
+	if flags.NArg() != 0 {
+		return "", errors.New("usage: logagent evaluate [--snapshot-dir <directory>]")
+	}
+	return *snapshotDirectory, nil
+}
+
+func parseReplayOptions(args []string) (string, string, error) {
+	flags := flag.NewFlagSet("replay", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	snapshotDirectory := flags.String("snapshot-dir", "", "directory containing append-only evaluation snapshots")
+	evaluationRunID := flags.String("run-id", "", "source evaluation run ID")
+	if err := flags.Parse(args); err != nil {
+		return "", "", fmt.Errorf("usage: logagent replay --snapshot-dir <directory> --run-id <evaluation-run-id>: %w", err)
+	}
+	if flags.NArg() != 0 || *snapshotDirectory == "" || *evaluationRunID == "" {
+		return "", "", errors.New("usage: logagent replay --snapshot-dir <directory> --run-id <evaluation-run-id>")
+	}
+	return *snapshotDirectory, *evaluationRunID, nil
 }
 
 func executeSyntheticEvaluation(ctx context.Context, dataset evaluation.Dataset) (evaluation.EvaluationReport, error) {

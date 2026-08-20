@@ -2,8 +2,8 @@
 
 | Metadata | Value |
 | --- | --- |
-| Version | 0.7 |
-| Status | M5-B contract frozen; B1 bounded Agent event/version slice implemented and offline verified; B2 history, B3 trend comparison, live M4-B/M4-C, and real gray rollout pending |
+| Version | 0.8 |
+| Status | M5-B contract frozen; B1 bounded Agent event/version slice and B2 append-only replay history implemented and offline verified; B3 trend comparison, live M4-B/M4-C, and real gray rollout pending |
 | Date | 2026-08-20 |
 
 ## 1. Overview
@@ -245,8 +245,10 @@ An explicit diagnostic command loads the same catalog and credentials as a real 
 3. Fixture-backed adapters record only the typed `sls.current`, `sls.baseline`, and conditional `change_source.list` tool spans. Tool usage must reconcile with the evaluation report's logical calls, Provider-call proxy, and processed-byte proxy.
 4. The Observer never serializes callback input/output or arbitrary attributes. It records stable codes, counts, timestamps, durations, completion, hashes, and the runtime-version fingerprint.
 5. The default application Observer is a no-op. A bounded recorder never fails an investigation; overflow or invalid events make the Trace incomplete and make the offline replay gate fail closed.
-6. B2 saves successful and failed evaluation runs as append-only strict snapshots. B3 compares only runs with compatible dataset identity, data boundary, and executor profile; incompatible runs return `INCOMPARABLE` rather than a misleading delta.
-7. Replay means executing the current binary again against fixed synthetic input. Reproducing an older implementation still requires its Git commit or build artifact.
+6. B2 optionally saves successful and failed evaluation runs through `evaluate --snapshot-dir <directory>`. Each append-only `evaluation-replay-v1` snapshot contains the complete evaluation report, version manifest, Case Traces, a safe terminal failure code, creation time, optional parent replay reference, and a SHA-256 over the canonical snapshot body. Existing run IDs are never overwritten.
+7. `replay --snapshot-dir <directory> --run-id <evaluation-run-id>` strictly loads and verifies the source snapshot before execution. Unknown fields or Schema, a changed content hash, an invalid or duplicate run identity, an incomplete file, or a source whose synthetic dataset boundary is incompatible with the current embedded fixture fails closed before the Graph runs.
+8. Replay means executing the current binary again against fixed synthetic input and appending a new child snapshot that references the verified source run and hash. It does not claim byte-for-byte equivalence with the source, and reproducing an older implementation still requires its Git commit or build artifact.
+9. B3 compares only runs with compatible dataset identity, data boundary, and executor profile; incompatible runs return `INCOMPARABLE` rather than a misleading delta.
 
 ## 7. Behavioral contracts and lifecycle
 
@@ -286,7 +288,7 @@ M5-B Agent events use a fixed schema and closed layer/name/phase enums. The init
 
 The runtime-version fingerprint is computed from a normalized manifest, not from host identity or wall-clock values. Synthetic and production query policies remain distinct through `executor_profile`; `prompt_used=false` requires Prompt/model/Token fields to remain absent or explicitly not applicable. Hashes provide integrity and correlation, not anonymization.
 
-The B1 gate version is `m5b-agent-trace-gate-v1`, the Agent event/Trace schema is `agent-trace-v1`, and the reserved replay snapshot schema is `evaluation-replay-v1`. B1 executes only under `executor_profile=SYNTHETIC_MOCK`. The replay schema value is part of the normalized version contract; it does not imply that the B2 append-only store or `replay` command exists.
+The B1 gate version is `m5b-agent-trace-gate-v1`, the Agent event/Trace schema is `agent-trace-v1`, and the replay snapshot schema is `evaluation-replay-v1`. B1 and B2 execute only under `executor_profile=SYNTHETIC_MOCK`. B2 uses a dedicated evaluation-run store and never extends or reuses the production investigation Store, Query Audit, or QueryStep contracts. Snapshot hashes provide tamper detection, not confidentiality; the Trace and report privacy contracts still apply before persistence.
 
 ## 8. Constraints and compatibility
 
@@ -396,8 +398,8 @@ The B1 gate version is `m5b-agent-trace-gate-v1`, the Agent event/Trace schema i
 - [x] B1 records one complete synthetic Trace per Case with one Engine run, four fixed Graph-node spans, two SLS tool spans, and a conditional Change Source span; every span has one start and one terminal event.
 - [x] B1 reconciles Trace tool usage with evaluation QuerySpecs, logical/Provider call counts, processed-byte proxy, and change-source calls while retaining zero credentials and zero external-network calls.
 - [x] B1 proves the serialized Trace excludes forbidden message, identity, resource, query, log, bucket, change-summary, natural-language report, callback, provider-error, Prompt, and arbitrary-attribute content.
-- [ ] B2 saves successful and failed evaluation runs as append-only strict snapshots with content hashes and duplicate/tamper rejection, without extending the production Store interface.
-- [ ] B2 exposes an offline `replay` command that uses the current binary and fixture-backed Mock dependencies only.
+- [x] B2 saves successful and failed evaluation runs as append-only strict snapshots with content hashes and duplicate/tamper rejection, without extending the production Store interface.
+- [x] B2 exposes an offline `replay` command that uses the current binary and fixture-backed Mock dependencies only.
 - [ ] B3 compares compatible replay snapshots, reports version changes, quality/cost/tool/Trace regressions and recovered or newly failed Cases, and returns `INCOMPARABLE` for incompatible data boundaries.
 - [ ] Live telemetry export, production sampling/retention, real LLM/Token observability, historical build execution, real incident feedback, and production SLO approval remain explicitly deferred.
 

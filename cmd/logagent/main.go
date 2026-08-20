@@ -28,14 +28,13 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: logagent <evaluate|mock-e2e|demo|worker|feishu|sls-check|sls-smoke>")
+		return errors.New("usage: logagent <evaluate|replay|mock-e2e|demo|worker|feishu|sls-check|sls-smoke>")
 	}
 	switch args[0] {
 	case "evaluate":
-		if len(args) != 1 {
-			return errors.New("usage: logagent evaluate")
-		}
-		return runEvaluate()
+		return runEvaluateCommand(args[1:])
+	case "replay":
+		return runReplayCommand(args[1:])
 	case "mock-e2e":
 		if len(args) != 1 {
 			return errors.New("usage: logagent mock-e2e")
@@ -83,7 +82,7 @@ func run(args []string) error {
 		}
 		return runSLSSmoke(loaded, args[1], args[2], args[3])
 	default:
-		return fmt.Errorf("unknown command %q; use evaluate, mock-e2e, demo, worker, feishu, sls-check, or sls-smoke", args[0])
+		return fmt.Errorf("unknown command %q; use evaluate, replay, mock-e2e, demo, worker, feishu, sls-check, or sls-smoke", args[0])
 	}
 }
 

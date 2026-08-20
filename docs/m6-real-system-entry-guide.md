@@ -1,6 +1,6 @@
 # 真实系统接入地图（第七期前置）
 
-这份文档只聚焦“哪段代码应该接真实外部系统”，并把 mock 相关链路与生产接入链路分开。  
+这份文档只聚焦“哪段代码应该接真实外部系统”，并把 mock 相关链路与生产接入链路分开。
 目标是让你在新同事、SRE 或审核时，一眼看出：**要把真实飞书、真实阿里云 SLS、真实数据库接在哪里，接进哪个接口，不会突破边界**。
 
 ## 一、先说结论
@@ -111,37 +111,37 @@
 ## 四、按真实部署场景给你的“最小改动清单”
 
 ### 4.1 先切“真实查询”
-1. 将 `LOG_AGENT_SLS_MODE=aliyun`。  
-2. 填 `LOG_AGENT_SLS_CATALOG` 为试点目录文件，确保 `service/environment` 对应单一试点。  
-3. 填 `LOG_AGENT_SLS_CREDENTIAL_MODE` 与 AK/STS 或 ECS RAM Role。  
+1. 将 `LOG_AGENT_SLS_MODE=aliyun`。
+2. 填 `LOG_AGENT_SLS_CATALOG` 为试点目录文件，确保 `service/environment` 对应单一试点。
+3. 填 `LOG_AGENT_SLS_CREDENTIAL_MODE` 与 AK/STS 或 ECS RAM Role。
 4. 先运行：
    - `go run ./cmd/logagent sls-check`
    - `go run ./cmd/logagent sls-smoke <service> <env> <window>`
 
 ### 4.2 进入 worker 的真实执行
-1. 共享生产数据库（建议先沿用 sqlite 验证到位）。  
-2. `go run ./cmd/logagent worker` 在同一会话或不同实例多副本，观察 `NEEDS_REVIEW`、checkpoint 重用与 `QueryAudit`。  
+1. 共享生产数据库（建议先沿用 sqlite 验证到位）。
+2. `go run ./cmd/logagent worker` 在同一会话或不同实例多副本，观察 `NEEDS_REVIEW`、checkpoint 重用与 `QueryAudit`。
 3. 只要 checkpoint/retry/审计链路稳定，再继续做数据库替换。
 
 ### 4.3 进入真实飞书入口
-1. 企业自建应用 + WS 长连接，配置 `im.message.receive_v1`、`card.action.trigger`。  
+1. 企业自建应用 + WS 长连接，配置 `im.message.receive_v1`、`card.action.trigger`。
 2. 分别启动：
    - `go run ./cmd/logagent feishu`
    - `go run ./cmd/logagent worker`
 3. 两进程共享同一个数据库；`feishu` 负责入站和投递，`worker` 负责执行。
 
 ### 4.4 最终生产化（M4 后续）
-1. 完成真实 DB Adapter 与迁移方案（含 schema 版本、回滚、备份）。  
-2. 补齐多租户/环境流量控制（目前是进程级预算）。  
-3. 接入真实变更平台前，先确认 `Change Catalog` 不被用户输入污染并满足试点约束。  
+1. 完成真实 DB Adapter 与迁移方案（含 schema 版本、回滚、备份）。
+2. 补齐多租户/环境流量控制（目前是进程级预算）。
+3. 接入真实变更平台前，先确认 `Change Catalog` 不被用户输入污染并满足试点约束。
 4. 完成审批与灰度治理（属于后续阶段，不在本切片中）。
 
 ## 五、重要边界与不应接入的点
 
-- `internal/adapters/eino` 是流程编排层，不是外部系统接入口；避免把 SDK、SQL、消息 API 混到此层。  
-- `internal/domain` 只承载模型，不应直接发网络请求。  
-- `evaluation` / `evalmock` 保持离线评测：`evaluate` 一般不接真实飞书和真实 SLS。  
-- `slsmock`、`feishumock` 仅用于离线；真实化后不应在生产 worker/feishu 路径使用。  
+- `internal/adapters/eino` 是流程编排层，不是外部系统接入口；避免把 SDK、SQL、消息 API 混到此层。
+- `internal/domain` 只承载模型，不应直接发网络请求。
+- `evaluation` / `evalmock` 保持离线评测：`evaluate` 一般不接真实飞书和真实 SLS。
+- `slsmock`、`feishumock` 仅用于离线；真实化后不应在生产 worker/feishu 路径使用。
 - 所有“成功输出到生产”都要经过 `application.ValidateEngineOutput`（已供 Worker 与 evaluate 共用）以防止生产会拒绝但 offline 通过的假阳性。
 
 ## 六、对应文件速查（直接改时看这里）
@@ -169,4 +169,3 @@ internal/ports                  接口边界：Store / Query / Executor / Change
 - 实时链路可运行：依赖真实 credential、catalog 与生产数据库后可跑。
 - 生产数据库替换：未完成；建议作为下一步 M4-B/M4-C。
 - 真实发布平台/CMDB 关联：本阶段仍 `disabled/change-catalog-file`，不属于此切片的硬性前提。
-
