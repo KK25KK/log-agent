@@ -10,6 +10,7 @@ import (
 
 	"logagent/internal/adapters/eino"
 	"logagent/internal/adapters/feishumock"
+	"logagent/internal/adapters/signalmock"
 	"logagent/internal/adapters/slsmock"
 	"logagent/internal/adapters/sqlite"
 	"logagent/internal/adapters/summarymock"
@@ -19,15 +20,24 @@ import (
 )
 
 type mockE2EResult struct {
-	Scenario      string                         `json:"scenario"`
-	Safety        mockSafetySummary              `json:"safety"`
-	Feishu        mockFeishuSummary              `json:"feishu"`
-	AlibabaSLS    mockSLSSummary                 `json:"aliyun_sls"`
-	TenantQuota   domain.TenantQuotaUsage        `json:"tenant_quota"`
-	LLMQuota      domain.TenantSummaryQuotaUsage `json:"llm_quota"`
-	ChangeSource  string                         `json:"change_source"`
-	LLMSummary    mockLLMSummary                 `json:"llm_summary"`
-	Investigation domain.Investigation           `json:"investigation"`
+	Scenario           string                         `json:"scenario"`
+	Safety             mockSafetySummary              `json:"safety"`
+	Feishu             mockFeishuSummary              `json:"feishu"`
+	AlibabaSLS         mockSLSSummary                 `json:"aliyun_sls"`
+	TenantQuota        domain.TenantQuotaUsage        `json:"tenant_quota"`
+	LLMQuota           domain.TenantSummaryQuotaUsage `json:"llm_quota"`
+	ChangeSource       string                         `json:"change_source"`
+	OperationalSignals mockOperationalSignalSummary   `json:"operational_signals"`
+	LLMSummary         mockLLMSummary                 `json:"llm_summary"`
+	Investigation      domain.Investigation           `json:"investigation"`
+}
+
+type mockOperationalSignalSummary struct {
+	Mode           string                `json:"mode"`
+	SourceCalls    int                   `json:"source_calls"`
+	TimelineStatus domain.TimelineStatus `json:"timeline_status"`
+	Signals        int                   `json:"signals"`
+	TimelineItems  int                   `json:"timeline_items"`
 }
 
 type mockLLMSummary struct {
@@ -214,6 +224,10 @@ func executeMockE2E(ctx context.Context) (mockE2EResult, error) {
 		return mockE2EResult{}, err
 	}
 	released := false
+	operationalSource, err := signalmock.NewIncident("mock/order-service/prod", requestEnd.Add(-30*time.Minute), requestEnd)
+	if err != nil {
+		return mockE2EResult{}, err
+	}
 	engine, err := eino.New(
 		ctx,
 		checkpointedExecutor,
@@ -224,6 +238,7 @@ func executeMockE2E(ctx context.Context) (mockE2EResult, error) {
 			FromVersion: "v1", ToVersion: "v2", Owner: "order-team", Summary: "mock release v2",
 			AffectedInstances: []string{"order-pod-a"}, AffectedInstancesComplete: true,
 		}}),
+		eino.WithOperationalSignalSource(operationalSource),
 	)
 	if err != nil {
 		return mockE2EResult{}, err
@@ -314,6 +329,13 @@ func executeMockE2E(ctx context.Context) (mockE2EResult, error) {
 	if investigation.Report.Summary == nil || investigation.Report.Summary.Mode != domain.SummaryModeMock || investigation.Report.Summary.Status != domain.SummaryGenerated {
 		return mockE2EResult{}, fmt.Errorf("mock investigation is missing its governed summary: %#v", investigation.Report.Summary)
 	}
+	if investigation.Report.IncidentTimeline == nil || investigation.Report.IncidentTimeline.Status != domain.TimelineComplete {
+		return mockE2EResult{}, fmt.Errorf("mock investigation is missing its incident timeline: %#v", investigation.Report.IncidentTimeline)
+	}
+	operationalStats := operationalSource.Stats()
+	if operationalStats.ListCalls != 1 {
+		return mockE2EResult{}, fmt.Errorf("unexpected mock operational signal activity %#v", operationalStats)
+	}
 
 	providerCalls := 0
 	currentErrors := int64(0)
@@ -377,7 +399,7 @@ func executeMockE2E(ctx context.Context) (mockE2EResult, error) {
 		Safety: mockSafetySummary{
 			ExternalNetworkCalls: 0,
 			CredentialsRequired:  false,
-			DataNotice:           "All Feishu messages, SLS aggregates, change events, and report summaries are deterministic test data.",
+			DataNotice:           "All Feishu messages, SLS aggregates, change events, operational signals, and report summaries are deterministic test data.",
 		},
 		Feishu: mockFeishuSummary{
 			Mode:                        "mock",
@@ -402,6 +424,12 @@ func executeMockE2E(ctx context.Context) (mockE2EResult, error) {
 		TenantQuota:  quotaUsage,
 		LLMQuota:     summaryQuotaUsage,
 		ChangeSource: "mock",
+		OperationalSignals: mockOperationalSignalSummary{
+			Mode: "mock", SourceCalls: operationalStats.ListCalls,
+			TimelineStatus: investigation.Report.IncidentTimeline.Status,
+			Signals:        len(investigation.Report.IncidentTimeline.Signals),
+			TimelineItems:  len(investigation.Report.IncidentTimeline.Items),
+		},
 		LLMSummary: mockLLMSummary{
 			Mode: investigation.Report.Summary.Mode, Status: investigation.Report.Summary.Status,
 			Provider: investigation.Report.Summary.Provider, PromptVersion: investigation.Report.Summary.PromptVersion,

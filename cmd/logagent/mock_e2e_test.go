@@ -52,6 +52,9 @@ func TestExecuteMockE2ECoversInboundAnalysisAndCardLifecycle(t *testing.T) {
 	if result.LLMSummary.Mode != domain.SummaryModeMock || result.LLMSummary.Status != domain.SummaryGenerated || result.LLMSummary.Provider != "summary_mock" || result.LLMSummary.ExternalAPICalls != 0 || result.LLMSummary.CredentialsNeeded {
 		t.Fatalf("unexpected mock LLM summary: %#v", result.LLMSummary)
 	}
+	if result.OperationalSignals.Mode != "mock" || result.OperationalSignals.SourceCalls != 1 || result.OperationalSignals.TimelineStatus != domain.TimelineComplete || result.OperationalSignals.Signals != 2 || result.OperationalSignals.TimelineItems != 3 {
+		t.Fatalf("unexpected mock operational timeline: %#v", result.OperationalSignals)
+	}
 	if result.Investigation.Status != domain.StatusSucceeded || result.Investigation.Report == nil || result.Investigation.Report.Outcome != "spike_detected" {
 		t.Fatalf("unexpected investigation: %#v", result.Investigation)
 	}
@@ -63,5 +66,8 @@ func TestExecuteMockE2ECoversInboundAnalysisAndCardLifecycle(t *testing.T) {
 	}
 	if result.Investigation.Report.CauseAnalysis == nil || len(result.Investigation.Report.CauseAnalysis.Hypotheses) != 1 {
 		t.Fatalf("mock change correlation missing: %#v", result.Investigation.Report.CauseAnalysis)
+	}
+	if result.Investigation.Report.IncidentTimeline == nil || len(result.Investigation.Report.IncidentTimeline.Items) != 3 {
+		t.Fatalf("mock cross-signal timeline missing: %#v", result.Investigation.Report.IncidentTimeline)
 	}
 }

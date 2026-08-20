@@ -1,4 +1,4 @@
-# 真实系统接入地图（第七期前置）
+# 真实系统接入地图
 
 这份文档只聚焦“哪段代码应该接真实外部系统”，并把 mock 相关链路与生产接入链路分开。
 目标是让你在新同事、SRE 或审核时，一眼看出：**要把真实飞书、真实阿里云 SLS、真实数据库接在哪里，接进哪个接口，不会突破边界**。
@@ -12,7 +12,8 @@
 3. 查询治理（资源目录/ACL/Schema/预算/审计）：`query` Gateway 已经接管真实执行前门禁。
 4. 持久化状态机：当前仍是 `sqlite`，但这是已知技术预览；真实化要实现 DB 适配器并替换启动文件里的 `sqlite.Open`。
 5. 变更来源（M3）：默认 `disabled`，可配静态 Change Catalog 文件；真实接平台还未建模。
-6. LLM 摘要：默认 `summarymock`，火山方舟 Responses API 适配器与 SQLite 请求/Token 额度治理已实现；真实模型、Prompt、Token 价格校准与留存策略尚未联调。
+6. 指标/Trace 时间线：默认不启用；Mock 模式注入 `signalmock`，真实 Operational Signal Adapter 尚未实现。
+7. LLM 摘要：默认 `summarymock`，火山方舟 Responses API 适配器与 SQLite 请求/Token 额度治理已实现；真实模型、Prompt、Token 价格校准与留存策略尚未联调。
 
 > 关键约束：不允许把飞书 SDK 或阿里云 SDK 引入业务核心层。接口边界由 `internal/ports` 保护；真实/离线实现只切换在适配层和启动组装处。
 
@@ -109,7 +110,18 @@
   - `List(ctx, query)`：以 resource_id/time 窗口返回事件；
 - `cmd/logagent/sls.go` 的 `buildChangeSource`：空路径时回退 disabled 源（不会阻塞 M2 结果）。
 
-### 3.5 LLM 证据摘要
+### 3.5 指标与 Trace 聚合时间线
+
+- `internal/ports/ports.go`：`OperationalSignalSource` 是唯一外部信号接口，只接收由 SLS Evidence 派生的逻辑 `resource_id`、完整 baseline/current 时间范围和固定上限。
+- `internal/adapters/signalmock/source.go`：当前唯一实现；只用于 demo、`LOG_AGENT_SLS_MODE=mock` Worker 和 `mock-e2e`，不访问网络。
+- `internal/adapters/eino/incident_timeline.go`：调用可选 Source，把已有 Change Event 与标准化信号合并为稳定时间线。
+- `internal/application/incident_timeline_validation.go`：落库前复算阈值并验证枚举、值域、时间、完整性和引用。
+- `internal/adapters/feishu/renderer.go`：有界展示时间线，并固定声明“时间相关不等于因果证明”。
+- `cmd/logagent/main.go`：当前只有 `config.SLS.Mode == "mock"` 时注入 `eino.WithOperationalSignalSource(signalmock.New())`；真实 SLS 模式不注入，因此不会把 Mock 信号混入真实日志调查。
+
+真实接入应新增独立适配器（例如 `internal/adapters/arms` 或企业统一可观测适配器），实现 `ports.OperationalSignalSource`，再在 `cmd/logagent` 增加关闭集合的配置与显式组装。Adapter 只能返回错误率/P95 延迟等标准化聚合，禁止把原始 Span、TraceID、标签、任意属性、查询文本或 Provider 错误带入领域层。启用前还必须补齐外部调用超时、租户额度、审计、结果未知/重试语义、资源目录和历史事故阈值校准。
+
+### 3.6 LLM 证据摘要
 
 - `internal/ports/ports.go`：`ReportSummarizer` 是唯一 Provider 接口。
 - `internal/application/summary.go`：构造不含身份/物理资源/查询/原始日志的输入投影，验证 Evidence/候选/建议引用，并在任何模型失败时生成确定性 fallback。
@@ -151,7 +163,17 @@
 4. 用脱敏样本做 opt-in smoke，确认 Token、时延、Request ID 和错误 fallback；真实错误正文不得进入报告、卡片或 Trace。
 5. 方舟失败不会改变调查成功；如发生异常，查看报告 `summary.status=FALLBACK`，确定性 Evidence/Findings 仍是事实来源。
 
-### 4.5 最终生产化（M4 后续）
+### 4.5 接入真实指标/Trace 聚合
+
+1. 先选定一个只读后端与试点服务，确定逻辑 ResourceID 到真实指标/Trace 资源的管理员映射。
+2. 实现并测试 `ports.OperationalSignalSource`，只返回关闭合同中的聚合；不要直接向 Eino、Worker 或飞书暴露 SDK 类型。
+3. 在启动组装层增加显式模式与凭据加载；未配置、权限不足、超时或数据不完整时必须降级时间线，不能让已有日志调查失败。
+4. 把一次外部信号调用纳入租户预算、审计、超时和结果未知策略，再做脱敏 opt-in smoke。
+5. 用真实历史事故校准错误率、延迟、窗口与时钟对齐；评审通过前不得把 `COMPLETE` 时间线解释为根因确认。
+
+预期效果是：同一飞书报告按时间展示治理变更、日志突增、指标错误率和 Trace P95 延迟，帮助值班人员选择下钻方向；它仍只表达时间相关性，不自动改变 M2/M3 结论或执行处置。
+
+### 4.6 最终生产化（M4 后续）
 1. 完成真实 DB Adapter 与迁移方案（含 schema 版本、回滚、备份）。
 2. 补齐多租户/环境流量控制（目前是进程级预算）。
 3. 接入真实变更平台前，先确认 `Change Catalog` 不被用户输入污染并满足试点约束。
@@ -180,8 +202,9 @@ internal/adapters/slsmock       SLS mock
 internal/adapters/evalmock      evaluate 专用 fixture mock
 internal/adapters/summarymock   默认离线 LLM 摘要 mock
 internal/adapters/volcark       火山方舟 Responses API 适配器
+internal/adapters/signalmock    指标/Trace 聚合离线 Mock；生产需新增独立适配器
 internal/adapters/sqlite         当前持久化技术预览（待替换为生产数据库）
-internal/ports                  接口边界：Store / Query / Executor / ChangeSource / Delivery
+internal/ports                  接口边界：Store / Query / Executor / ChangeSource / OperationalSignalSource / Delivery
 ```
 
 ## 七、建议的阶段标记（与你的文档口径对齐）
@@ -193,3 +216,4 @@ internal/ports                  接口边界：Store / Query / Executor / Change
 - 生产数据库替换：未完成；属于 M4-C。
 - 真实发布平台/CMDB 关联：本阶段仍 `disabled/change-catalog-file`，不属于此切片的硬性前提。
 - 火山方舟：适配器与离线协议测试已完成；真实凭据/模型/Prompt/费用/留存验收未完成。
+- 指标/Trace：`OperationalSignalSource`、Mock、验证和展示已完成；真实平台 Adapter、调用治理和阈值校准未完成。

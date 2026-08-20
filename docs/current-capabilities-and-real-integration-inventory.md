@@ -3,13 +3,13 @@
 | 项目 | 内容 |
 | --- | --- |
 | 盘点日期 | 2026-08-20 |
-| 代码基线 | LLM 摘要额度治理工作树 / `codex/llm-summary-quota` |
-| 当前结论 | 主体业务链、治理、证据、恢复、M4-B 本地可靠性治理、评测、回放、Mock Reviewer 反馈、非行动性灰度演练、LLM 摘要 Mock/方舟适配器、安全评测和请求/Token 额度治理已经实现；真实方舟联调、M4-C 生产基础设施与真实试点仍未完成 |
-| 数据边界 | 当前自动化验收使用合成日志、合成飞书身份、合成变更和合成标签，不代表真实生产效果 |
+| 代码基线 | M3-B 跨信号时间线工作树 / `codex/cross-signal-timeline` |
+| 当前结论 | 主体业务链、治理、证据、恢复、M4-B 本地可靠性治理、评测、回放、Mock Reviewer 反馈、非行动性灰度演练、LLM 摘要与额度，以及 Mock 指标/Trace 时间线已经实现；真实可观测源、真实方舟联调、M4-C 生产基础设施与真实试点仍未完成 |
+| 数据边界 | 当前自动化验收使用合成日志、合成飞书身份、合成变更、合成指标/Trace 聚合和合成标签，不代表真实生产效果 |
 
 ## 1. 一句话概括
 
-这个项目已经是一套能完整运行的“证据驱动日志调查引擎”：它能接单、排队、查询当前/基线、生成证据、做保守判断、关联变更、生成受约束摘要、更新飞书卡片、处理查询恢复、死信安全重放和租户成本代理治理，并对自身进行离线评测、回放、Mock 审核和灰度演练；除真实系统外，主要仍缺 M4-C 生产基础设施与跨信号/企业知识增强。
+这个项目已经是一套能完整运行的“证据驱动日志调查引擎”：它能接单、排队、查询当前/基线、生成证据、做保守判断、关联变更、整理 Mock 指标/Trace 时间线、生成受约束摘要、更新飞书卡片、处理查询恢复、死信安全重放和租户成本代理治理，并对自身进行离线评测、回放、Mock 审核和灰度演练；除真实系统外，主要仍缺 M4-C 生产基础设施、真实跨信号连接器与企业知识增强。
 
 ## 2. 状态说明
 
@@ -40,6 +40,9 @@ flowchart LR
     EV --> CH{Change Source}
     CH --> CM[Mock / 静态 JSON]
     CH --> CR[真实发布平台/CMDB<br/>未接入]
+    EV --> SG{Operational Signal Source}
+    SG --> SGM[指标/Trace Mock<br/>离线已验收]
+    SG --> SGR[真实可观测平台<br/>未接入]
     EV --> OUT[持久化 Delivery]
     OUT --> FO[飞书卡片<br/>真实 SDK 待联调 / Mock 已验收]
     EG --> OBS[Trace + Evaluation + Replay<br/>离线已完成]
@@ -52,8 +55,8 @@ flowchart LR
     classDef mock fill:#fff1b8,stroke:#d48806,color:#000;
     classDef pending fill:#ffd6e7,stroke:#c41d7f,color:#000;
     class IN,WK,CP,EG,GW,EV,OUT,OBS,FB,RD done;
-    class SM,CM,DB,LLM mock;
-    class SR,CR pending;
+    class SM,CM,SGM,DB,LLM mock;
+    class SR,CR,SGR pending;
 ```
 
 ⭐ 这里是重点：Mock 只替代“外部系统返回什么”和“消息实际发到哪里”，不会绕开真实的 Intake、SQLite 状态机、Worker、Eino Graph、Query Gateway、Evidence、Checkpoint、Delivery 和评测逻辑。
@@ -76,6 +79,7 @@ flowchart LR
 | Evidence 证据链 | 已完成 | Finding、Recommendation、Cause Ledger 都必须引用同一报告中的 Evidence/Change ID | `internal/domain/types.go`、`internal/application/worker.go` | 每个结论都能追溯查询窗口、模板、质量和来源 |
 | 保守结论门禁 | 已完成 | Incomplete、截断、非穷尽、脱敏冲突或治理身份不一致时禁止确定性根因表述 | `internal/adapters/eino/engine.go`、`internal/application/worker.go` | 数据不足时输出 `data_insufficient/INCONCLUSIVE`，不会猜根因 |
 | 发布/配置变更关联 | 已完成静态切片 | 读取受控 Change Catalog，对每个候选执行 4 项支持和 3 项反证测试 | `internal/adapters/changecatalog/catalog.go`、`internal/adapters/eino/engine.go` | 输出 `SUPPORTED_CANDIDATE/REFUTED/INCONCLUSIVE`，不宣称因果 |
+| 跨信号故障时间线 | Mock 已验收 | 从 Evidence 派生资源/时间，一次获取有界指标/Trace 聚合，本地计算异常并与 Change Event 稳定排序 | `internal/domain/incident_timeline.go`、`internal/adapters/eino/incident_timeline.go`、`internal/adapters/signalmock` | Mock 主链生成 1 个变更+2 个信号条目；时间相关不等于因果，真实源待接 |
 | 飞书结果卡片 | 代码已具备，待真实联调 | 持久化 Delivery Worker 先 Reply 创建卡片，再 Patch 同一张卡 | `internal/application/delivery.go`、`internal/adapters/feishu/sender.go` | 真实接入后可看到接单、运行、成功、失败、证据和下一步 |
 | 卡片动作 | 已完成业务逻辑；真实 UI 待联调 | 查看证据、取消、扩大窗口、重新运行、成本确认重跑均做身份和状态校验 | `internal/application/actions.go`、`internal/adapters/feishu/receiver.go` | 按钮不能携带物理资源或绕过请求者权限 |
 | 付费查询 Checkpoint | 已完成 | `sls.current/sls.baseline` 保存治理指纹、输入哈希和规范化结果 | `internal/application/checkpoint_executor.go`、`internal/adapters/sqlite/query_steps.go` | 崩溃恢复时复用已完成窗口，只补缺失窗口 |
@@ -101,6 +105,7 @@ flowchart LR
 | 阿里云 SLS | `slsmock` / `evalmock` 返回固定聚合 | Schema、当前/基线错误数、Top5 模式/实例、Provider usage | Resource/ACL Gateway、预算、审计、Checkpoint、Evidence、Graph | `aliyunsls` 已实现，待试点 Project/LogStore 联调 |
 | 飞书身份与资源授权 | Mock Principal + Mock Catalog | 真实 AppID、TenantKey、OpenID 和资源绑定 | ACL 决策和 fail-closed 行为 | 需把真实飞书身份写入管理员资源目录 |
 | 发布/配置变更 | Demo/Fixture ChangeSet，或管理员静态 JSON | 发布事件、版本、负责人、影响实例 | 七项支持/反证规则和 Evidence Ledger | 静态 JSON 可用；真实发布平台/CMDB 连接器未实现 |
+| 指标/Trace 调查信号 | `signalmock` 固定错误率与 P95 延迟聚合 | ARMS/CMS/Prometheus/OTel 的受控聚合结果 | Evidence 派生查询、闭集校验、异常复算、Worker 引用门禁和飞书时间线 | 端口与 Mock 已实现；真实连接器、额度、审计和试点未实现 |
 | 历史故障与专家标签 | `synthetic-v1.json` | 历史事故、专家期望、成本代理 | 真实 Graph、结果校验、Trace、评测门禁 | 真实脱敏数据集和专家标注流程未实现 |
 | Reviewer 反馈与灰度策略 | `feedback-seed` + 固定策略 | 两名虚拟 Reviewer、Verdict/Reason、quorum 与演练阈值 | 严格快照引用、append-only 纠正、B3 对比和决策状态机 | 真实 Reviewer 身份、UI、团队策略和生产动作未实现 |
 | Agent Trace 后端 | 内存 `BoundedRecorder` + 本地回放文件 | 生产 Trace Collector、检索、保留和告警 | Span 合同、版本指纹、完整性检查 | 真实 OTel/AgentSight/可观测后端未实现 |
@@ -268,7 +273,35 @@ go run ./cmd/logagent worker
 - 仍然只输出“关联候选”，支持证据、反证和未知项同时展示。
 - 变更平台故障不会让已经成立的日志事实失败。
 
-### 6.5 生产 Agent 可观测后端
+### 6.5 业务指标与 Trace 信号源
+
+#### 负责什么
+
+- 为同一受控资源和观察窗口提供错误率、P95 延迟等结构化聚合。
+- 让排障人员在日志和变更之外看到指标、Trace 的时间关系，但不直接输出因果结论。
+
+#### 当前怎么实现
+
+- 端口：`ports.OperationalSignalSource`。
+- Mock：`internal/adapters/signalmock`，固定返回一个指标错误率和一个 Trace P95 延迟观察。
+- 编排与验证：`internal/adapters/eino/incident_timeline.go`、`internal/application/incident_timeline_validation.go`。
+- 展示：`internal/adapters/feishu/renderer.go`。
+
+#### 怎么接入
+
+1. 为选定的 ARMS、CMS、Prometheus 或 OTel 后端实现独立 Adapter；不要把 SDK 放入 Eino、Worker 或飞书包。
+2. 只接收由 Evidence 派生的 `resource_id/start/end/limit`，通过管理员目录解析真实后端资源。
+3. 把后端结果归一成关闭的错误率或 P95 延迟观察；禁止返回原始 Span、TraceID、标签、任意属性和 Provider 文案。
+4. 在生产组装中显式注入 `eino.WithOperationalSignalSource`，并在启用前补齐超时、租户额度、审计、结果未知和可观测策略。
+5. 用脱敏历史事故校准时间对齐与异常阈值，再进入真实飞书试点。
+
+#### 预期效果
+
+- 飞书报告按时间展示变更、指标和 Trace 聚合，同时保留完整 Evidence 引用。
+- 可选源故障不会破坏日志事实；不完整覆盖会明确降级。
+- 用户能更快定位需要下钻的方向，但系统仍不会把时间重合写成已确认根因。
+
+### 6.6 生产 Agent 可观测后端
 
 #### 负责什么
 
@@ -293,7 +326,7 @@ go run ./cmd/logagent worker
 - 能回答一次调查执行了哪些节点、在哪一步失败、调用了多少次工具、使用了哪个版本合同。
 - 遥测失败不会改变调查结果，但自身丢事件和积压可被监控。
 
-### 6.6 真实历史故障、专家标注和用户反馈
+### 6.7 真实历史故障、专家标注和用户反馈
 
 #### 负责什么
 
@@ -362,7 +395,7 @@ flowchart LR
 | Delivery 运维死信查询与安全重放 | CLI 与持久层已实现 | 已有安全重放门禁和审计；组织级 RBAC/操作台及真实飞书演练未实现 |
 | 高风险工具审批与自动处置 | 只完成审批合同 | 已有职责分离、hash、过期和一次性消费；当前无真实工具执行器，继续只读 |
 | 生产数据库与多实例全局配额 | 未实现 | SQLite 只用于本地和技术预览 |
-| Trace/指标/拓扑跨信号因果分析 | 未实现 | 当前只分析 SLS 聚合与静态 Change Source |
+| Trace/指标/拓扑跨信号因果分析 | Mock 时间线已实现，真实系统未接入 | 已有关闭聚合合同、异常复算、引用校验和飞书展示；真实平台、Trace 下钻、拓扑与因果评测仍未实现 |
 | 真实发布平台/CMDB/SOP/错误码知识库 | 未实现 | 只有 ChangeSource 接口和静态目录 |
 | M5-C 真实试点灰度 | 未实现 | 缺真实历史集、专家标签、团队门槛和试点验收 |
 | 火山方舟真实摘要验收 | 适配器与本地额度代码已具备，未真实联调 | 缺真实 Key、批准模型/Prompt、真实 Token/价格校准、数据留存策略和 opt-in smoke；摘要仍不能决定权限、查询和事实 |
@@ -372,7 +405,7 @@ flowchart LR
 ### 可以宣称
 
 - 主体 Go 架构、Eino 固定 Graph、状态机、证据链、查询治理、恢复、离线评测、回放、兼容快照比较、Mock 反馈和灰度演练已实现。
-- Mock 飞书 + Mock SLS 可以完成可重复的离线端到端验收。
+- Mock 飞书 + Mock SLS + Mock 指标/Trace 聚合可以完成可重复的离线端到端验收。
 - 真实飞书、阿里云 SLS 与火山方舟适配器已经存在，并有明确配置入口；当前只有 Mock 路径完成离线主链验收。
 - 当前 Engine 合成黄金集 5/5 通过，摘要安全集 9/9 通过，Trace 合同完整，外部网络调用为 0。
 

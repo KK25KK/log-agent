@@ -12,17 +12,19 @@ import (
 )
 
 const (
-	maxCardBytes           = 30 * 1024
-	maxFindingItems        = 6
-	maxRecommendationItems = 3
-	maxEvidenceItems       = 2
-	maxCauseSummaryItems   = 1
-	maxCauseEvidenceItems  = 3
-	maxAISummaryNotes      = 2
-	maxAggregateItems      = 5
-	maxStatementRunes      = 480
-	maxAggregateRunes      = 96
-	maxIdentifierRunes     = 96
+	maxCardBytes             = 30 * 1024
+	maxFindingItems          = 6
+	maxRecommendationItems   = 3
+	maxEvidenceItems         = 2
+	maxCauseSummaryItems     = 1
+	maxCauseEvidenceItems    = 3
+	maxTimelineSummaryItems  = 3
+	maxTimelineEvidenceItems = 6
+	maxAISummaryNotes        = 2
+	maxAggregateItems        = 5
+	maxStatementRunes        = 480
+	maxAggregateRunes        = 96
+	maxIdentifierRunes       = 96
 )
 
 var shanghaiLocation = fixedShanghaiLocation()
@@ -181,6 +183,7 @@ func renderReportCard(investigation domain.Investigation) cardDocument {
 		elements = append(elements, markdown(content))
 	}
 	elements = appendCauseSummary(elements, report.CauseAnalysis)
+	elements = appendIncidentTimelineSummary(elements, report.IncidentTimeline)
 	for index, recommendation := range boundedRecommendations(report.Recommendations) {
 		elements = append(elements, markdown(fmt.Sprintf("**建议 %d：** %s", index+1, safeMarkdown(recommendation.Statement, maxStatementRunes))))
 	}
@@ -252,6 +255,7 @@ func renderEvidenceCard(investigation domain.Investigation) (cardDocument, error
 		}
 	}
 	elements = appendCauseEvidence(elements, investigation.Report.CauseAnalysis)
+	elements = appendIncidentTimelineEvidence(elements, investigation.Report.IncidentTimeline)
 	elements = append(elements, buttonRow(investigation.ID,
 		buttonSpec{label: "返回报告", action: domain.ActionViewReport, style: "primary"},
 		buttonSpec{label: "扩大时间窗", action: domain.ActionExpandWindow},
@@ -287,6 +291,65 @@ func appendCauseSummary(elements []any, analysis *domain.CauseAnalysis) []any {
 		elements = append(elements, markdown(content))
 	}
 	return elements
+}
+
+func appendIncidentTimelineSummary(elements []any, timeline *domain.IncidentTimeline) []any {
+	if timeline == nil || timeline.Status == domain.TimelineSkippedNoSpike {
+		return elements
+	}
+	if timeline.Status == domain.TimelineUnavailable {
+		return append(elements, markdown("**跨信号时间线：** 当前指标/Trace 聚合不可用，日志与变更结论不受影响。"))
+	}
+	status := "完整"
+	if timeline.Status == domain.TimelineInconclusive {
+		status = "不完整"
+	}
+	content := fmt.Sprintf("**跨信号时间线（%s）：**", status)
+	items := timeline.Items
+	if len(items) > maxTimelineSummaryItems {
+		items = items[:maxTimelineSummaryItems]
+	}
+	for _, item := range items {
+		content += fmt.Sprintf("\n\n- %s · %s", item.StartedAt.In(shanghaiLocation).Format("15:04:05"), safeMarkdown(item.Statement, maxStatementRunes))
+	}
+	content += "\n\n限制：时间相关不等于因果证明。"
+	return append(elements, markdown(content))
+}
+
+func appendIncidentTimelineEvidence(elements []any, timeline *domain.IncidentTimeline) []any {
+	if timeline == nil || timeline.Status == domain.TimelineSkippedNoSpike {
+		return elements
+	}
+	if timeline.Status == domain.TimelineUnavailable {
+		return append(elements, markdown("**跨信号证据：** 当前不可用；未展示原始 Span、TraceID、指标标签或 Provider 错误。"))
+	}
+	items := timeline.Items
+	if len(items) > maxTimelineEvidenceItems {
+		items = items[:maxTimelineEvidenceItems]
+	}
+	if len(items) == 0 {
+		return append(elements, markdown("**跨信号证据：** 受控数据不足，未形成时间线条目。"))
+	}
+	elements = append(elements, markdown("**跨信号证据时间线：**"))
+	for index, item := range items {
+		state := "上下文"
+		if item.Kind != domain.TimelineItemChange {
+			state = "未达到异常阈值"
+			if item.Anomalous {
+				state = "达到异常阈值"
+			}
+		}
+		content := fmt.Sprintf(
+			"**时间线 %d · %s · %s**\n\n窗口：%s\n\n%s",
+			index+1,
+			safeMarkdown(string(item.Kind), maxAggregateRunes),
+			state,
+			formatRange(item.StartedAt, item.CompletedAt),
+			safeMarkdown(item.Statement, maxStatementRunes),
+		)
+		elements = append(elements, markdown(content))
+	}
+	return append(elements, markdown("限制：时间相关不等于因果证明；当前仅展示受控聚合，不包含原始 Span、TraceID 或指标标签。"))
 }
 
 func appendCauseEvidence(elements []any, analysis *domain.CauseAnalysis) []any {

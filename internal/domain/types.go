@@ -173,14 +173,15 @@ type Recommendation struct {
 
 // Report is the durable user-facing result of an investigation.
 type Report struct {
-	InvestigationID string           `json:"investigation_id"`
-	Outcome         string           `json:"outcome"`
-	Findings        []Finding        `json:"findings"`
-	Recommendations []Recommendation `json:"recommendations,omitempty"`
-	Evidence        []Evidence       `json:"evidence"`
-	CauseAnalysis   *CauseAnalysis   `json:"cause_analysis,omitempty"`
-	Summary         *ReportSummary   `json:"summary,omitempty"`
-	GeneratedAt     time.Time        `json:"generated_at"`
+	InvestigationID  string            `json:"investigation_id"`
+	Outcome          string            `json:"outcome"`
+	Findings         []Finding         `json:"findings"`
+	Recommendations  []Recommendation  `json:"recommendations,omitempty"`
+	Evidence         []Evidence        `json:"evidence"`
+	CauseAnalysis    *CauseAnalysis    `json:"cause_analysis,omitempty"`
+	IncidentTimeline *IncidentTimeline `json:"incident_timeline,omitempty"`
+	Summary          *ReportSummary    `json:"summary,omitempty"`
+	GeneratedAt      time.Time         `json:"generated_at"`
 }
 
 // Job is a claimed unit of work. Request is already decoded for the worker.

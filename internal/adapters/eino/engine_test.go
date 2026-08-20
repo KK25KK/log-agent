@@ -25,7 +25,17 @@ type fakeChangeSource struct {
 	got []domain.ChangeQuery
 }
 
+type fakeOperationalSignalSource struct {
+	set domain.OperationalSignalSet
+	err error
+	got []domain.OperationalSignalQuery
+}
+
 type cancellingChangeSource struct {
+	cancel context.CancelFunc
+}
+
+type cancellingOperationalSignalSource struct {
 	cancel context.CancelFunc
 }
 
@@ -42,12 +52,25 @@ func (s cancellingChangeSource) List(_ context.Context, _ domain.ChangeQuery) (d
 	return domain.ChangeSet{}, context.Canceled
 }
 
+func (source cancellingOperationalSignalSource) List(_ context.Context, _ domain.OperationalSignalQuery) (domain.OperationalSignalSet, error) {
+	source.cancel()
+	return domain.OperationalSignalSet{}, context.Canceled
+}
+
 func (f *fakeChangeSource) List(_ context.Context, query domain.ChangeQuery) (domain.ChangeSet, error) {
 	f.got = append(f.got, query)
 	if f.err != nil {
 		return domain.ChangeSet{}, f.err
 	}
 	return f.set, nil
+}
+
+func (source *fakeOperationalSignalSource) List(_ context.Context, query domain.OperationalSignalQuery) (domain.OperationalSignalSet, error) {
+	source.got = append(source.got, query)
+	if source.err != nil {
+		return domain.OperationalSignalSet{}, source.err
+	}
+	return source.set, nil
 }
 
 func (f *fakeExecutor) Execute(_ context.Context, spec domain.QuerySpec) (domain.QueryResult, error) {
@@ -737,6 +760,230 @@ func TestEngineSkipsChangeSourceWithoutConclusiveSpike(t *testing.T) {
 	if report.CauseAnalysis == nil || report.CauseAnalysis.Status != domain.CauseAnalysisSkippedNoSpike {
 		t.Fatalf("unexpected skipped cause analysis: %#v", report.CauseAnalysis)
 	}
+}
+
+func TestEngineBuildsGovernedCrossSignalTimelineWithoutMoreSLSQueries(t *testing.T) {
+	start := time.Date(2026, 8, 18, 10, 0, 0, 0, time.UTC)
+	end := start.Add(30 * time.Minute)
+	change := domain.ChangeEvent{
+		ID: "chg-timeline", ResourceID: "res-order-prod", Kind: domain.ChangeKindRelease,
+		StartedAt: start.Add(-10 * time.Minute), CompletedAt: start.Add(-5 * time.Minute),
+		FromVersion: "v1", ToVersion: "v2", Owner: "order-team", Summary: "release v2",
+		AffectedInstances: []string{"order-pod-a"}, AffectedInstancesComplete: true,
+	}
+	changeSource := &fakeChangeSource{set: domain.ChangeSet{
+		SourceVersion: "change-catalog-v1", Complete: true, Events: []domain.ChangeEvent{change},
+	}}
+	signalSource := &fakeOperationalSignalSource{set: domain.OperationalSignalSet{
+		SourceVersion: "signals-v1", Complete: true,
+		Observations: []domain.OperationalSignalObservation{
+			{
+				ID: "metric-errors", ResourceID: "res-order-prod", Kind: domain.OperationalSignalMetric,
+				Code: domain.OperationalSignalErrorRate, StartedAt: start, CompletedAt: end,
+				BaselineValue: 0.02, CurrentValue: 0.12, Unit: domain.OperationalSignalRatio,
+			},
+			{
+				ID: "trace-latency", ResourceID: "res-order-prod", Kind: domain.OperationalSignalTrace,
+				Code: domain.OperationalSignalLatencyP95, StartedAt: start, CompletedAt: end,
+				BaselineValue: 120, CurrentValue: 420, Unit: domain.OperationalSignalMillisecond,
+			},
+		},
+	}}
+	executor := &fakeExecutor{results: causeAnalysisResults()}
+	engine, err := New(
+		context.Background(), executor, time.Now,
+		WithChangeSource(changeSource),
+		WithOperationalSignalSource(signalSource),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, report, err := engine.Run(context.Background(), "inv_timeline", domain.InvestigationRequest{
+		Service: "order-service", Environment: "prod", StartTime: start, EndTime: end,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(executor.got) != 2 {
+		t.Fatalf("cross-signal enrichment changed SLS observations: %d", len(executor.got))
+	}
+	if len(signalSource.got) != 1 {
+		t.Fatalf("operational source calls=%d, want 1", len(signalSource.got))
+	}
+	query := signalSource.got[0]
+	if query.ResourceID != "res-order-prod" || !query.StartTime.Equal(start.Add(-30*time.Minute)) || !query.EndTime.Equal(end) || query.Limit != domain.MaxOperationalSignals {
+		t.Fatalf("operational query was not derived from evidence: %#v", query)
+	}
+	timeline := report.IncidentTimeline
+	if timeline == nil || timeline.Status != domain.TimelineComplete || len(timeline.Signals) != 2 || len(timeline.Items) != 3 {
+		t.Fatalf("unexpected incident timeline: %#v", timeline)
+	}
+	if !timeline.Signals[0].Anomalous || !timeline.Signals[1].Anomalous {
+		t.Fatalf("local anomaly rules were not applied: %#v", timeline.Signals)
+	}
+	for _, item := range timeline.Items {
+		if !sameStringSet(item.EvidenceIDs, []string{report.Evidence[0].ID, report.Evidence[1].ID}) {
+			t.Fatalf("timeline item is not grounded in both observations: %#v", item)
+		}
+	}
+}
+
+func TestEngineSkipsOperationalSignalsWithoutConclusiveSpike(t *testing.T) {
+	start := time.Date(2026, 8, 18, 10, 0, 0, 0, time.UTC)
+	current := analysisResult("current", 30,
+		[]domain.CountBucket{{Label: "timeout", Count: 30}},
+		[]domain.CountBucket{{Label: "pod-a", Count: 30}},
+	)
+	baseline := analysisResult("baseline", 20,
+		[]domain.CountBucket{{Label: "timeout", Count: 20}},
+		[]domain.CountBucket{{Label: "pod-a", Count: 20}},
+	)
+	current.ResourceID, baseline.ResourceID = "res-order-prod", "res-order-prod"
+	source := &fakeOperationalSignalSource{err: errors.New("must not be called")}
+	engine, err := New(
+		context.Background(),
+		&fakeExecutor{results: map[string]domain.QueryResult{"current": current, "baseline": baseline}},
+		time.Now,
+		WithOperationalSignalSource(source),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, report, err := engine.Run(context.Background(), "inv_no_signal_spike", domain.InvestigationRequest{
+		Service: "order-service", Environment: "prod", StartTime: start, EndTime: start.Add(30 * time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(source.got) != 0 || report.IncidentTimeline == nil || report.IncidentTimeline.Status != domain.TimelineSkippedNoSpike {
+		t.Fatalf("operational source was not safely skipped: calls=%d timeline=%#v", len(source.got), report.IncidentTimeline)
+	}
+}
+
+func TestEngineSkipsOperationalSignalsWhenEvidenceIsInsufficient(t *testing.T) {
+	start := time.Date(2026, 8, 18, 10, 0, 0, 0, time.UTC)
+	source := &fakeOperationalSignalSource{err: errors.New("must not be called")}
+	engine, err := New(
+		context.Background(),
+		&fakeExecutor{incomplete: true},
+		time.Now,
+		WithOperationalSignalSource(source),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, report, err := engine.Run(context.Background(), "inv_insufficient_signal", domain.InvestigationRequest{
+		Service: "order-service", Environment: "prod", StartTime: start, EndTime: start.Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Outcome != "data_insufficient" || len(source.got) != 0 || report.IncidentTimeline == nil || report.IncidentTimeline.Status != domain.TimelineInconclusive {
+		t.Fatalf("operational source was not skipped for insufficient evidence: calls=%d report=%#v", len(source.got), report)
+	}
+}
+
+func TestEngineDowngradesInvalidOrFailedOperationalSignalSource(t *testing.T) {
+	start := time.Date(2026, 8, 18, 10, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name   string
+		source *fakeOperationalSignalSource
+	}{
+		{name: "provider failure", source: &fakeOperationalSignalSource{err: errors.New("provider details must not escape")}},
+		{name: "invalid identity", source: &fakeOperationalSignalSource{set: domain.OperationalSignalSet{
+			SourceVersion: "signals-v1", Complete: true,
+			Observations: []domain.OperationalSignalObservation{{
+				ID: "metric-errors", ResourceID: "wrong-resource", Kind: domain.OperationalSignalMetric,
+				Code: domain.OperationalSignalErrorRate, StartedAt: start, CompletedAt: start.Add(30 * time.Minute),
+				BaselineValue: 0.01, CurrentValue: 0.2, Unit: domain.OperationalSignalRatio,
+			}},
+		}}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			engine, err := New(
+				context.Background(), &fakeExecutor{results: causeAnalysisResults()}, time.Now,
+				WithOperationalSignalSource(test.source),
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, report, err := engine.Run(context.Background(), "inv_signal_downgrade", domain.InvestigationRequest{
+				Service: "order-service", Environment: "prod", StartTime: start, EndTime: start.Add(30 * time.Minute),
+			})
+			if err != nil {
+				t.Fatalf("optional operational source failed M2/M3 report: %v", err)
+			}
+			if report.Outcome != "spike_detected" || report.IncidentTimeline == nil || report.IncidentTimeline.Status != domain.TimelineUnavailable {
+				t.Fatalf("operational source did not downgrade safely: %#v", report)
+			}
+		})
+	}
+}
+
+func TestEngineKeepsIncompleteOperationalCoverageNonCausal(t *testing.T) {
+	start := time.Date(2026, 8, 18, 10, 0, 0, 0, time.UTC)
+	source := &fakeOperationalSignalSource{set: domain.OperationalSignalSet{
+		SourceVersion: "signals-v1", Complete: false, ReasonCode: domain.OperationalSignalReasonIncomplete,
+		Observations: []domain.OperationalSignalObservation{{
+			ID: "metric-errors", ResourceID: "res-order-prod", Kind: domain.OperationalSignalMetric,
+			Code: domain.OperationalSignalErrorRate, StartedAt: start, CompletedAt: start.Add(30 * time.Minute),
+			BaselineValue: .02, CurrentValue: .12, Unit: domain.OperationalSignalRatio,
+		}},
+	}}
+	engine, err := New(
+		context.Background(), &fakeExecutor{results: causeAnalysisResults()}, time.Now,
+		WithOperationalSignalSource(source),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, report, err := engine.Run(context.Background(), "inv_signal_incomplete", domain.InvestigationRequest{
+		Service: "order-service", Environment: "prod", StartTime: start, EndTime: start.Add(30 * time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Outcome != "spike_detected" || report.IncidentTimeline == nil || report.IncidentTimeline.Status != domain.TimelineInconclusive {
+		t.Fatalf("incomplete optional coverage changed the investigation: %#v", report)
+	}
+	if !sameStringSet(report.IncidentTimeline.MissingInputs, []string{"complete_operational_signal_set", "trace_signal_coverage"}) {
+		t.Fatalf("incomplete coverage was not explicit: %#v", report.IncidentTimeline)
+	}
+}
+
+func TestEnginePropagatesInvestigationCancellationFromOperationalSignalSource(t *testing.T) {
+	start := time.Date(2026, 8, 18, 10, 0, 0, 0, time.UTC)
+	ctx, cancel := context.WithCancel(context.Background())
+	engine, err := New(
+		context.Background(), &fakeExecutor{results: causeAnalysisResults()}, time.Now,
+		WithOperationalSignalSource(cancellingOperationalSignalSource{cancel: cancel}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = engine.Run(ctx, "inv_signal_cancelled", domain.InvestigationRequest{
+		Service: "order-service", Environment: "prod", StartTime: start, EndTime: start.Add(30 * time.Minute),
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run() error=%v, want context.Canceled", err)
+	}
+}
+
+func sameStringSet(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	set := make(map[string]struct{}, len(left))
+	for _, value := range left {
+		set[value] = struct{}{}
+	}
+	for _, value := range right {
+		if _, exists := set[value]; !exists {
+			return false
+		}
+	}
+	return true
 }
 
 func fakeAnalysisResult(name string) domain.QueryResult {

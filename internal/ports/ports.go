@@ -102,6 +102,13 @@ type ChangeSource interface {
 	List(ctx context.Context, query domain.ChangeQuery) (domain.ChangeSet, error)
 }
 
+// OperationalSignalSource provides a bounded, read-only aggregate projection
+// from a metrics or Trace backend after governed SLS Evidence has established
+// the resource and time range. It must never return raw spans or labels.
+type OperationalSignalSource interface {
+	List(ctx context.Context, query domain.OperationalSignalQuery) (domain.OperationalSignalSet, error)
+}
+
 // ResourceCatalog resolves logical scope and owns default-deny ACL bindings.
 type ResourceCatalog interface {
 	Resolve(ctx context.Context, service, environment string) (domain.LogResource, error)

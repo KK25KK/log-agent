@@ -14,13 +14,14 @@ Mock 飞书消息
 -> SQLite current / baseline Query Checkpoint
 -> SQLite tenant quota reserve / settle
   -> Evidence + Report + Mock 变更关联
+  -> Mock 指标/Trace 聚合 + IncidentTimeline
   -> SQLite LLM request / Token reserve / settle
   -> Mock 证据摘要（严格引用 / 0 网络）
   -> Delivery Worker
   -> Mock 飞书 Reply/Patch 记录
 ```
 
-这个入口使用真实的应用层、状态机、Eino Graph、查询策略网关、持久化和结果校验，只替换外部 I/O：飞书收发、SLS Provider 以及管理员资源文件使用固定的内存 Mock。
+这个入口使用真实的应用层、状态机、Eino Graph、查询策略网关、持久化和结果校验，只替换外部 I/O：飞书收发、SLS Provider、指标/Trace 聚合以及管理员资源文件使用固定的内存 Mock。
 
 ## 运行
 
@@ -39,7 +40,7 @@ go run ./cmd/logagent mock-e2e
 
 | 字段 | 预期 | 含义 |
 | --- | --- | --- |
-| `safety.external_network_calls` | `0` | 双 Mock 路径不访问外部网络 |
+| `safety.external_network_calls` | `0` | 整条 Mock 路径不访问外部网络 |
 | `safety.credentials_required` | `false` | 不读取飞书或阿里云凭据 |
 | `feishu.duplicate_replay_deduplicated` | `true` | 同一飞书 Message ID 只创建一个调查 |
 | `feishu.deliveries` | `REPLY/QUEUED`、`PATCH/RUNNING`、`PATCH/SUCCEEDED` | 同一 Mock 卡片完成接单、进度和结果更新 |
@@ -58,8 +59,11 @@ go run ./cmd/logagent mock-e2e
 | `investigation.report.outcome` | `spike_detected` | 固定测试数据形成错误突增结论 |
 | `llm_summary.mode/status` | `MOCK / GENERATED` | 默认摘要器经过 Worker 主链 |
 | `llm_summary.external_api_calls` | `0` | 没有调用火山或其他模型服务 |
+| `operational_signals.source_calls` | `1` | 只调用一次确定性指标/Trace Mock |
+| `operational_signals.timeline_status` | `COMPLETE` | Mock 指标和 Trace 覆盖完整；不代表因果确认 |
+| `operational_signals.signals/timeline_items` | `2 / 3` | 两个聚合观察，加上已有发布事件形成三条时间线 |
 
-当前 Mock 数据固定为当前窗口 120 条错误、基线 20 条错误，并包含一个影响 `order-pod-a` 的 Mock 发布事件。随机生成的调查、Evidence 和 Ledger ID 每次可能不同。
+当前 Mock 数据固定为当前窗口 120 条错误、基线 20 条错误，并包含一个影响 `order-pod-a` 的 Mock 发布事件、一个指标错误率异常和一个 Trace P95 延迟异常。随机生成的调查、Evidence 和 Ledger ID 每次可能不同。
 
 ## Mock 到什么层
 
@@ -81,6 +85,15 @@ go run ./cmd/logagent mock-e2e
 
 它不调用 GetIndex/GetLogsV2，也不读取真实 JSON 资源目录，因此不能验证真实 LogStore Schema、目录配置、RAM 权限、扫描成本和索引延迟。只有显式使用 `sls-check`、`sls-smoke` 或 `LOG_AGENT_SLS_MODE=aliyun` 才会触达真实 SLS。
 
+### 指标与 Trace Mock
+
+- `internal/adapters/signalmock` 只返回两个关闭类型的聚合观察，不返回原始 Span、TraceID、指标标签或 Provider 文案；
+- 查询 ResourceID 与时间范围由 current/baseline Evidence 派生，Mock 会拒绝任何不一致请求；
+- Engine 本地计算异常标记并生成稳定时间线，Worker 在成功落库前复算阈值和引用；
+- 飞书报告和证据页只展示有界聚合，并明确“时间相关不等于因果证明”。
+
+它不调用 ARMS、CMS、Prometheus、OpenTelemetry 或其他可观测平台，不能验证真实指标口径、Trace 覆盖、时钟对齐、费用、限流和超时。
+
 ## 自动验收
 
 ```powershell
@@ -89,13 +102,14 @@ go test -count=1 ./...
 go vet ./...
 ```
 
-测试会检查重复入站幂等、可信身份映射、严格命令、Reply/Patch 同卡顺序、ACL/Schema/预算/审计网关、两个 Query Checkpoint、SLS 租户额度结算、LLM 请求/Token 额度结算、两份 Evidence、两次 Backend/八次模拟 Provider 调用、Mock 证据摘要、无原始日志以及最终成功报告。Checkpoint 的崩溃恢复语义另见 [`m4-recoverable-query-steps.md`](m4-recoverable-query-steps.md)，可靠性治理见 [`m4b-reliability-governance.md`](m4b-reliability-governance.md)。另有架构测试禁止双 Mock 源码直接导入真实飞书/SLS 适配器、配置加载器或网络包。
+测试会检查重复入站幂等、可信身份映射、严格命令、Reply/Patch 同卡顺序、ACL/Schema/预算/审计网关、两个 Query Checkpoint、SLS 租户额度结算、LLM 请求/Token 额度结算、两份 Evidence、两次 Backend/八次模拟 Provider 调用、一次指标/Trace Mock 调用、三条受控时间线、Mock 证据摘要、无原始日志以及最终成功报告。Checkpoint 的崩溃恢复语义另见 [`m4-recoverable-query-steps.md`](m4-recoverable-query-steps.md)，可靠性治理见 [`m4b-reliability-governance.md`](m4b-reliability-governance.md)。另有架构测试禁止飞书、SLS、指标/Trace 与摘要 Mock 源码直接导入对应真实适配器、配置加载器或网络包。
 
 ## 后续替换顺序
 
 1. 保持 SLS 为 Mock，先把 `feishumock` 替换为真实飞书企业自建应用，验证收消息和卡片；
 2. 保持飞书只读调查不变，再配置一个资源级只读的 SLS 试点；
 3. 运行 `sls-check`，通过后再运行 `sls-smoke`；
-4. 两边分别通过后，才做真实飞书到真实 SLS 的小范围联调。
+4. 两边分别通过后，才做真实飞书到真实 SLS 的小范围联调；此时仍保持指标/Trace Source 禁用。
+5. 最后单独替换 `signalmock`，补齐该外部调用的目录、额度、审计、超时和结果未知语义后，再让真实指标/Trace 时间线进入试点卡片。
 
-双 Mock 通过只表示应用离线闭环成立，不代表真实飞书、SLS 或生产可靠性已经验收。
+Mock 主链通过只表示应用离线闭环成立，不代表真实飞书、SLS、指标/Trace 平台或生产可靠性已经验收。

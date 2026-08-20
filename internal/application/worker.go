@@ -237,6 +237,9 @@ func ValidateEngineOutput(investigationID string, evidence []domain.Evidence, re
 	if err := validateCauseAnalysis(report.CauseAnalysis, knownEvidence); err != nil {
 		return fmt.Errorf("engine returned invalid cause analysis: %w", err)
 	}
+	if err := validateIncidentTimeline(report.IncidentTimeline, knownEvidence, report.CauseAnalysis); err != nil {
+		return fmt.Errorf("engine returned invalid incident timeline: %w", err)
+	}
 	if report.Summary != nil {
 		if err := ValidateReportSummary(report, *report.Summary); err != nil {
 			return fmt.Errorf("engine returned invalid report summary: %w", err)

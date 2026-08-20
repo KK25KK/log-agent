@@ -65,15 +65,25 @@
 
 主体代码、全仓离线测试、静态检查、Mock Demo 和独立复核已经完成，`spec.md` 的 M3 离线验收项已收口；真实 SLS、飞书客户端和发布/配置平台仍未联调。实现与限制见 [`m3-change-correlation-evidence.md`](m3-change-correlation-evidence.md)。
 
-### M3 增强项（未实现）
+### M3-B：跨信号故障时间线首个切片（Mock-first，代码与离线验收完成）
+
+- 复用 M2 current/baseline Evidence 与 M3 Change Event，不增加 SLS 查询。
+- 通过可替换 `OperationalSignalSource` 获取有界的指标/Trace 聚合，资源和时间只能由 Evidence 派生。
+- 应用本地计算异常标记，生成只表达时间相关的稳定时间线；不生成因果 verdict。
+- 信号源错误或数据不足只降级时间线，不破坏 M2/M3 报告。
+- 首期仅接确定性 Mock；真实 ARMS/CMS/OTel 连接器、费用和超时合同继续延期。
+
+设计与验收见 [`m3b-cross-signal-incident-timeline.md`](m3b-cross-signal-incident-timeline.md)。
+
+### M3 后续增强项（未实现）
 
 - SLS `version_field`、版本分布、首次出现时间和版本前后固定查询模板。
 - 真实发布平台、配置中心和 CMDB 连接器。
-- 通过 `trace_id` 关联日志、Trace 和指标。
-- 更完整的故障时间线、Pod/主机元数据与服务拓扑。
+- 通过受控 TraceID 映射下钻到真实 Trace；首个 Mock 时间线不保存或展示 TraceID。
+- Pod/主机元数据与服务拓扑。
 - 企业错误码、SOP 和知识检索。
 
-这些能力需要真实数据源、字段契约、权限和成本预算，不能用 Mock 或静态配置冒充已接通。
+这些能力需要真实数据源、字段契约、权限和成本预算；首个 Mock 时间线只能证明端口、验证、报告与展示合同，不能冒充已接通真实可观测平台。
 
 ### 必需能力：LLM 证据摘要（Mock 与适配器代码完成，真实方舟待联调）
 

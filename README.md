@@ -1,6 +1,6 @@
 # Log Agent
 
-这是一个用 Go 开发的“证据驱动”日志调查 Agent。M0～M3、M4-A/M4-B、M5-A、M5-B/B1～B3、M5-C 的 Mock Reviewer/离线灰度演练，以及证据约束的 LLM 摘要、摘要安全评测和租户请求/Token 额度治理已经完成主体代码与离线测试；M4-C、真实火山方舟联调和 M5-C 真实灰度仍未完成。由于仓库没有真实飞书/SLS/发布平台/模型凭据、生产数据库、历史故障标注集与试点资源，当前只能称为“具备试点条件”，不能称为日常可用或生产可用。
+这是一个用 Go 开发的“证据驱动”日志调查 Agent。M0～M3、M3-B 跨信号时间线 Mock、M4-A/M4-B、M5-A、M5-B/B1～B3、M5-C 的 Mock Reviewer/离线灰度演练，以及证据约束的 LLM 摘要、摘要安全评测和租户请求/Token 额度治理已经完成主体代码与离线测试；M4-C、真实可观测平台、真实火山方舟联调和 M5-C 真实灰度仍未完成。由于仓库没有真实飞书/SLS/发布平台/指标与 Trace 平台/模型凭据、生产数据库、历史故障标注集与试点资源，当前只能称为“具备试点条件”，不能称为日常可用或生产可用。
 
 ```text
 飞书消息
@@ -15,6 +15,7 @@
   -> Evidence + M2 Report
   -> 可选的受控 Change Catalog
   -> 支持/反证 Ledger + CauseAnalysis
+  -> 可选的受控指标/Trace 聚合 + IncidentTimeline
   -> LLM 请求/Token 租户额度预留
   -> 证据约束摘要（默认 Mock / 可切火山方舟 / 失败回退）
   -> 实际 Token 结算或未知成本保留
@@ -83,6 +84,16 @@ Eino 只负责流程编排，不负责业务状态、权限、幂等、审计和
 - Worker 在成功落库前再次校验固定测试、有限数值、Evidence/Change 引用、支持条件和硬反证质量，防止不可信 Engine 输出伪造结论。
 - SQLite 在调查成功事务中同时保存 Evidence、Report 和独立 `evidence_ledger`；飞书报告与证据页做有界展示。
 
+### M3-B 跨信号故障时间线（Mock-first）
+
+- 新增可替换 `OperationalSignalSource`，资源和 `[baseline.start,current.end)` 只能从完整 Evidence 派生。
+- 首个关闭合同只接受错误率与 P95 延迟两种聚合、`METRIC/TRACE` 两类来源；不接受原始 Span、TraceID、标签、任意属性或 Provider 文案。
+- 一次调查最多调用信号源一次、返回八个观察；应用本地计算异常阈值，Worker 在落库前复算并校验所有 Evidence/Change/Signal 引用。
+- 已有 Change Event 与指标/Trace 观察按时间稳定排序，飞书有界展示并明确“时间相关不等于因果证明”。
+- `mock-e2e` 固定返回一个发布、一个指标异常和一个 Trace 异常，共三条时间线；SLS 仍只有两个逻辑观察和八次 Provider 调用。
+- 信号源未配置时旧报告保持兼容；可选源失败、非法、不完整或截断只降级时间线，不改变 M2/M3 事实。
+- 当前只有确定性 `signalmock`，没有真实 ARMS/CMS/Prometheus/OTel 连接器。设计与接入前置条件见 [`docs/m3b-cross-signal-incident-timeline.md`](docs/m3b-cross-signal-incident-timeline.md)。
+
 ### 证据约束的 LLM 摘要
 
 - `ports.ReportSummarizer` 只接收通过 Worker 校验的有界投影；不发送飞书身份、物理资源、Query ID/Hash、SQL、原始日志、凭据或 Provider 错误。
@@ -149,8 +160,9 @@ go run ./cmd/logagent mock-e2e
 4. 通过真实 Worker + Eino 固定 Graph、资源 ACL、Schema/预算网关和查询审计调用 Mock SLS Backend；
 5. 将 current、baseline 两个规范化聚合结果写入真实 SQLite Checkpoint；
 6. 生成 Evidence、M2 报告和 Mock 变更关联账本；
-7. 使用确定性 Mock 摘要器生成有引用约束的报告摘要；
-8. 通过真实 Delivery Worker 模拟飞书卡片 `REPLY(QUEUED) -> PATCH(RUNNING) -> PATCH(SUCCEEDED)`。
+7. 用一次 Mock Operational Signal Source 调用生成三条跨信号时间线；
+8. 使用确定性 Mock 摘要器生成有引用约束的报告摘要；
+9. 通过真实 Delivery Worker 模拟飞书卡片 `REPLY(QUEUED) -> PATCH(RUNNING) -> PATCH(SUCCEEDED)`。
 
 输出中的 `safety.external_network_calls=0`、`credentials_required=false` 表示当前运行完全离线；`schema_calls=1`、`backend_execute_calls=2`、`provider_api_calls=8`、`query_audit_events=4` 和 `query_step_checkpoints=2` 分别证明固定 Schema、当前/基线观察、四聚合调用元数据、开始/终态审计和两个持久化步骤已经经过真实应用链路。固定的 120/20 条错误、发布事件和飞书标识全部是测试数据，不代表真实阿里云或飞书结果。完整 Mock 边界见 [`docs/local-mock-e2e.md`](docs/local-mock-e2e.md)，恢复合同见 [`docs/m4-recoverable-query-steps.md`](docs/m4-recoverable-query-steps.md)。
 
@@ -159,6 +171,8 @@ go run ./cmd/logagent mock-e2e
 `llm_quota.requests=1`、`tokens=0` 证明摘要调用也经过独立的 SQLite 请求/Token 预留与结算；零 Token 来自确定性 Mock，不代表火山方舟实际消耗或账单。
 
 `llm_summary.mode=MOCK`、`status=GENERATED`、`external_api_calls=0` 证明摘要合同经过主链，但没有调用真实模型。`evaluate` 仍是 Engine 级确定性评测，不经过 Worker 摘要，因此其版本清单继续如实记录 `prompt_used=false`。
+
+`operational_signals.source_calls=1`、`timeline_status=COMPLETE`、`signals=2` 和 `timeline_items=3` 证明指标/Trace Mock 已经过真实 Engine、Worker 校验、SQLite Report 持久化和飞书展示合同；它们不是生产监控结果，也没有增加 SLS 调用。
 
 ## 运行第六至八期离线评测与 Trace 门禁
 
@@ -451,6 +465,8 @@ go run ./cmd/logagent demo
 
 本次 LLM 额度治理还单独通过了 `SummaryQuota|LLMQuota|MockE2E|BuildSummaryService` 定向 50 轮；Mock 主链为 1 次摘要请求、0 Token、0 凭据和 0 网络调用。
 
+M3-B 跨信号切片另通过全仓测试、静态检查和重点包 30 轮验证；`demo` 与 `mock-e2e` 都生成 `COMPLETE` 时间线。`mock-e2e` 只调用 1 次 Operational Signal Mock，形成 2 个聚合信号和 3 个时间线条目，同时保持 8 次 SLS Provider 调用代理、0 外部网络调用。既有 Engine/摘要评测仍为 `PASSED`，数据集指纹保持不变。
+
 ## 代码边界
 
 ```text
@@ -465,6 +481,7 @@ internal/adapters/feishumock         离线飞书收件与卡片投递模拟，�
 internal/adapters/aliyunsls           唯一允许导入阿里云 SLS SDK 的包
 internal/adapters/resourcecatalog     JSON 资源目录与静态 ACL
 internal/adapters/changecatalog       M3 版本化发布/配置变更目录
+internal/adapters/signalmock          M3-B 指标/Trace 聚合离线 Mock
 internal/adapters/sqlite              本地持久化、查询审计/Checkpoint、卡片死信、租户额度与审批合同
 internal/adapters/slsmock             离线确定性数据
 internal/adapters/evalmock            M5-A 逐 Case 的 SLS 与 Change Source Fixture Mock
@@ -497,7 +514,7 @@ internal/application/summary.go       摘要输入投影、引用校验和确定
 - SQLite 继续用于本地技术验证；卡片发送只有分类后的有限本地重试，不承诺 exactly-once。M4-B 已提供安全死信重放、本地租户额度/成本代理熔断和审批状态合同；多实例卡片全局顺序、生产数据库、组织级全局配额、真实 DLQ RBAC 与审批执行仍在 M4-C。
 - SQLite 技术预览当前没有 schema version、正式迁移和回滚工具；升级已有数据库前必须备份，本地试验环境可按阶段说明重建。
 - M3 Change Catalog 是启动时加载的静态文件，不是已接通的发布平台、配置中心或 CMDB；关联候选、权重和阈值尚未经过企业历史故障集校准。
-- M3 不增加 SLS 查询，也没有版本分布、首次出现时间、Trace、指标、拓扑或知识库证据；相关性不会被表述成已确认根因。
+- M3-B 已用 Mock 聚合跑通指标/Trace 时间线，但没有真实 ARMS/CMS/Prometheus/OTel 连接器、原始 Trace 下钻、拓扑或知识库证据；相关性不会被表述成已确认根因。
 - M5-A 数据集没有真实故障和专家标注，只能发现已编码合成场景上的回归；它不测量生产泛化能力，也不能批准灰度。M5-B/B3 已补齐合成 Engine 执行的有界 Trace、版本合同、append-only 历史与兼容运行比较，但真实反馈、真实数据集、团队阈值、试点群和回滚验收仍属于 M5-C。
 - M5-B/B3 不是飞书接单、SQLite Worker、SLS 网络请求到卡片投递的跨进程分布式 Trace，也没有生产 Trace 后端、采样/保留策略或延迟 SLO。内容哈希用于完整性检测，不是加密、签名或身份认证。
 - Eino Graph 和 `evaluate` 仍是确定性、无 LLM 的，因此评测版本清单明确为 `prompt_used=false`。Worker 后处理已经实现证据约束摘要和 SQLite 请求/Token 额度治理，默认走 Mock；火山方舟协议适配器已具备但尚未用真实凭据联调。真实 Prompt/模型质量、Token 价格校准、生产全局额度和留存门禁仍需真实试点验收。

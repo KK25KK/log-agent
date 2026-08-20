@@ -47,8 +47,9 @@ type graphOutput struct {
 }
 
 type engineConfig struct {
-	changeSource ports.ChangeSource
-	observer     ports.AgentObserver
+	changeSource            ports.ChangeSource
+	operationalSignalSource ports.OperationalSignalSource
+	observer                ports.AgentObserver
 }
 
 // Option configures optional enrichment without changing the M2 constructor
@@ -62,6 +63,16 @@ func WithChangeSource(source ports.ChangeSource) Option {
 	return func(config *engineConfig) {
 		if source != nil {
 			config.changeSource = source
+		}
+	}
+}
+
+// WithOperationalSignalSource enables an optional, bounded metric/Trace
+// timeline. A nil source leaves existing reports unchanged.
+func WithOperationalSignalSource(source ports.OperationalSignalSource) Option {
+	return func(config *engineConfig) {
+		if source != nil {
+			config.operationalSignalSource = source
 		}
 	}
 }
@@ -119,7 +130,11 @@ func New(ctx context.Context, executor ports.SLSExecutor, now func() time.Time, 
 		return nil, fmt.Errorf("add report node: %w", err)
 	}
 	if err := graph.AddLambdaNode("correlate_changes", compose.InvokableLambda(observeGraphNode(config.observer, domain.AgentSpanCorrelateChanges, func(ctx context.Context, output graphOutput) (graphOutput, error) {
-		return correlateChanges(ctx, output, config.changeSource)
+		correlated, err := correlateChanges(ctx, output, config.changeSource)
+		if err != nil {
+			return graphOutput{}, err
+		}
+		return enrichIncidentTimeline(ctx, correlated, config.operationalSignalSource)
 	}))); err != nil {
 		return nil, fmt.Errorf("add change-correlation node: %w", err)
 	}

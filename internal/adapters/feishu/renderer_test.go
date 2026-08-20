@@ -313,6 +313,55 @@ func TestRendererShowsBoundedCauseSupportAndCounterEvidence(t *testing.T) {
 	}
 }
 
+func TestRendererShowsBoundedCrossSignalTimelineAndCausalLimit(t *testing.T) {
+	item := cardInvestigation(domain.StatusSucceeded)
+	start := item.Report.Evidence[0].StartTime
+	end := item.Report.Evidence[0].EndTime
+	item.Report.IncidentTimeline = &domain.IncidentTimeline{
+		Status: domain.TimelineComplete, MethodVersion: domain.OperationalSignalTimelineVersion,
+		SourceVersion: "mock-operational-v1", SourceComplete: true,
+		Items: []domain.IncidentTimelineItem{
+			{
+				ID: "tl-change", Kind: domain.TimelineItemChange, Code: "RELEASE",
+				StartedAt: start.Add(-5 * time.Minute), CompletedAt: start.Add(-4 * time.Minute),
+				Statement: "RELEASE 变更 chg-safe 在观察窗口内完成。",
+			},
+			{
+				ID: "tl-metric", Kind: domain.TimelineItemMetric, Code: "ERROR_RATE",
+				StartedAt: start, CompletedAt: end, Anomalous: true,
+				Statement: "指标错误率从 2.0% 变化到 12.0%，达到异常阈值。",
+			},
+			{
+				ID: "tl-trace", Kind: domain.TimelineItemTrace, Code: "LATENCY_P95",
+				StartedAt: start, CompletedAt: end, Anomalous: true,
+				Statement: "Trace P95 延迟从 120ms 变化到 420ms，达到异常阈值。",
+			},
+		},
+	}
+	reportPayload, err := marshalCard(renderReportCard(item))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"跨信号时间线", "指标错误率", "Trace P95", "时间相关不等于因果证明"} {
+		if !strings.Contains(reportPayload, expected) {
+			t.Fatalf("report card lacks %q: %s", expected, reportPayload)
+		}
+	}
+	evidenceCard, err := renderActionCard(domain.ActionResult{View: domain.ActionViewEvidenceCard, Investigation: item})
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidencePayload, err := marshalCard(evidenceCard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"跨信号证据时间线", "达到异常阈值", "不包含原始 Span、TraceID 或指标标签"} {
+		if !strings.Contains(evidencePayload, expected) {
+			t.Fatalf("evidence card lacks %q: %s", expected, evidencePayload)
+		}
+	}
+}
+
 func collectButtonActions(t *testing.T, value interface{}) []string {
 	t.Helper()
 	actions := make([]string, 0)

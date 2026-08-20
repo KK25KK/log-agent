@@ -2,8 +2,8 @@
 
 | Metadata | Value |
 | --- | --- |
-| Version | 1.5 |
-| Status | LLM summary tenant quota and cost circuit implemented and verified offline; real Ark smoke, M4-C production infrastructure, and real gray rollout remain pending |
+| Version | 1.6 |
+| Status | Mock-first cross-signal incident timeline implemented and verified offline; real metric/Trace connectors, Ark smoke, M4-C infrastructure, and real gray rollout remain pending |
 | Date | 2026-08-20 |
 
 ## 1. Overview
@@ -34,6 +34,7 @@ Users can ask the bot to investigate an error spike for a known service, environ
 - Current-versus-baseline error-pattern share, candidate-new-pattern, and instance-concentration analysis.
 - A versioned, administrator-managed change catalog for bounded release/configuration context.
 - A deterministic cause-analysis projection with explicit support tests, counter-tests, confidence factors, and limitations.
+- An optional Mock-first incident timeline that combines governed change references with bounded metric and Trace aggregate observations derived from the same Evidence resource and time range.
 - Feishu acknowledgement, progress, terminal-report cards, and requester-authorized card actions.
 - A minimal durable delivery queue so the Feishu and worker processes can exchange card updates without sharing memory.
 - Append-only query audit events for denied, started, succeeded, incomplete, and failed attempts.
@@ -75,6 +76,7 @@ Users can ask the bot to investigate an error spike for a known service, environ
 - Treating a correlated release, configuration change, error pattern, or instance as a confirmed root cause.
 - SLS version-distribution or first-seen-time queries in the first M3 slice; M3 reuses the existing M2 query budget.
 - Live release-platform, configuration-center, CMDB, Trace, metric, error-code, SOP, or service-topology connectors.
+- Raw spans, Trace IDs, span names, metric labels, arbitrary attributes, or model-generated causal statements in the Mock-first cross-signal timeline.
 - Claiming that synthetic fixtures are historical incidents, expert labels, production accuracy, or permission to start a real gray rollout.
 - Real Feishu/SLS/change-platform traffic, credentials, model calls, Prompt quality, Token accounting, or production SLO validation in M5-A.
 - Claiming that the first Agent Trace is a distributed Feishu-to-delivery production Trace; it covers only the synthetic evaluation and Engine boundary.
@@ -105,6 +107,7 @@ Feishu Receiver
     -> Evidence-backed report
          -> optional governed Change Catalog enrichment
          -> support/counter-evidence ledger
+         -> optional governed metric/Trace aggregate timeline
     -> Durable notification queue
     -> Feishu delivery worker -> acknowledgement/progress/result card
 
@@ -149,7 +152,7 @@ Required evidence-bound LLM summary
     -> AI-labelled Feishu summary or deterministic fallback
 ```
 
-The M3 Change Source is enrichment-only. It is called only after governed SLS evidence has established the resource identity and a conclusive spike. Change-source absence or failure cannot erase an M2 fact or fail the investigation; it produces an explicit unavailable or inconclusive cause-analysis status.
+The M3 Change Source and the Mock-first Operational Signal Source are enrichment-only. They are called only after governed SLS evidence has established the resource identity and a conclusive spike. Source absence, failure, or invalid output cannot erase an M2 fact or fail the investigation; it produces an explicit unavailable or inconclusive enrichment status.
 
 ### Framework boundary
 
@@ -267,6 +270,17 @@ An explicit diagnostic command loads the same catalog and credentials as a real 
 6. The report stores the selected change metadata, hypotheses, test results, Evidence references, confidence method, and limitations.
 7. Feishu presents the result as a correlation candidate and explicitly states that correlation is not causal proof.
 
+### Build a governed cross-signal incident timeline
+
+1. Timeline enrichment runs only when a conclusive `spike_detected` report and complete current/baseline Evidence already exist.
+2. The application derives `resource_id` and `[baseline.start, current.end)` from that Evidence; the user, card, model, and source cannot select a physical resource or time range.
+3. One optional `OperationalSignalSource` call returns at most eight normalized metric/Trace aggregate observations. It cannot return raw spans, Trace IDs, labels, query text, credentials, or arbitrary attributes.
+4. The application validates source version, identity, bounds, time containment, finite values, closed signal kind/code/unit combinations, completeness, and duplicate IDs before constructing timeline items.
+5. Error-rate and P95-latency anomaly flags are deterministic local calculations. A source cannot declare its own anomaly or causal verdict.
+6. Timeline change items reference the existing CauseAnalysis Change IDs; signal items reference their normalized signal IDs and both SLS Evidence IDs. Items are sorted deterministically.
+7. `COMPLETE` means the bounded source returned complete metric and Trace coverage for the requested interval. It does not mean a root cause was confirmed. Missing, truncated, unavailable, or invalid source data becomes `INCONCLUSIVE` or `UNAVAILABLE` without changing M2/M3 findings.
+8. Feishu renders a bounded timeline and the explicit limitation “时间相关不等于因果证明”. The LLM summary input remains unchanged in this slice.
+
 ### Run the synthetic offline evaluation gate
 
 1. The evaluator loads a repository-owned dataset using strict JSON decoding and rejects unknown fields, duplicate case IDs, invalid time ranges, unsafe labels, or impossible aggregate fixtures.
@@ -345,6 +359,10 @@ Every hypothesis has at least one support test and one counter-test. Each test r
 Cause confidence uses the versioned deterministic method `change-correlation-v1`, is not a probability, and is capped at `0.85`. A supported candidate requires a conclusive M2 spike, temporal precedence, affected-instance concentration of at least 50%, an increase of at least 20 percentage points from baseline, a complete change set, and no passing counter-test. A complete affected-instance set with complete comparable current distribution and zero overlap is a hard refutation. Multiple overlapping changes are confounding evidence and force `INCONCLUSIVE`.
 
 Change Source errors, disabled configuration, or incomplete source coverage never turn an otherwise valid M2 report into a failed investigation.
+
+`Report.IncidentTimeline` is optional for backward compatibility. When present it uses `operational-signal-timeline-v1` and has one of `COMPLETE`, `INCONCLUSIVE`, `UNAVAILABLE`, or `SKIPPED_NO_SPIKE`. `COMPLETE` requires a complete, untruncated source set with at least one metric observation and one Trace observation; it is a data-coverage status, not a causal verdict.
+
+Operational-signal observations use a closed schema and finite non-negative values. Error-rate values are ratios in `[0,1]`; latency values are milliseconds. The application derives anomaly flags from versioned local thresholds and the Worker recalculates them before persistence. Timeline references must resolve to the same report's Evidence, Change Events, and signals. Optional enrichment failures never fail an otherwise valid investigation.
 
 M5-A is a deterministic engineering regression gate, not a production-readiness decision. Outcome, Finding, Recommendation, and cause-verdict agreement are measured only against repository-owned synthetic labels. Recommendation matching is exact by code and Evidence name, so an omitted, injected, duplicated, or misgrounded next step fails closed. Evidence coverage verifies reference integrity, not factual completeness outside the fixture. Processed bytes and fixed Provider-call counts are cost proxies rather than an Alibaba Cloud bill. Local elapsed time is recorded for trend inspection but is not a production latency SLO. Prompt and Token metrics remain not applicable until the required LLM summary slice is enabled and evaluated.
 
@@ -432,6 +450,17 @@ M5-C feedback uses a store separate from both the production investigation Store
 - [x] Feishu report/evidence cards render bounded change, support, counter, unknown, confidence-source, and limitation content without exposing raw logs, raw queries, provider errors, or untrusted URLs.
 - [x] The offline demo deterministically emits one supported change-correlation candidate while retaining exactly two logical SLS observations and eight fixed provider calls in total.
 - [x] Live release/configuration systems, version-distribution queries, Trace/metric correlation, and enterprise knowledge retrieval remain explicitly unimplemented.
+
+### M3-B Mock-first cross-signal incident timeline
+
+- [x] The signal query resource and full baseline/current interval are derived only from complete governed Evidence.
+- [x] One optional source call returns at most eight closed-schema metric/Trace aggregates and never exposes raw spans, Trace IDs, labels, provider queries, credentials, or arbitrary attributes.
+- [x] Error-rate and P95-latency anomaly flags are calculated locally and recalculated by the Worker before persistence.
+- [x] Existing Change references and normalized signals form a bounded, deterministically ordered, reference-complete timeline.
+- [x] No-spike and insufficient-evidence reports do not call the source; unavailable, invalid, incomplete, or truncated source results preserve the existing M2/M3 report and downgrade only the timeline.
+- [x] The Feishu card renders a bounded timeline and states that temporal correlation is not causal proof.
+- [x] The normal demo, mock Worker assembly, and `mock-e2e` use only `signalmock`; real SLS mode does not silently inject a Mock signal source.
+- [x] The full offline suite and static checks pass without credentials or network access; real metric/Trace connectors, external-call governance, and production calibration remain explicitly pending.
 
 ### M4-A recoverable metered query steps
 

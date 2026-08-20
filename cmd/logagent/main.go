@@ -13,6 +13,7 @@ import (
 
 	"logagent/internal/adapters/eino"
 	"logagent/internal/adapters/feishu"
+	"logagent/internal/adapters/signalmock"
 	"logagent/internal/adapters/sqlite"
 	"logagent/internal/adapters/summarymock"
 	"logagent/internal/application"
@@ -126,6 +127,7 @@ func runDemo() error {
 			FromVersion: "v1", ToVersion: "v2", Owner: "order-team", Summary: "demo release v2",
 			AffectedInstances: []string{"order-pod-a"}, AffectedInstancesComplete: true,
 		}}),
+		eino.WithOperationalSignalSource(signalmock.New()),
 	)
 	if err != nil {
 		return err
@@ -201,7 +203,11 @@ func runWorker(config config.Config) error {
 	if err != nil {
 		return err
 	}
-	engine, err := eino.New(ctx, checkpointedExecutor, time.Now, eino.WithChangeSource(changeSource))
+	engineOptions := []eino.Option{eino.WithChangeSource(changeSource)}
+	if config.SLS.Mode == "mock" {
+		engineOptions = append(engineOptions, eino.WithOperationalSignalSource(signalmock.New()))
+	}
+	engine, err := eino.New(ctx, checkpointedExecutor, time.Now, engineOptions...)
 	if err != nil {
 		return err
 	}

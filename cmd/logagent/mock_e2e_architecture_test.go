@@ -15,6 +15,7 @@ func TestMockE2ESourceDoesNotImportRealProvidersOrNetwork(t *testing.T) {
 	files := []string{"mock_e2e.go"}
 	for _, root := range []string{
 		filepath.Join("..", "..", "internal", "adapters", "feishumock"),
+		filepath.Join("..", "..", "internal", "adapters", "signalmock"),
 		filepath.Join("..", "..", "internal", "adapters", "slsmock"),
 		filepath.Join("..", "..", "internal", "adapters", "summarymock"),
 	} {

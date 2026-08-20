@@ -268,3 +268,87 @@ func TestValidateEngineOutputRejectsBrokenCauseLedger(t *testing.T) {
 		t.Fatal("broken or over-cap cause ledger was accepted")
 	}
 }
+
+func TestValidateEngineOutputValidatesIncidentTimelineAsUntrustedOutput(t *testing.T) {
+	now := time.Date(2026, 8, 20, 11, 0, 0, 0, time.UTC)
+	current := domain.Evidence{
+		ID: "ev-current", QueryID: "query-current", QuerySpecHash: "hash-current", ResourceID: "resource", Name: "current",
+		StartTime: now.Add(-30 * time.Minute), EndTime: now, Complete: true,
+	}
+	baseline := domain.Evidence{
+		ID: "ev-baseline", QueryID: "query-baseline", QuerySpecHash: "hash-baseline", ResourceID: "resource", Name: "baseline",
+		StartTime: now.Add(-60 * time.Minute), EndTime: now.Add(-30 * time.Minute), Complete: true,
+	}
+	newReport := func() domain.Report {
+		signals := []domain.TimelineSignal{
+			{
+				OperationalSignalObservation: domain.OperationalSignalObservation{
+					ID: "metric-errors", ResourceID: "resource", Kind: domain.OperationalSignalMetric,
+					Code: domain.OperationalSignalErrorRate, StartedAt: current.StartTime, CompletedAt: current.EndTime,
+					BaselineValue: .02, CurrentValue: .12, Unit: domain.OperationalSignalRatio,
+				},
+				Anomalous: true,
+			},
+			{
+				OperationalSignalObservation: domain.OperationalSignalObservation{
+					ID: "trace-latency", ResourceID: "resource", Kind: domain.OperationalSignalTrace,
+					Code: domain.OperationalSignalLatencyP95, StartedAt: current.StartTime, CompletedAt: current.EndTime,
+					BaselineValue: 120, CurrentValue: 420, Unit: domain.OperationalSignalMillisecond,
+				},
+				Anomalous: true,
+			},
+		}
+		evidenceIDs := []string{current.ID, baseline.ID}
+		items := []domain.IncidentTimelineItem{
+			{
+				ID: "tl-metric", Kind: domain.TimelineItemMetric, Code: string(signals[0].Code),
+				StartedAt: signals[0].StartedAt, CompletedAt: signals[0].CompletedAt,
+				Statement: domain.OperationalSignalStatement(signals[0]), Anomalous: true,
+				EvidenceIDs: evidenceIDs, SignalIDs: []string{signals[0].ID},
+			},
+			{
+				ID: "tl-trace", Kind: domain.TimelineItemTrace, Code: string(signals[1].Code),
+				StartedAt: signals[1].StartedAt, CompletedAt: signals[1].CompletedAt,
+				Statement: domain.OperationalSignalStatement(signals[1]), Anomalous: true,
+				EvidenceIDs: evidenceIDs, SignalIDs: []string{signals[1].ID},
+			},
+		}
+		return domain.Report{
+			InvestigationID: "inv-timeline", Outcome: "spike_detected", GeneratedAt: now,
+			Findings: []domain.Finding{{Code: "spike", Statement: "spike", Confidence: .9, Conclusive: true, EvidenceIDs: evidenceIDs}},
+			IncidentTimeline: &domain.IncidentTimeline{
+				Status: domain.TimelineComplete, MethodVersion: domain.OperationalSignalTimelineVersion,
+				SourceVersion: "signals-v1", SourceComplete: true, Signals: signals, Items: items,
+			},
+		}
+	}
+	evidence := []domain.Evidence{current, baseline}
+	report := newReport()
+	if err := ValidateEngineOutput(report.InvestigationID, evidence, report); err != nil {
+		t.Fatalf("valid incident timeline rejected: %v", err)
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*domain.Report)
+	}{
+		{name: "fabricated anomaly", mutate: func(report *domain.Report) { report.IncidentTimeline.Signals[0].Anomalous = false }},
+		{name: "NaN value", mutate: func(report *domain.Report) { report.IncidentTimeline.Signals[0].CurrentValue = math.NaN() }},
+		{name: "broken evidence", mutate: func(report *domain.Report) { report.IncidentTimeline.Items[0].EvidenceIDs = []string{"unknown"} }},
+		{name: "missing timeline item", mutate: func(report *domain.Report) { report.IncidentTimeline.Items = report.IncidentTimeline.Items[:1] }},
+		{name: "complete without Trace", mutate: func(report *domain.Report) {
+			report.IncidentTimeline.Signals = report.IncidentTimeline.Signals[:1]
+			report.IncidentTimeline.Items = report.IncidentTimeline.Items[:1]
+		}},
+		{name: "provider-authored statement", mutate: func(report *domain.Report) { report.IncidentTimeline.Items[0].Statement = "root cause confirmed" }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			candidate := newReport()
+			test.mutate(&candidate)
+			if err := ValidateEngineOutput(candidate.InvestigationID, evidence, candidate); err == nil {
+				t.Fatalf("invalid incident timeline accepted: %#v", candidate.IncidentTimeline)
+			}
+		})
+	}
+}
