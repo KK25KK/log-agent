@@ -3,13 +3,13 @@
 | 项目 | 内容 |
 | --- | --- |
 | 盘点日期 | 2026-08-20 |
-| 代码基线 | 第九期 B3 当前工作树 / `codex/m5b-replay-comparison` |
-| 当前结论 | 主体业务链、治理、证据、恢复、评测和回放已经实现；外部数据与通信仍以 Mock 完成离线验收，真实 SLS/飞书代码已具备但尚未做试点端到端验收 |
+| 代码基线 | M5-C 离线反馈与灰度演练工作树 / `codex/m5c-feedback-rehearsal` |
+| 当前结论 | 主体业务链、治理、证据、恢复、评测、回放、Mock Reviewer 反馈和非行动性灰度演练已经实现；必需的 LLM 证据摘要、生产可靠性与真实试点仍未完成 |
 | 数据边界 | 当前自动化验收使用合成日志、合成飞书身份、合成变更和合成标签，不代表真实生产效果 |
 
 ## 1. 一句话概括
 
-这个项目已经是一套能完整运行的“证据驱动日志调查引擎”：它能接单、排队、查询当前/基线、生成证据、做保守判断、关联变更、更新飞书卡片、处理查询恢复，并对自身进行离线评测和回放；现在主要缺的是把企业真实资源、生产数据库和真实反馈接到已经预留好的适配器接口上。
+这个项目已经是一套能完整运行的“证据驱动日志调查引擎”：它能接单、排队、查询当前/基线、生成证据、做保守判断、关联变更、更新飞书卡片、处理查询恢复，并对自身进行离线评测、回放、Mock 审核和灰度演练；除真实系统外，仍缺必需的 LLM 证据摘要和 M4-B/M4-C 生产可靠性能力。
 
 ## 2. 状态说明
 
@@ -43,13 +43,16 @@ flowchart LR
     EV --> OUT[持久化 Delivery]
     OUT --> FO[飞书卡片<br/>真实 SDK 待联调 / Mock 已验收]
     EG --> OBS[Trace + Evaluation + Replay<br/>离线已完成]
+    OBS --> FB[Mock Reviewer Feedback<br/>append-only]
+    FB --> RD[Rollout Rehearsal<br/>禁止生产动作]
+    EV -.待实现.-> LLM[LLM 证据摘要<br/>Mock -> 火山方舟]
 
     classDef done fill:#d9f7be,stroke:#389e0d,color:#000;
     classDef mock fill:#fff1b8,stroke:#d48806,color:#000;
     classDef pending fill:#ffd6e7,stroke:#c41d7f,color:#000;
-    class IN,WK,CP,EG,GW,EV,OUT,OBS done;
+    class IN,WK,CP,EG,GW,EV,OUT,OBS,FB,RD done;
     class SM,CM,DB mock;
-    class SR,CR pending;
+    class SR,CR,LLM pending;
 ```
 
 ⭐ 这里是重点：Mock 只替代“外部系统返回什么”和“消息实际发到哪里”，不会绕开真实的 Intake、SQLite 状态机、Worker、Eino Graph、Query Gateway、Evidence、Checkpoint、Delivery 和评测逻辑。
@@ -82,6 +85,8 @@ flowchart LR
 | Agent 自观测 | 已完成离线切片 | 关闭枚举的 RUN/GRAPH_NODE/TOOL Span，有界 Recorder 和版本清单 | `internal/observability`、`internal/domain/agent_trace.go` | 评测可验证固定执行路径、调用数、字节数和事件完整性 |
 | 离线快照与回放 | 已完成 | append-only JSON 快照、SHA-256、严格 Schema、父引用和当前二进制重跑 | `internal/evaluation/replay`、`internal/adapters/replayfs` | 成功/失败评测可归档；重复、篡改和不兼容输入会拒绝 |
 | 兼容快照比较 | 已完成 | 只读比较版本、Gate、Case、质量、成本代理、工具和 Trace；不兼容时 delta-free | `internal/evaluation/replay/compare.go`、`cmd/logagent/evaluate.go` | 可识别新增失败、恢复和固定方向回归；不执行 Graph 或网络 |
+| Mock Reviewer 反馈账本 | 已完成 | 严格记录绑定快照/Case/Reviewer，内容哈希、append-only 纠正链和活动投影 | `internal/evaluation/feedback`、`internal/adapters/feedbackfs` | 两名虚拟 Reviewer 覆盖五个 Case；篡改、分叉、循环和跨边界纠正 fail closed |
+| 离线灰度决策演练 | 已完成 | 组合 B3 比较、活动反馈、quorum 和版本化策略，输出关闭状态/原因码 | `internal/evaluation/rollout`、`cmd/logagent/rollout.go` | 只产生 `SYNTHETIC_MOCK` 演练结论，永远禁止生产动作 |
 
 ## 5. 哪些部分目前用 Mock，分别负责什么
 
@@ -93,6 +98,7 @@ flowchart LR
 | 飞书身份与资源授权 | Mock Principal + Mock Catalog | 真实 AppID、TenantKey、OpenID 和资源绑定 | ACL 决策和 fail-closed 行为 | 需把真实飞书身份写入管理员资源目录 |
 | 发布/配置变更 | Demo/Fixture ChangeSet，或管理员静态 JSON | 发布事件、版本、负责人、影响实例 | 七项支持/反证规则和 Evidence Ledger | 静态 JSON 可用；真实发布平台/CMDB 连接器未实现 |
 | 历史故障与专家标签 | `synthetic-v1.json` | 历史事故、专家期望、成本代理 | 真实 Graph、结果校验、Trace、评测门禁 | 真实脱敏数据集和专家标注流程未实现 |
+| Reviewer 反馈与灰度策略 | `feedback-seed` + 固定策略 | 两名虚拟 Reviewer、Verdict/Reason、quorum 与演练阈值 | 严格快照引用、append-only 纠正、B3 对比和决策状态机 | 真实 Reviewer 身份、UI、团队策略和生产动作未实现 |
 | Agent Trace 后端 | 内存 `BoundedRecorder` + 本地回放文件 | 生产 Trace Collector、检索、保留和告警 | Span 合同、版本指纹、完整性检查 | 真实 OTel/AgentSight/可观测后端未实现 |
 
 ### 5.1 不是 Mock，但仍不能直接称为生产能力的部分
@@ -103,7 +109,7 @@ flowchart LR
 | 静态 Resource Catalog | 是真实治理配置 | 尚未录入和验证公司的真实 SLS 资源、字段、RAM 权限与用户绑定 |
 | 静态 Change Catalog | 是可运行的管理员配置 | 不是实时发布平台/配置中心/CMDB，存在人工同步时效问题 |
 | 飞书/SLS SDK 适配器 | 是真实代码 | 没有仓库可公开保存的真实凭据、试点环境结果和真实网络故障演练 |
-| Eino Graph | 是真实确定性编排 | 当前没有 LLM；这不是缺少 Mock，而是产品设计上尚未引入模型路径 |
+| Eino Graph | 是真实确定性编排 | 当前没有 LLM；LLM 证据摘要现已确认为必需能力，但仍须先完成 Mock、安全与降级合同 |
 
 ## 6. 真实系统分别负责什么，应该怎么接入
 
@@ -354,13 +360,13 @@ flowchart LR
 | Trace/指标/拓扑跨信号因果分析 | 未实现 | 当前只分析 SLS 聚合与静态 Change Source |
 | 真实发布平台/CMDB/SOP/错误码知识库 | 未实现 | 只有 ChangeSource 接口和静态目录 |
 | M5-C 真实试点灰度 | 未实现 | 缺真实历史集、专家标签、团队门槛和试点验收 |
-| LLM 解释器 | 未实现且当前非必需 | 现有 Graph 是确定性规则；未来模型只能解释证据，不能决定权限和事实 |
+| LLM 证据摘要 | 必需但未实现 | 先做 provider-neutral 端口和 Mock，再接火山方舟；只能总结已治理证据，不能决定权限、查询和事实 |
 
 ## 10. 可以和不可以对外宣称什么
 
 ### 可以宣称
 
-- 主体 Go 架构、Eino 固定 Graph、状态机、证据链、查询治理、恢复、离线评测、回放与兼容快照比较已实现。
+- 主体 Go 架构、Eino 固定 Graph、状态机、证据链、查询治理、恢复、离线评测、回放、兼容快照比较、Mock 反馈和灰度演练已实现。
 - Mock 飞书 + Mock SLS 可以完成可重复的离线端到端验收。
 - 真实飞书和阿里云 SLS SDK 适配器已经存在，并有明确配置入口。
 - 当前合成黄金集 5/5 通过，Trace 合同完整，外部网络调用为 0。
@@ -388,6 +394,7 @@ flowchart LR
 | SQLite 状态与审计 | `internal/adapters/sqlite` |
 | Mock 端到端 | `cmd/logagent/mock_e2e.go` |
 | 评测、Trace、回放 | `internal/evaluation`、`internal/observability`、`internal/evaluation/replay` |
+| Mock 反馈与灰度演练 | `internal/evaluation/feedback`、`internal/adapters/feedbackfs`、`internal/evaluation/rollout` |
 | 唯一当前行为规范 | `docs/spec.md` |
 | 真实接入代码地图 | `docs/m6-real-system-entry-guide.md` |
 
@@ -406,6 +413,10 @@ go run ./cmd/logagent replay --snapshot-dir .\data\evaluation-runs --run-id eval
 
 # 只读比较两个兼容快照；不兼容时输出 INCOMPARABLE 并非零退出
 go run ./cmd/logagent replay-compare --snapshot-dir .\data\evaluation-runs --base-run-id evalrun_base --candidate-run-id evalrun_candidate
+
+# 生成 Mock Reviewer 反馈并执行非行动性灰度演练
+go run ./cmd/logagent feedback-seed --snapshot-dir .\data\evaluation-runs --feedback-dir .\data\evaluation-feedback --run-id evalrun_candidate
+go run ./cmd/logagent rollout-rehearse --snapshot-dir .\data\evaluation-runs --feedback-dir .\data\evaluation-feedback --base-run-id evalrun_base --candidate-run-id evalrun_candidate
 
 # 真实 SLS 接入后才运行
 go run ./cmd/logagent sls-check

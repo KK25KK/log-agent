@@ -2,8 +2,8 @@
 
 | Metadata | Value |
 | --- | --- |
-| Version | 1.0-draft |
-| Status | M5-B/B1-B3 implemented and offline verified; M5-C mock-first feedback and rollout-readiness contract drafted for review; no M5-C implementation or real gray rollout yet |
+| Version | 1.1-draft |
+| Status | M5-C synthetic feedback ledger and rollout rehearsal implemented and offline verified; real gray rollout, production reliability slices, and the required LLM evidence summary remain pending |
 | Date | 2026-08-20 |
 
 ## 1. Overview
@@ -47,6 +47,7 @@ Users can ask the bot to investigate an error spike for a known service, environ
 - Append-only offline evaluation-run history plus a strict, read-only comparison of compatible replay snapshots. Comparison never executes the Graph or an external provider.
 - A mock-first rollout-readiness control plane that binds bounded reviewer feedback to exact immutable evaluation snapshots before producing a non-actionable rehearsal decision.
 - An append-only feedback history with explicit correction lineage, reviewer quorum, closed verdict/reason codes, and deterministic rollout-policy evaluation.
+- A required provider-neutral LLM summary stage that can use a Mock implementation offline and a guarded Volcengine Ark adapter in deployment. It may summarize only validated Findings, Evidence references, cause-analysis status, limitations, and deterministic recommendations.
 
 ## 4. Non-goals
 
@@ -58,7 +59,7 @@ Users can ask the bot to investigate an error spike for a known service, environ
 - Raw-log samples in Feishu or model context.
 - Claiming that absence from a bounded Top-K result proves historical absence.
 - A production-grade notification Outbox with unbounded retry, dead-letter operations, or exactly-once delivery.
-- Model-generated findings; M2 reports and recommendations are deterministic. A later optional LLM may only summarize governed evidence.
+- Model-generated facts, confidence, authorization, queries, or root-cause verdicts. The required LLM stage may only summarize governed evidence and must fall back to the deterministic report when unavailable or invalid.
 - A production database migration or a new organization-wide message queue.
 - Exact RMB cost prediction; processed bytes are the first cost proxy.
 - Cross-process global concurrency quotas; the first implementation limits each worker process.
@@ -130,6 +131,13 @@ M5-C rollout-readiness rehearsal
     -> REHEARSAL_PASSED | REHEARSAL_BLOCKED
        | REHEARSAL_ROLLBACK_RECOMMENDED | REHEARSAL_INSUFFICIENT_EVIDENCE
     -> production_action_allowed=false
+
+Required evidence-bound LLM summary
+    -> validated deterministic Report only
+    -> provider-neutral ReportSummarizer port
+    -> offline Mock or guarded Volcengine Ark adapter
+    -> strict structured output and Evidence-ID validation
+    -> AI-labelled Feishu summary or deterministic fallback
 ```
 
 The M3 Change Source is enrichment-only. It is called only after governed SLS evidence has established the resource identity and a conclusive spike. Change-source absence or failure cannot erase an M2 fact or fail the investigation; it produces an explicit unavailable or inconclusive cause-analysis status.
@@ -280,6 +288,14 @@ An explicit diagnostic command loads the same catalog and credentials as a real 
 7. `REHEARSAL_PASSED` requires a passed candidate snapshot, a comparable result, no regressions, all required candidate Gates present and passing, full Case feedback coverage, the configured independent-reviewer quorum, and no unsafe, unsure, or disagreeing active review.
 8. Every decision contains only immutable run references, policy identity/fingerprint, aggregate feedback counts, closed reason codes, and the explicit boundary `data_source=SYNTHETIC_MOCK` and `production_action_allowed=false`. It never performs a rollout or rollback action.
 
+### Summarize governed evidence with an LLM
+
+1. The model receives only the already validated deterministic report projection: bounded Findings, Evidence IDs and summaries, cause-analysis status, limitations, and deterministic recommendations. Raw logs, SQL, credentials, Feishu identity, provider errors, and ungoverned metadata are excluded.
+2. A provider-neutral `ReportSummarizer` port owns the application contract. The first offline implementation is deterministic Mock; the intended deployment adapter is Volcengine Ark and must remain isolated from the Eino, SLS, and Feishu adapters.
+3. The model output is a strict bounded structure for phenomenon summary, possible cause, evidence references, limitations, and next steps. Every referenced Evidence ID must exist in the input report, and the model cannot change confidence, completeness, cause verdict, or authorization.
+4. Timeout, throttling, provider failure, invalid JSON, unknown fields, unsupported claims, or broken references fall back to the original deterministic report. They cannot fail or promote the investigation.
+5. Model name, Prompt version/fingerprint, request status, Token usage, latency, and finish status are observable when a real model is enabled; Prompt text and evidence content are not written into Agent events.
+
 ## 7. Behavioral contracts and lifecycle
 
 Investigation states are `QUEUED`, `RUNNING`, `SUCCEEDED`, `FAILED`, `CANCELLED`, and `NEEDS_REVIEW`.
@@ -312,7 +328,7 @@ Cause confidence uses the versioned deterministic method `change-correlation-v1`
 
 Change Source errors, disabled configuration, or incomplete source coverage never turn an otherwise valid M2 report into a failed investigation.
 
-M5-A is a deterministic engineering regression gate, not a production-readiness decision. Outcome, Finding, Recommendation, and cause-verdict agreement are measured only against repository-owned synthetic labels. Recommendation matching is exact by code and Evidence name, so an omitted, injected, duplicated, or misgrounded next step fails closed. Evidence coverage verifies reference integrity, not factual completeness outside the fixture. Processed bytes and fixed Provider-call counts are cost proxies rather than an Alibaba Cloud bill. Local elapsed time is recorded for trend inspection but is not a production latency SLO. Prompt and Token metrics are not applicable while the graph remains model-free.
+M5-A is a deterministic engineering regression gate, not a production-readiness decision. Outcome, Finding, Recommendation, and cause-verdict agreement are measured only against repository-owned synthetic labels. Recommendation matching is exact by code and Evidence name, so an omitted, injected, duplicated, or misgrounded next step fails closed. Evidence coverage verifies reference integrity, not factual completeness outside the fixture. Processed bytes and fixed Provider-call counts are cost proxies rather than an Alibaba Cloud bill. Local elapsed time is recorded for trend inspection but is not a production latency SLO. Prompt and Token metrics remain not applicable until the required LLM summary slice is enabled and evaluated.
 
 M5-B Agent events use a fixed schema and closed layer/name/phase enums. The initial hierarchy is evaluation run -> Case Trace -> Engine run -> Graph node or Mock tool. Each span has exactly one start and one terminal phase, parent references form an acyclic closed Trace, sequence numbers are unique and increasing, and terminal usage must agree with the governed evaluation counters. Events contain no arbitrary key/value map or raw error text. Safe failure classification is observational only and cannot alter M4 retry or recovery semantics.
 
@@ -437,13 +453,20 @@ M5-C feedback uses a store separate from both the production investigation Store
 
 ### M5-C rollout readiness and real pilot
 
-- [ ] C1 defines a strict, bounded, content-hashed feedback record that binds one reviewer verdict to one immutable snapshot and Case.
-- [ ] C1 persists feedback append-only, rejects duplicate/tampered/unknown-field records, and resolves correction chains without losing audit history.
-- [ ] C1 provides a two-reviewer-per-Case synthetic fixture with zero credentials, real identities, free-form text, or external-network calls.
-- [ ] C2 produces only closed rehearsal decisions from strictly validated snapshots, a compatible B3 comparison, active feedback, and a versioned policy.
-- [ ] C2 fails closed on missing quorum, incomplete Case coverage, disagreement, unsafe feedback, comparison incompatibility, Gate removal/failure, metric regression, or invalid references.
-- [ ] C2 never mutates production state and always emits `data_source=SYNTHETIC_MOCK` and `production_action_allowed=false`.
+- [x] C1 defines a strict, bounded, content-hashed feedback record that binds one reviewer verdict to one immutable snapshot and Case.
+- [x] C1 persists feedback append-only, rejects duplicate/tampered/unknown-field records, and resolves correction chains without losing audit history.
+- [x] C1 provides a two-reviewer-per-Case synthetic fixture with zero credentials, real identities, free-form text, or external-network calls.
+- [x] C2 produces only closed rehearsal decisions from strictly validated snapshots, a compatible B3 comparison, active feedback, and a versioned policy.
+- [x] C2 fails closed on missing quorum, incomplete Case coverage, disagreement, unsafe feedback, comparison incompatibility, Gate removal/failure, metric regression, or invalid references.
+- [x] C2 never mutates production state and always emits `data_source=SYNTHETIC_MOCK` and `production_action_allowed=false`.
 - [ ] C3 replaces synthetic incidents, reviewer identity, feedback transport, thresholds, persistence, and pilot operations only after the required real inputs and team approval exist.
+
+### Required LLM evidence summary
+
+- [ ] A provider-neutral summarizer contract and deterministic Mock implementation accept only validated report projections.
+- [ ] Strict output validation rejects unknown fields, invented Evidence references, changed verdicts/confidence, unsafe actions, and sensitive data.
+- [ ] Model failures fall back to the deterministic report without changing investigation success or business state.
+- [ ] A Volcengine Ark adapter is isolated behind the port, disabled by default, and covered by an opt-in smoke test plus Prompt/model/Token observability.
 
 ## 10. Open deployment inputs
 
@@ -454,6 +477,7 @@ M5-C feedback uses a store separate from both the production investigation Store
 - Approved RAM role and resource-level read-only policy.
 - Organization-specific sensitive-value redaction patterns.
 - Approved owner/change metadata classification and the production change-system connector contract.
+- Approved Volcengine Ark model/endpoint, API-key custody, Prompt review, Token/cost budget, timeout, and model-output retention policy.
 - A real historical-incident dataset and its lawful retention/redaction rules.
 - An approved reviewer identity source, reviewer roles, quorum, conflict-resolution process, and feedback retention policy.
 - Team-approved quality, safety, latency, and cost thresholds plus the pilot cohort and explicit stop/rollback runbook.
