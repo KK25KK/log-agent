@@ -77,6 +77,12 @@ type InvestigationEngine interface {
 	Run(ctx context.Context, investigationID string, request domain.InvestigationRequest) ([]domain.Evidence, domain.Report, error)
 }
 
+// ReportSummarizer is a replaceable, evidence-only LLM boundary. It receives
+// no raw logs, query strings, credentials, resources or requester identity.
+type ReportSummarizer interface {
+	Summarize(ctx context.Context, input domain.SummaryInput) (domain.SummaryProviderResult, error)
+}
+
 // SLSExecutor is the replaceable, read-only query boundary.
 type SLSExecutor interface {
 	Execute(ctx context.Context, spec domain.QuerySpec) (domain.QueryResult, error)

@@ -179,6 +179,7 @@ type Report struct {
 	Recommendations []Recommendation `json:"recommendations,omitempty"`
 	Evidence        []Evidence       `json:"evidence"`
 	CauseAnalysis   *CauseAnalysis   `json:"cause_analysis,omitempty"`
+	Summary         *ReportSummary   `json:"summary,omitempty"`
 	GeneratedAt     time.Time        `json:"generated_at"`
 }
 

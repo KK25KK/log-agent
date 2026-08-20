@@ -10,6 +10,9 @@ import (
 func TestLoadDefaultsToOfflineMock(t *testing.T) {
 	t.Setenv("LOG_AGENT_SLS_MODE", "")
 	t.Setenv("LOG_AGENT_SLS_CREDENTIAL_MODE", "")
+	t.Setenv("LOG_AGENT_LLM_MODE", "")
+	t.Setenv("ARK_API_KEY", "")
+	t.Setenv("LOG_AGENT_ARK_MODEL", "")
 	config, err := Load()
 	if err != nil {
 		t.Fatal(err)
@@ -26,9 +29,30 @@ func TestLoadDefaultsToOfflineMock(t *testing.T) {
 	if config.ChangeCatalogPath != "" {
 		t.Fatalf("change catalog must be disabled by default: %q", config.ChangeCatalogPath)
 	}
+	if config.LLM.Mode != "mock" || config.LLM.Timeout != 12*time.Second || config.LLM.APIKey != "" {
+		t.Fatalf("unexpected offline LLM defaults: %#v", config.LLM)
+	}
 	if config.Quota.Window != time.Hour || config.Quota.MaxObservations != 100 || config.Quota.MaxAPICalls != 400 ||
 		config.Quota.ReservedBytesPerObservation != config.SLS.MaxProcessedBytes || config.Quota.MaxProcessedBytes <= config.Quota.ReservedBytesPerObservation {
 		t.Fatalf("unexpected tenant quota defaults: %#v", config.Quota)
+	}
+}
+
+func TestLoadRequiresVolcengineCredentialsOnlyWhenEnabled(t *testing.T) {
+	t.Setenv("LOG_AGENT_LLM_MODE", "volcengine")
+	t.Setenv("ARK_API_KEY", "")
+	t.Setenv("LOG_AGENT_ARK_MODEL", "")
+	if _, err := Load(); err == nil {
+		t.Fatal("want missing Volcengine credentials error")
+	}
+	t.Setenv("ARK_API_KEY", "test-key")
+	t.Setenv("LOG_AGENT_ARK_MODEL", "doubao-endpoint")
+	loaded, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.LLM.Mode != "volcengine" || loaded.LLM.Model != "doubao-endpoint" {
+		t.Fatalf("unexpected Volcengine config: %#v", loaded.LLM)
 	}
 }
 

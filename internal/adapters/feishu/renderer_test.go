@@ -77,6 +77,23 @@ func TestEvidenceViewHasBackAndFollowUpActions(t *testing.T) {
 	}
 }
 
+func TestReportCardRendersGovernedAISummaryAndEscapesText(t *testing.T) {
+	item := cardInvestigation(domain.StatusSucceeded)
+	item.Report.Summary = &domain.ReportSummary{
+		Status: domain.SummaryGenerated, Mode: domain.SummaryModeMock,
+		Phenomenon: "payment_timeout *增长*", PossibleCause: "发布候选 <v2>",
+		EvidenceNotes: []domain.SummaryEvidenceNote{{Statement: "current 比 baseline 高", EvidenceIDs: []string{"ev_current"}}},
+	}
+	card := renderReportCard(item)
+	payload, err := marshalCard(card)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(payload, "AI 证据摘要（Mock）") || !strings.Contains(payload, `payment\\_timeout`) || !strings.Contains(payload, `\\*增长\\*`) || !strings.Contains(payload, "发布候选") {
+		t.Fatalf("governed summary missing or unescaped: %s", payload)
+	}
+}
+
 func TestRendererOmitsLastErrorAndEscapesUntrustedMarkdown(t *testing.T) {
 	item := cardInvestigation(domain.StatusFailed)
 	item.LastError = "TOP_SECRET_LAST_ERROR raw SQL: * | select * from log"

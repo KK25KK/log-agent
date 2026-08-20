@@ -75,7 +75,7 @@
 
 这些能力需要真实数据源、字段契约、权限和成本预算，不能用 Mock 或静态配置冒充已接通。
 
-### 必需能力：LLM 证据摘要（未实现，Mock-first）
+### 必需能力：LLM 证据摘要（Mock 与适配器代码完成，真实方舟待联调）
 
 - 新增 provider-neutral `ReportSummarizer`，只接收已经通过 Worker 校验的 Finding、Evidence 引用、CauseAnalysis、限制和确定性建议。
 - 先用确定性 Mock 完成结构、引用、安全、降级和评测合同，再实现隔离的火山方舟 Adapter。
@@ -83,7 +83,7 @@
 - 超时、限流、非法结构、虚构引用或安全校验失败时保留原确定性报告，不让调查失败。
 - 真实模型启用后记录模型、Prompt 版本与指纹、Token、耗时和完成状态，但不在 Trace 中记录 Prompt 正文或证据内容。
 
-这项能力已经确认为产品必需项，不再按“可选 LLM”处理；在真实火山 API 凭据到位前仍可完成全部 Mock 合同与离线验收。
+当前已经完成 provider-neutral 端口、确定性 Mock、Worker 后处理、严格输出/引用门禁、确定性回退、飞书有界展示和隔离的火山方舟 Responses API 适配器。默认 Mock 主链为 0 网络、0 凭据；真实 Key、批准模型、Prompt 审批、费用/留存策略和 opt-in smoke 仍待真实输入。
 
 ## M4 开工前：飞书 + SLS 双 Mock 纵向联调（已完成）
 
@@ -174,7 +174,7 @@ M5-A 的指标只说明代码对受控合成样例没有回归，不是历史真
 
 验收：比较命令只读加载两个已校验快照，不执行 Graph 或 Provider；兼容运行输出显式版本变化、固定质量/成本/工具/Trace/时延观测差值、门禁变化及 recovered/newly-failed/still-failed Case，不兼容运行只输出稳定原因码并以非零状态结束。当前验证数据全部为仓库内置合成 Mock，真实专家反馈仍未接入。
 
-当前无 LLM，因此 Prompt、Model、Token 指标继续标记为不适用；`evaluation-replay-v1` 在 B1 中只作为版本合同存在，不代表已经保存回放快照。真实 Trace 后端、采样/保留策略、生产 SLO 和真实反馈仍延期。
+当前 `evaluate` 不经过 Worker 摘要，因此其 Prompt、Model、Token 指标继续标记为不适用；这与 Worker 默认 Mock 摘要并不矛盾。真实方舟摘要纳入评测、真实 Trace 后端、采样/保留策略、生产 SLO 和真实反馈仍延期。
 
 ### M5-C：反馈、灰度决策与真实试点（C1/C2 代码与离线验收完成，C3 待真实输入）
 

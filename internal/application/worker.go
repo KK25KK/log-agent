@@ -18,6 +18,7 @@ type Worker struct {
 	workerID      string
 	leaseDuration time.Duration
 	now           func() time.Time
+	summary       *SummaryService
 }
 
 type WorkerOption func(*Worker)
@@ -28,6 +29,12 @@ func WithWorkerClock(now func() time.Time) WorkerOption {
 		if now != nil {
 			worker.now = now
 		}
+	}
+}
+
+func WithWorkerSummary(service *SummaryService) WorkerOption {
+	return func(worker *Worker) {
+		worker.summary = service
 	}
 }
 
@@ -63,6 +70,13 @@ func (w *Worker) RunOne(ctx context.Context) (bool, error) {
 	stopHeartbeat := make(chan struct{})
 	heartbeatDone := w.startHeartbeat(runCtx, cancelRun, stopHeartbeat, job)
 	evidence, report, runErr := w.engine.Run(runCtx, job.InvestigationID, job.Request)
+	if runErr == nil {
+		runErr = validateEngineOutput(job, evidence, report)
+	}
+	if runErr == nil && w.summary != nil {
+		report = w.summary.Enrich(runCtx, evidence, report)
+		runErr = validateEngineOutput(job, evidence, report)
+	}
 	close(stopHeartbeat)
 	heartbeatErr := <-heartbeatDone
 	cancelRun()
@@ -76,9 +90,6 @@ func (w *Worker) RunOne(ctx context.Context) (bool, error) {
 		// On process shutdown the RUNNING lease is deliberately left for another
 		// worker to reclaim. Writing with the cancelled context cannot be durable.
 		return true, ctx.Err()
-	}
-	if runErr == nil {
-		runErr = validateEngineOutput(job, evidence, report)
 	}
 	finishedAt := w.now().UTC()
 	if runErr != nil {
@@ -225,6 +236,11 @@ func ValidateEngineOutput(investigationID string, evidence []domain.Evidence, re
 	}
 	if err := validateCauseAnalysis(report.CauseAnalysis, knownEvidence); err != nil {
 		return fmt.Errorf("engine returned invalid cause analysis: %w", err)
+	}
+	if report.Summary != nil {
+		if err := ValidateReportSummary(report, *report.Summary); err != nil {
+			return fmt.Errorf("engine returned invalid report summary: %w", err)
+		}
 	}
 	return nil
 }

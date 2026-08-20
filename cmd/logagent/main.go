@@ -14,6 +14,7 @@ import (
 	"logagent/internal/adapters/eino"
 	"logagent/internal/adapters/feishu"
 	"logagent/internal/adapters/sqlite"
+	"logagent/internal/adapters/summarymock"
 	"logagent/internal/application"
 	"logagent/internal/config"
 	"logagent/internal/domain"
@@ -145,12 +146,14 @@ func runDemo() error {
 	if err != nil {
 		return err
 	}
+	summary, err := application.NewSummaryService(summarymock.New(), 5*time.Second, func() time.Time { return fixedEnd.Add(time.Second) })
+	if err != nil {
+		return err
+	}
 	worker, err := application.NewWorker(
-		store,
-		engine,
-		"demo-worker",
-		time.Minute,
+		store, engine, "demo-worker", time.Minute,
 		application.WithWorkerClock(func() time.Time { return fixedEnd.Add(time.Second) }),
+		application.WithWorkerSummary(summary),
 	)
 	if err != nil {
 		return err
@@ -194,7 +197,15 @@ func runWorker(config config.Config) error {
 	if err != nil {
 		return err
 	}
-	worker, err := application.NewWorker(store, engine, config.WorkerID, config.WorkerLease)
+	summary, err := buildSummaryService(config, time.Now)
+	if err != nil {
+		return err
+	}
+	options := make([]application.WorkerOption, 0, 1)
+	if summary != nil {
+		options = append(options, application.WithWorkerSummary(summary))
+	}
+	worker, err := application.NewWorker(store, engine, config.WorkerID, config.WorkerLease, options...)
 	if err != nil {
 		return err
 	}

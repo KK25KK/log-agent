@@ -46,6 +46,9 @@ func TestExecuteMockE2ECoversInboundAnalysisAndCardLifecycle(t *testing.T) {
 	if result.TenantQuota.Observations != 2 || result.TenantQuota.APICalls != 8 || result.TenantQuota.ProcessedBytes <= 0 || result.TenantQuota.CircuitOpen {
 		t.Fatalf("unexpected mock tenant quota: %#v", result.TenantQuota)
 	}
+	if result.LLMSummary.Mode != domain.SummaryModeMock || result.LLMSummary.Status != domain.SummaryGenerated || result.LLMSummary.Provider != "summary_mock" || result.LLMSummary.ExternalAPICalls != 0 || result.LLMSummary.CredentialsNeeded {
+		t.Fatalf("unexpected mock LLM summary: %#v", result.LLMSummary)
+	}
 	if result.Investigation.Status != domain.StatusSucceeded || result.Investigation.Report == nil || result.Investigation.Report.Outcome != "spike_detected" {
 		t.Fatalf("unexpected investigation: %#v", result.Investigation)
 	}

@@ -20,6 +20,7 @@ type Config struct {
 	Delivery          DeliveryConfig
 	SLS               SLSConfig
 	Quota             QuotaConfig
+	LLM               LLMConfig
 	SmokePrincipal    SmokePrincipal
 }
 
@@ -59,6 +60,14 @@ type QuotaConfig struct {
 	ReservedBytesPerObservation int64
 }
 
+type LLMConfig struct {
+	Mode    string
+	APIKey  string
+	Model   string
+	BaseURL string
+	Timeout time.Duration
+}
+
 type SmokePrincipal struct {
 	AppID     string
 	TenantKey string
@@ -84,6 +93,12 @@ func Load() (Config, error) {
 			SecurityToken:   os.Getenv("ALIBABA_CLOUD_SECURITY_TOKEN"),
 			ECSRAMRoleName:  os.Getenv("LOG_AGENT_SLS_ECS_RAM_ROLE_NAME"),
 		},
+		LLM: LLMConfig{
+			Mode:    valueOrDefault("LOG_AGENT_LLM_MODE", "mock"),
+			APIKey:  os.Getenv("ARK_API_KEY"),
+			Model:   os.Getenv("LOG_AGENT_ARK_MODEL"),
+			BaseURL: valueOrDefault("LOG_AGENT_ARK_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3"),
+		},
 		SmokePrincipal: SmokePrincipal{
 			AppID:     os.Getenv("LOG_AGENT_SMOKE_APP_ID"),
 			TenantKey: os.Getenv("LOG_AGENT_SMOKE_TENANT_KEY"),
@@ -95,6 +110,9 @@ func Load() (Config, error) {
 	}
 	if config.SLS.CredentialMode != "static" && config.SLS.CredentialMode != "ecs_ram_role" {
 		return Config{}, fmt.Errorf("LOG_AGENT_SLS_CREDENTIAL_MODE must be static or ecs_ram_role")
+	}
+	if config.LLM.Mode != "disabled" && config.LLM.Mode != "mock" && config.LLM.Mode != "volcengine" {
+		return Config{}, fmt.Errorf("LOG_AGENT_LLM_MODE must be disabled, mock, or volcengine")
 	}
 	var err error
 	config.WorkerPoll, err = durationOrDefault("LOG_AGENT_POLL_INTERVAL", time.Second)
@@ -198,6 +216,13 @@ func Load() (Config, error) {
 	}
 	if config.Quota.ReservedBytesPerObservation > config.Quota.MaxProcessedBytes {
 		return Config{}, fmt.Errorf("LOG_AGENT_TENANT_QUOTA_RESERVED_BYTES cannot exceed LOG_AGENT_TENANT_QUOTA_MAX_PROCESSED_BYTES")
+	}
+	config.LLM.Timeout, err = durationOrDefault("LOG_AGENT_LLM_TIMEOUT", 12*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
+	if config.LLM.Mode == "volcengine" && (config.LLM.APIKey == "" || config.LLM.Model == "") {
+		return Config{}, fmt.Errorf("ARK_API_KEY and LOG_AGENT_ARK_MODEL are required when LOG_AGENT_LLM_MODE=volcengine")
 	}
 	return config, nil
 }

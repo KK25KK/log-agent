@@ -12,6 +12,7 @@ import (
 	"logagent/internal/adapters/feishumock"
 	"logagent/internal/adapters/slsmock"
 	"logagent/internal/adapters/sqlite"
+	"logagent/internal/adapters/summarymock"
 	"logagent/internal/application"
 	queryapp "logagent/internal/application/query"
 	"logagent/internal/domain"
@@ -24,7 +25,17 @@ type mockE2EResult struct {
 	AlibabaSLS    mockSLSSummary          `json:"aliyun_sls"`
 	TenantQuota   domain.TenantQuotaUsage `json:"tenant_quota"`
 	ChangeSource  string                  `json:"change_source"`
+	LLMSummary    mockLLMSummary          `json:"llm_summary"`
 	Investigation domain.Investigation    `json:"investigation"`
+}
+
+type mockLLMSummary struct {
+	Mode              domain.SummaryMode   `json:"mode"`
+	Status            domain.SummaryStatus `json:"status"`
+	Provider          string               `json:"provider"`
+	PromptVersion     string               `json:"prompt_version"`
+	ExternalAPICalls  int                  `json:"external_api_calls"`
+	CredentialsNeeded bool                 `json:"credentials_required"`
 }
 
 type mockSafetySummary struct {
@@ -216,12 +227,14 @@ func executeMockE2E(ctx context.Context) (mockE2EResult, error) {
 	if err != nil {
 		return mockE2EResult{}, err
 	}
+	summary, err := application.NewSummaryService(summarymock.New(), 5*time.Second, func() time.Time { return messageAt.Add(time.Second) })
+	if err != nil {
+		return mockE2EResult{}, err
+	}
 	worker, err := application.NewWorker(
-		store,
-		engine,
-		"mock-investigation-worker",
-		time.Minute,
+		store, engine, "mock-investigation-worker", time.Minute,
 		application.WithWorkerClock(func() time.Time { return messageAt.Add(time.Second) }),
+		application.WithWorkerSummary(summary),
 	)
 	if err != nil {
 		return mockE2EResult{}, err
@@ -290,6 +303,9 @@ func executeMockE2E(ctx context.Context) (mockE2EResult, error) {
 	if investigation.Status != domain.StatusSucceeded || investigation.Report == nil {
 		return mockE2EResult{}, fmt.Errorf("mock investigation ended in %s without a report", investigation.Status)
 	}
+	if investigation.Report.Summary == nil || investigation.Report.Summary.Mode != domain.SummaryModeMock || investigation.Report.Summary.Status != domain.SummaryGenerated {
+		return mockE2EResult{}, fmt.Errorf("mock investigation is missing its governed summary: %#v", investigation.Report.Summary)
+	}
 
 	providerCalls := 0
 	currentErrors := int64(0)
@@ -344,7 +360,7 @@ func executeMockE2E(ctx context.Context) (mockE2EResult, error) {
 		Safety: mockSafetySummary{
 			ExternalNetworkCalls: 0,
 			CredentialsRequired:  false,
-			DataNotice:           "All Feishu messages, SLS aggregates, and change events are deterministic test data.",
+			DataNotice:           "All Feishu messages, SLS aggregates, change events, and report summaries are deterministic test data.",
 		},
 		Feishu: mockFeishuSummary{
 			Mode:                        "mock",
@@ -366,8 +382,13 @@ func executeMockE2E(ctx context.Context) (mockE2EResult, error) {
 			CurrentErrorCount:    currentErrors,
 			BaselineErrorCount:   baselineErrors,
 		},
-		TenantQuota:   quotaUsage,
-		ChangeSource:  "mock",
+		TenantQuota:  quotaUsage,
+		ChangeSource: "mock",
+		LLMSummary: mockLLMSummary{
+			Mode: investigation.Report.Summary.Mode, Status: investigation.Report.Summary.Status,
+			Provider: investigation.Report.Summary.Provider, PromptVersion: investigation.Report.Summary.PromptVersion,
+			ExternalAPICalls: 0, CredentialsNeeded: false,
+		},
 		Investigation: investigation,
 	}, nil
 }

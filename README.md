@@ -1,6 +1,6 @@
 # Log Agent
 
-这是一个用 Go 开发的“证据驱动”日志调查 Agent。M0～M3、M4-A/M4-B、M5-A、M5-B/B1～B3，以及 M5-C 的 Mock Reviewer 反馈账本和离线灰度决策演练已经完成主体代码与离线测试；M4-C、必需的 LLM 证据摘要和 M5-C 真实灰度仍未完成。由于仓库没有真实飞书/SLS/发布平台凭据、生产数据库、历史故障标注集与试点资源，当前只能称为“具备试点条件”，不能称为日常可用或生产可用。
+这是一个用 Go 开发的“证据驱动”日志调查 Agent。M0～M3、M4-A/M4-B、M5-A、M5-B/B1～B3、M5-C 的 Mock Reviewer/离线灰度演练，以及证据约束的 LLM 摘要切片已经完成主体代码与离线测试；M4-C、真实火山方舟联调和 M5-C 真实灰度仍未完成。由于仓库没有真实飞书/SLS/发布平台/模型凭据、生产数据库、历史故障标注集与试点资源，当前只能称为“具备试点条件”，不能称为日常可用或生产可用。
 
 ```text
 飞书消息
@@ -15,6 +15,7 @@
   -> Evidence + M2 Report
   -> 可选的受控 Change Catalog
   -> 支持/反证 Ledger + CauseAnalysis
+  -> 证据约束摘要（默认 Mock / 可切火山方舟 / 失败回退）
   -> SQLite 持久化卡片事件
   -> 飞书接单 / 进度 / 最终报告卡
   -> 查看证据 / 取消 / 扩大窗口 / 重新运行
@@ -80,6 +81,15 @@ Eino 只负责流程编排，不负责业务状态、权限、幂等、审计和
 - Worker 在成功落库前再次校验固定测试、有限数值、Evidence/Change 引用、支持条件和硬反证质量，防止不可信 Engine 输出伪造结论。
 - SQLite 在调查成功事务中同时保存 Evidence、Report 和独立 `evidence_ledger`；飞书报告与证据页做有界展示。
 
+### 证据约束的 LLM 摘要
+
+- `ports.ReportSummarizer` 只接收通过 Worker 校验的有界投影；不发送飞书身份、物理资源、Query ID/Hash、SQL、原始日志、凭据或 Provider 错误。
+- 默认 `LOG_AGENT_LLM_MODE=mock`，使用确定性 Mock 走完整 Worker、持久化和飞书卡片链路，且外部 API 调用为 0。
+- `volcark` 适配器实现火山方舟 Responses API；只有显式设置 `LOG_AGENT_LLM_MODE=volcengine`、`ARK_API_KEY` 和 `LOG_AGENT_ARK_MODEL` 才会访问网络。
+- 模型只能改写现象和证据说明、选择已有 `SUPPORTED_CANDIDATE` 以及选择已有 Recommendation Code；原因和下一步正文由应用从确定性报告反查，模型不能发明动作或提升结论。
+- 未知字段、无效引用、敏感内容、危险动作、超时和 Provider 错误都会生成显式 `FALLBACK` 摘要，不改变调查的成功状态和确定性报告。
+- 保存 Provider、模型、Prompt 版本/指纹、Request ID、Token 与耗时元数据，但不把 Prompt 正文或证据内容写入 Agent Trace。设计与真实接入说明见 [`docs/llm-evidence-summary.md`](docs/llm-evidence-summary.md)。
+
 ### M4-A 可恢复查询步骤
 
 - 将两个有外部成本的逻辑观察固定为 `sls.current` 和 `sls.baseline`，在 Eino 之外持久化输入指纹与规范化聚合结果。
@@ -135,11 +145,14 @@ go run ./cmd/logagent mock-e2e
 4. 通过真实 Worker + Eino 固定 Graph、资源 ACL、Schema/预算网关和查询审计调用 Mock SLS Backend；
 5. 将 current、baseline 两个规范化聚合结果写入真实 SQLite Checkpoint；
 6. 生成 Evidence、M2 报告和 Mock 变更关联账本；
-7. 通过真实 Delivery Worker 模拟飞书卡片 `REPLY(QUEUED) -> PATCH(RUNNING) -> PATCH(SUCCEEDED)`。
+7. 使用确定性 Mock 摘要器生成有引用约束的报告摘要；
+8. 通过真实 Delivery Worker 模拟飞书卡片 `REPLY(QUEUED) -> PATCH(RUNNING) -> PATCH(SUCCEEDED)`。
 
 输出中的 `safety.external_network_calls=0`、`credentials_required=false` 表示当前运行完全离线；`schema_calls=1`、`backend_execute_calls=2`、`provider_api_calls=8`、`query_audit_events=4` 和 `query_step_checkpoints=2` 分别证明固定 Schema、当前/基线观察、四聚合调用元数据、开始/终态审计和两个持久化步骤已经经过真实应用链路。固定的 120/20 条错误、发布事件和飞书标识全部是测试数据，不代表真实阿里云或飞书结果。完整 Mock 边界见 [`docs/local-mock-e2e.md`](docs/local-mock-e2e.md)，恢复合同见 [`docs/m4-recoverable-query-steps.md`](docs/m4-recoverable-query-steps.md)。
 
 `tenant_quota` 还证明两个逻辑观察经过 SQLite 固定窗额度预留/结算且没有打开成本代理熔断。该值是 Mock usage，不是阿里云账单。
+
+`llm_summary.mode=MOCK`、`status=GENERATED`、`external_api_calls=0` 证明摘要合同经过主链，但没有调用真实模型。`evaluate` 仍是 Engine 级确定性评测，不经过 Worker 摘要，因此其版本清单继续如实记录 `prompt_used=false`。
 
 ## 运行第六至八期离线评测与 Trace 门禁
 
@@ -227,6 +240,25 @@ $env:LOG_AGENT_CHANGE_CATALOG = ".\config\change-catalog.json"
 Catalog 中的 `resource_id` 必须与 `sls-resources.json` 的资源 ID 完全一致。当前只支持 `RELEASE` 和 `CONFIG`；每个事件必须提供起止时间、负责人、摘要、受影响实例列表和 `affected_instances_complete`。单个列表最多 20 个实例，一次调查最多读取 10 个重叠候选。
 
 不设置 `LOG_AGENT_CHANGE_CATALOG` 时 M3 原因增强明确显示为 `UNAVAILABLE`，M2 报告仍可正常完成。文件在 Worker 启动时严格校验并一次性加载，当前不支持热重载；完整字段和判定规则见 [`docs/m3-change-correlation-evidence.md`](docs/m3-change-correlation-evidence.md)。
+
+## 配置报告摘要
+
+本地与试点前默认使用完全离线 Mock：
+
+```powershell
+$env:LOG_AGENT_LLM_MODE = "mock"
+```
+
+经安全、留存和成本审批后，才显式启用火山方舟：
+
+```powershell
+$env:LOG_AGENT_LLM_MODE = "volcengine"
+$env:ARK_API_KEY = "<由密钥系统注入，不写入仓库>"
+$env:LOG_AGENT_ARK_MODEL = "<已批准的方舟推理接入点 ID>"
+$env:LOG_AGENT_LLM_TIMEOUT = "12s"
+```
+
+可选 `LOG_AGENT_ARK_BASE_URL` 默认是 `https://ark.cn-beijing.volces.com/api/v3`。真实模式当前已有适配器与本地协议测试，但仓库没有真实 Key/模型，未执行真实调用；上线前按 [`docs/llm-evidence-summary.md`](docs/llm-evidence-summary.md) 完成 opt-in smoke、Prompt 审批、Token/费用预算和数据保留确认。
 
 ## 配置真实阿里云 SLS
 
@@ -420,6 +452,9 @@ internal/evaluation/replay            B2 快照 Schema/内容哈希与 B3 兼容
 internal/evaluation/feedback          反馈记录、哈希、纠正链和活动投影
 internal/evaluation/rollout           版本化策略、quorum 和灰度演练决策
 internal/observability                Noop Observer、Trace 上下文与线程安全有界 Recorder
+internal/adapters/summarymock         默认离线摘要器
+internal/adapters/volcark             火山方舟 Responses API 适配器
+internal/application/summary.go       摘要输入投影、引用校验和确定性回退
 ```
 
 ## 当前边界与已知限制
@@ -439,7 +474,7 @@ internal/observability                Noop Observer、Trace 上下文与线程�
 - M3 不增加 SLS 查询，也没有版本分布、首次出现时间、Trace、指标、拓扑或知识库证据；相关性不会被表述成已确认根因。
 - M5-A 数据集没有真实故障和专家标注，只能发现已编码合成场景上的回归；它不测量生产泛化能力，也不能批准灰度。M5-B/B3 已补齐合成 Engine 执行的有界 Trace、版本合同、append-only 历史与兼容运行比较，但真实反馈、真实数据集、团队阈值、试点群和回滚验收仍属于 M5-C。
 - M5-B/B3 不是飞书接单、SQLite Worker、SLS 网络请求到卡片投递的跨进程分布式 Trace，也没有生产 Trace 后端、采样/保留策略或延迟 SLO。内容哈希用于完整性检测，不是加密、签名或身份认证。
-- 当前 Eino Graph 仍是确定性、无 LLM 的，因此版本清单明确为 `prompt_used=false`，不生成 Prompt/Token 指标。LLM 证据摘要已经确认为必需能力但尚未实现；首版只允许总结已治理报告，计划使用 Mock 完成合同后再接火山方舟，并补版本、成本和安全评测门禁。
+- Eino Graph 和 `evaluate` 仍是确定性、无 LLM 的，因此评测版本清单明确为 `prompt_used=false`。Worker 后处理已经实现证据约束摘要，默认走 Mock；火山方舟协议适配器已具备但尚未用真实凭据联调。真实 Prompt/模型质量、Token 成本和留存门禁仍需真实试点验收。
 - 非文本消息、格式错误的命令和永久无效事件目前会被安全确认但不会回复用法提示；这是已知的交互限制。
 - 系统只有只读调查能力，不包含自动处置工具。
 

@@ -18,6 +18,7 @@ const (
 	maxEvidenceItems       = 2
 	maxCauseSummaryItems   = 1
 	maxCauseEvidenceItems  = 3
+	maxAISummaryNotes      = 2
 	maxAggregateItems      = 5
 	maxStatementRunes      = 480
 	maxAggregateRunes      = 96
@@ -170,6 +171,7 @@ func renderReportCard(investigation domain.Investigation) cardDocument {
 	}
 	elements = append(elements, cardDivider{Tag: "hr"})
 	elements = append(elements, markdown("**调查结果：** "+safeMarkdown(report.Outcome, maxAggregateRunes)))
+	elements = appendReportSummary(elements, report.Summary)
 	for index, finding := range boundedFindings(report.Findings) {
 		conclusion := "非确定性"
 		if finding.Conclusive {
@@ -188,6 +190,28 @@ func renderReportCard(investigation domain.Investigation) cardDocument {
 		buttonSpec{label: "重新运行", action: domain.ActionRerun},
 	))
 	return newCard(title, template, elements)
+}
+
+func appendReportSummary(elements []any, summary *domain.ReportSummary) []any {
+	if summary == nil || summary.Status != domain.SummaryGenerated {
+		return elements
+	}
+	label := "AI 证据摘要"
+	if summary.Mode == domain.SummaryModeMock {
+		label += "（Mock）"
+	}
+	content := fmt.Sprintf("**%s：** %s", label, safeMarkdown(summary.Phenomenon, maxStatementRunes))
+	if summary.PossibleCause != "" {
+		content += "\n\n**可能原因候选：** " + safeMarkdown(summary.PossibleCause, maxStatementRunes)
+	}
+	for index, note := range summary.EvidenceNotes {
+		if index >= maxAISummaryNotes {
+			break
+		}
+		content += fmt.Sprintf("\n\n**证据说明 %d：** %s", index+1, safeMarkdown(note.Statement, maxStatementRunes))
+	}
+	content += "\n\n_摘要只改写已治理证据，确定性结论和权限边界仍以下方报告为准。_"
+	return append(elements, markdown(content))
 }
 
 func renderEvidenceCard(investigation domain.Investigation) (cardDocument, error) {

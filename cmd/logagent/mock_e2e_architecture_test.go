@@ -16,6 +16,7 @@ func TestMockE2ESourceDoesNotImportRealProvidersOrNetwork(t *testing.T) {
 	for _, root := range []string{
 		filepath.Join("..", "..", "internal", "adapters", "feishumock"),
 		filepath.Join("..", "..", "internal", "adapters", "slsmock"),
+		filepath.Join("..", "..", "internal", "adapters", "summarymock"),
 	} {
 		err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
 			if walkErr != nil {
@@ -51,5 +52,5 @@ func forbiddenMockE2EImport(path string) bool {
 	if path == "net" || strings.HasPrefix(path, "net/") || path == "os/signal" || path == "logagent/internal/config" {
 		return true
 	}
-	return path == "logagent/internal/adapters/feishu" || path == "logagent/internal/adapters/aliyunsls"
+	return path == "logagent/internal/adapters/feishu" || path == "logagent/internal/adapters/aliyunsls" || path == "logagent/internal/adapters/volcark"
 }

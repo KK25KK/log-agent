@@ -2,8 +2,8 @@
 
 | Metadata | Value |
 | --- | --- |
-| Version | 1.2-draft |
-| Status | M4-B local reliability governance implemented and offline verified; M4-C production infrastructure, real gray rollout, and the required LLM evidence summary remain pending |
+| Version | 1.3-draft |
+| Status | Evidence-bound LLM summary Mock path and Volcengine Ark adapter implemented and offline verified; real Ark smoke, M4-C production infrastructure, and real gray rollout remain pending |
 | Date | 2026-08-20 |
 
 ## 1. Overview
@@ -305,7 +305,7 @@ An explicit diagnostic command loads the same catalog and credentials as a real 
 2. A provider-neutral `ReportSummarizer` port owns the application contract. The first offline implementation is deterministic Mock; the intended deployment adapter is Volcengine Ark and must remain isolated from the Eino, SLS, and Feishu adapters.
 3. The model output is a strict bounded structure for phenomenon summary, possible cause, evidence references, limitations, and next steps. Every referenced Evidence ID must exist in the input report, and the model cannot change confidence, completeness, cause verdict, or authorization.
 4. Timeout, throttling, provider failure, invalid JSON, unknown fields, unsupported claims, or broken references fall back to the original deterministic report. They cannot fail or promote the investigation.
-5. Model name, Prompt version/fingerprint, request status, Token usage, latency, and finish status are observable when a real model is enabled; Prompt text and evidence content are not written into Agent events.
+5. Provider/model, Prompt version/fingerprint, bounded request ID, generated/fallback status, Token usage, and latency are persisted when a real model is enabled; Prompt text and evidence content are not written into Agent events.
 
 ## 7. Behavioral contracts and lifecycle
 
@@ -487,10 +487,11 @@ M5-C feedback uses a store separate from both the production investigation Store
 
 ### Required LLM evidence summary
 
-- [ ] A provider-neutral summarizer contract and deterministic Mock implementation accept only validated report projections.
-- [ ] Strict output validation rejects unknown fields, invented Evidence references, changed verdicts/confidence, unsafe actions, and sensitive data.
-- [ ] Model failures fall back to the deterministic report without changing investigation success or business state.
-- [ ] A Volcengine Ark adapter is isolated behind the port, disabled by default, and covered by an opt-in smoke test plus Prompt/model/Token observability.
+- [x] A provider-neutral summarizer contract and deterministic Mock implementation accept only validated report projections.
+- [x] Strict output validation rejects unknown fields, invented Evidence references, changed verdicts/confidence, unsafe actions, and sensitive data.
+- [x] Model failures fall back to the deterministic report without changing investigation success or business state.
+- [x] A Volcengine Ark Responses API adapter is isolated behind the port, is not enabled by the default Mock configuration, and records Prompt/model/Token/latency metadata without serializing Prompt or Evidence into Agent events.
+- [ ] A real opt-in Ark smoke, approved model/Prompt, Token/cost budget, retention policy, and model-quality evaluation are deployment inputs rather than offline claims.
 
 ## 10. Open deployment inputs
 

@@ -53,5 +53,5 @@ func forbiddenEvaluationImport(path string) bool {
 	if path == "net" || strings.HasPrefix(path, "net/") || path == "os/signal" || path == "logagent/internal/config" {
 		return true
 	}
-	return path == "logagent/internal/adapters/feishu" || path == "logagent/internal/adapters/aliyunsls"
+	return path == "logagent/internal/adapters/feishu" || path == "logagent/internal/adapters/aliyunsls" || path == "logagent/internal/adapters/volcark" || path == "logagent/internal/adapters/summarymock"
 }
