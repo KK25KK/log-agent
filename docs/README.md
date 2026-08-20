@@ -11,6 +11,7 @@
 | [`m5-offline-evaluation-gate.md`](m5-offline-evaluation-gate.md) | 第六期 M5-A 的全合成离线评测数据、指标、门禁与声明边界 | 数据集、评测规则或 CLI 行为变化时同步更新 |
 | [`m5-agent-observability-replay.md`](m5-agent-observability-replay.md) | 第七/八期 M5-B 的 Agent 自观测与离线回放合同；B1/B2 已完成，B3 待实现 | Agent 事件、版本清单、Trace 门禁或回放边界变化时同步更新 |
 | [`m6-real-system-entry-guide.md`](m6-real-system-entry-guide.md) | 真实系统接入地图：SLS/飞书/存储/变更源各真实入口与组装点 | 生产化接入前保持与启动组装和接口边界一致 |
+| [`current-capabilities-and-real-integration-inventory.md`](current-capabilities-and-real-integration-inventory.md) | 当前功能、Mock 边界、真实系统职责、接入步骤和预期效果的统一盘点 | 阶段完成状态、外部适配器或生产接入方式变化时同步更新 |
 | [`../README.md`](../README.md) | 运行、配置和项目入口 | 必须与当前代码一致 |
 
 ## 历史阶段归档
