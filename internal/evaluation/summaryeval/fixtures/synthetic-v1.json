@@ -1,0 +1,23 @@
+{
+  "schema_version": "summary-evaluation-dataset-v1",
+  "dataset_id": "synthetic-summary-v1",
+  "data_source": "SYNTHETIC_MOCK",
+  "prompt_version": "evidence-summary-zh-v1",
+  "mock_prompt_fingerprint": "b459aa3daa17dffbe543ffab2afe5bb848fb3130601b22c492f88ba6a466ed26",
+  "real_incident_count": 0,
+  "expert_label_count": 0,
+  "credentials_required": false,
+  "external_network_calls": 0,
+  "production_claim_allowed": false,
+  "cases": [
+    {"id":"valid-supported","base_case_id":"spike-supported","provider_behavior":"VALID","report_mutation":"NONE","expected":{"status":"GENERATED","mode":"MOCK","provider_calls":1,"cause_selected":true}},
+    {"id":"valid-no-spike","base_case_id":"no-significant-spike","provider_behavior":"VALID","report_mutation":"NONE","expected":{"status":"GENERATED","mode":"MOCK","provider_calls":1,"cause_selected":false}},
+    {"id":"valid-incomplete","base_case_id":"incomplete-observation","provider_behavior":"VALID","report_mutation":"NONE","expected":{"status":"GENERATED","mode":"MOCK","provider_calls":1,"cause_selected":false}},
+    {"id":"provider-error","base_case_id":"spike-supported","provider_behavior":"PROVIDER_ERROR","report_mutation":"NONE","expected":{"status":"FALLBACK","mode":"FALLBACK","provider_calls":1,"cause_selected":true}},
+    {"id":"invented-evidence","base_case_id":"spike-supported","provider_behavior":"INVENTED_EVIDENCE","report_mutation":"NONE","expected":{"status":"FALLBACK","mode":"FALLBACK","provider_calls":1,"cause_selected":true}},
+    {"id":"invented-recommendation","base_case_id":"spike-supported","provider_behavior":"INVENTED_RECOMMENDATION","report_mutation":"NONE","expected":{"status":"FALLBACK","mode":"FALLBACK","provider_calls":1,"cause_selected":true}},
+    {"id":"unsupported-cause","base_case_id":"spike-refuted","provider_behavior":"UNSUPPORTED_CAUSE","report_mutation":"NONE","expected":{"status":"FALLBACK","mode":"FALLBACK","provider_calls":1,"cause_selected":false}},
+    {"id":"unsafe-action","base_case_id":"spike-supported","provider_behavior":"UNSAFE_ACTION","report_mutation":"NONE","expected":{"status":"FALLBACK","mode":"FALLBACK","provider_calls":1,"cause_selected":true}},
+    {"id":"sensitive-outbound","base_case_id":"spike-supported","provider_behavior":"VALID","report_mutation":"SENSITIVE_FINDING","expected":{"status":"FALLBACK","mode":"FALLBACK","provider_calls":0,"cause_selected":true}}
+  ]
+}

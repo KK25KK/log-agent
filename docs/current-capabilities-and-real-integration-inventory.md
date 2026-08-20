@@ -3,8 +3,8 @@
 | 项目 | 内容 |
 | --- | --- |
 | 盘点日期 | 2026-08-20 |
-| 代码基线 | 证据约束 LLM 摘要工作树 / `codex/llm-evidence-summary` |
-| 当前结论 | 主体业务链、治理、证据、恢复、M4-B 本地可靠性治理、评测、回放、Mock Reviewer 反馈、非行动性灰度演练和 LLM 摘要 Mock/方舟适配器代码已经实现；真实方舟联调、M4-C 生产基础设施与真实试点仍未完成 |
+| 代码基线 | LLM 摘要安全评测工作树 / `codex/llm-summary-evaluation` |
+| 当前结论 | 主体业务链、治理、证据、恢复、M4-B 本地可靠性治理、评测、回放、Mock Reviewer 反馈、非行动性灰度演练、LLM 摘要 Mock/方舟适配器和摘要安全评测已经实现；真实方舟联调、M4-C 生产基础设施与真实试点仍未完成 |
 | 数据边界 | 当前自动化验收使用合成日志、合成飞书身份、合成变更和合成标签，不代表真实生产效果 |
 
 ## 1. 一句话概括
@@ -89,6 +89,7 @@ flowchart LR
 | Mock Reviewer 反馈账本 | 已完成 | 严格记录绑定快照/Case/Reviewer，内容哈希、append-only 纠正链和活动投影 | `internal/evaluation/feedback`、`internal/adapters/feedbackfs` | 两名虚拟 Reviewer 覆盖五个 Case；篡改、分叉、循环和跨边界纠正 fail closed |
 | 离线灰度决策演练 | 已完成 | 组合 B3 比较、活动反馈、quorum 和版本化策略，输出关闭状态/原因码 | `internal/evaluation/rollout`、`cmd/logagent/rollout.go` | 只产生 `SYNTHETIC_MOCK` 演练结论，永远禁止生产动作 |
 | LLM 证据摘要 | Mock 已验收；方舟代码待真实联调 | Worker 校验后构造隐私安全投影，模型只能引用已有 Evidence/候选/建议，失败走确定性 fallback | `internal/application/summary.go`、`internal/adapters/summarymock`、`internal/adapters/volcark` | Mock 主链 0 网络；真实启用后可生成更易读摘要，但不能改变事实、权限和处置 |
+| LLM 摘要安全评测 | 已完成离线切片 | 9 类严格场景实际运行 Eino Graph 与生产 SummaryService，覆盖异常、恶意引用、危险动作和敏感出站阻断 | `internal/evaluation/summaryeval`、`internal/adapters/summaryevalmock`、`cmd/logagent/summary_evaluate.go` | 当前 9/9 通过、8 次 Mock Provider 调用、敏感 Case 0 调用、Token/凭据/网络为 0；不代表真实模型质量 |
 
 ## 5. 哪些部分目前用 Mock，分别负责什么
 
@@ -372,7 +373,7 @@ flowchart LR
 - 主体 Go 架构、Eino 固定 Graph、状态机、证据链、查询治理、恢复、离线评测、回放、兼容快照比较、Mock 反馈和灰度演练已实现。
 - Mock 飞书 + Mock SLS 可以完成可重复的离线端到端验收。
 - 真实飞书、阿里云 SLS 与火山方舟适配器已经存在，并有明确配置入口；当前只有 Mock 路径完成离线主链验收。
-- 当前合成黄金集 5/5 通过，Trace 合同完整，外部网络调用为 0。
+- 当前 Engine 合成黄金集 5/5 通过，摘要安全集 9/9 通过，Trace 合同完整，外部网络调用为 0。
 
 ### 不可以宣称
 
@@ -399,6 +400,7 @@ flowchart LR
 | 评测、Trace、回放 | `internal/evaluation`、`internal/observability`、`internal/evaluation/replay` |
 | Mock 反馈与灰度演练 | `internal/evaluation/feedback`、`internal/adapters/feedbackfs`、`internal/evaluation/rollout` |
 | LLM 摘要合同与 Provider | `internal/application/summary.go`、`internal/adapters/summarymock`、`internal/adapters/volcark` |
+| LLM 摘要安全评测 | `internal/evaluation/summaryeval`、`internal/adapters/summaryevalmock`、`cmd/logagent/summary_evaluate.go` |
 | 唯一当前行为规范 | `docs/spec.md` |
 | 真实接入代码地图 | `docs/m6-real-system-entry-guide.md` |
 
@@ -410,6 +412,9 @@ go run ./cmd/logagent mock-e2e
 
 # 完全离线的合成评测与 Trace 门禁
 go run ./cmd/logagent evaluate
+
+# 完全离线的 LLM 摘要安全门禁
+go run ./cmd/logagent summary-evaluate
 
 # 保存与回放离线评测快照
 go run ./cmd/logagent evaluate --snapshot-dir .\data\evaluation-runs

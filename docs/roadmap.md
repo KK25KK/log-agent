@@ -85,6 +85,17 @@
 
 当前已经完成 provider-neutral 端口、确定性 Mock、Worker 后处理、严格输出/引用门禁、确定性回退、飞书有界展示和隔离的火山方舟 Responses API 适配器。默认 Mock 主链为 0 网络、0 凭据；真实 Key、批准模型、Prompt 审批、费用/留存策略和 opt-in smoke 仍待真实输入。
 
+#### 摘要安全评测切片（代码与离线验收完成，Mock-first）
+
+- 新增独立 `summary-evaluate` 命令，复用现有合成故障 Case、真实确定性 Eino Graph、生产 `SummaryService` 和生产输出校验。
+- 固定覆盖正常摘要、Provider 失败、虚构 Evidence/Recommendation、选择非支持候选、危险动作和敏感出站输入。
+- 逐 Case 校验原报告不变、引用完整、原因/建议只能来自确定性报告、fallback 正确、敏感输入在 Provider 前阻断，以及调用/Token/网络代理为零或固定值。
+- 使用独立数据集和报告 Schema，不改变现有 `evaluate`、`evaluation-replay-v1` 或 B3 的历史比较边界。
+
+本切片只能证明摘要安全合同对合成场景没有回归，不代表真实模型质量、真实 Token 费用或 Prompt 已获批准。
+
+验收：`summary-evaluate` 的 9/9 个合成 Case 通过；生产输出、确定性报告完整性、摘要引用、输入隐私和 fallback 准确率均为 1，8 次预期 Mock Provider 调用完全匹配，敏感输入 Case 在 Provider 前阻断，Token、凭据和外部网络调用均为 0。数据集指纹固定进入报告，失败时命令返回非零退出码。
+
 ## M4 开工前：飞书 + SLS 双 Mock 纵向联调（已完成）
 
 目标：在申请真实飞书应用和阿里云资源之前，用可重复的离线命令证明外部边界替换后，业务主链仍能完整运行。

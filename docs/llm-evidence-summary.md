@@ -92,7 +92,7 @@ go run ./cmd/logagent worker
 4. 确认方舟侧输入/输出留存、跨境/地域、审计和删除策略；代码里的 `store=false` 不能代替平台合同确认。
 5. 设定 Token/请求数/失败率/时延预算。当前模型调用尚未纳入 SQLite 租户额度，不能直接大规模开放。
 6. 用脱敏样本执行 opt-in smoke，验证完成响应形状、Request ID、Token 和 fallback；再在试点飞书卡片验收中文展示。
-7. 为真实历史故障标签增加摘要质量与安全评测。目前 `evaluate` 是 Engine 级确定性评测，不经过 Worker 摘要，因此 `prompt_used=false` 是正确事实。
+7. 用 `summary-evaluate` 保持合成安全门禁全绿，再为真实历史故障标签增加摘要可读性、忠实度和成本评测。`evaluate` 仍是 Engine 级确定性评测，不经过 Worker 摘要，因此 `prompt_used=false` 是正确事实。
 
 ## 6. 验收与能宣称的效果
 
@@ -104,8 +104,11 @@ go run ./cmd/logagent worker
 - 未知字段、伪造 Evidence/Recommendation、危险动作和 Provider 错误安全降级；
 - 摘要失败不改变 `SUCCEEDED`，确定性报告保持不变；
 - 飞书卡片只展示有界、转义后的摘要，并继续展示原报告。
+- `summary-evaluate` 的 9 类合成场景验证原报告不变、输入隐私、引用/原因/建议合同、fallback 和调用预算。
 
 尚不能宣称：真实模型质量已达标、真实 Token 费用已测量、Prompt 已获组织批准、方舟数据留存已满足要求、模型可判断根因或执行处置。
+
+结构化门禁能阻止未知 Evidence、原因候选、Recommendation 和危险动作，但不能从形式规则证明任意自然语言改写在语义上完全无幻觉。真实启用前必须补充脱敏历史故障、专家忠实度标签和团队批准阈值；用户界面仍应把确定性 Findings/Evidence 作为事实来源。
 
 ## 7. 官方接口依据
 

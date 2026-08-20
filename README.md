@@ -1,6 +1,6 @@
 # Log Agent
 
-这是一个用 Go 开发的“证据驱动”日志调查 Agent。M0～M3、M4-A/M4-B、M5-A、M5-B/B1～B3、M5-C 的 Mock Reviewer/离线灰度演练，以及证据约束的 LLM 摘要切片已经完成主体代码与离线测试；M4-C、真实火山方舟联调和 M5-C 真实灰度仍未完成。由于仓库没有真实飞书/SLS/发布平台/模型凭据、生产数据库、历史故障标注集与试点资源，当前只能称为“具备试点条件”，不能称为日常可用或生产可用。
+这是一个用 Go 开发的“证据驱动”日志调查 Agent。M0～M3、M4-A/M4-B、M5-A、M5-B/B1～B3、M5-C 的 Mock Reviewer/离线灰度演练，以及证据约束的 LLM 摘要与摘要安全评测切片已经完成主体代码与离线测试；M4-C、真实火山方舟联调和 M5-C 真实灰度仍未完成。由于仓库没有真实飞书/SLS/发布平台/模型凭据、生产数据库、历史故障标注集与试点资源，当前只能称为“具备试点条件”，不能称为日常可用或生产可用。
 
 ```text
 飞书消息
@@ -165,6 +165,16 @@ go run ./cmd/logagent evaluate
 命令输出结构化 JSON，包含数据集身份与指纹、规范化版本清单及其 SHA-256、逐 Case 完整 Agent Trace、聚合指标和门禁状态。通过时退出码为 `0`；数据集非法、Graph 执行失败、标签不一致、出现意外确定性结论、证据引用失效、Trace 不闭合/丢事件，或查询/成本代理合同越界时返回非零退出码。脚本和 CI 应检查退出码，不能只匹配输出文字。
 
 评测数字只描述受控合成回归集：它不是历史真实故障或专家标注上的准确率，`processed_bytes`/API 调用数不是阿里云账单，本机耗时也不是生产 SLO。
+
+## 运行 LLM 摘要离线安全门禁
+
+```powershell
+go run ./cmd/logagent summary-evaluate
+```
+
+该命令复用现有 5 类合成调查 Fixture，先运行真实确定性 Eino Graph，再通过生产 `SummaryService` 执行 9 类摘要场景：正常摘要、Provider 失败、虚构 Evidence、虚构 Recommendation、选择已反证原因、危险动作和敏感出站输入。它使用独立严格 Schema，不改变 `evaluate` 或历史回放格式。
+
+当前结果为 9/9 通过，production output、deterministic integrity、summary contract、input privacy 和 fallback accuracy 均为 1；8 次预期 Mock Provider 调用完全匹配，敏感输入 Case 的 Provider 调用为 0，Token、凭据和外部网络调用均为 0。这只能证明安全合同在合成回归集上成立，不代表火山方舟真实中文质量、费用或 Prompt 已获批准。
 
 ## 保存、回放并比较第八至九期离线快照
 
@@ -418,6 +428,7 @@ Get-ChildItem -Recurse -Filter *.go | ForEach-Object { gofmt -w $_.FullName }
 go test -count=1 ./...
 go vet ./...
 go run ./cmd/logagent evaluate
+go run ./cmd/logagent summary-evaluate
 go run ./cmd/logagent mock-e2e
 go run ./cmd/logagent demo
 ```
@@ -426,7 +437,7 @@ go run ./cmd/logagent demo
 
 默认测试全部离线，不读取云凭据、不访问 SLS 或发布平台。只有显式运行 `sls-check`、`sls-smoke`，或以 `LOG_AGENT_SLS_MODE=aliyun` 启动 Worker，才会访问真实 SLS。
 
-本轮离线验收中，`gofmt`、`go test -count=1 ./...`、`go vet ./...`、重点包乱序 20 轮、`evaluate`、`mock-e2e`、快照保存/回放/比较、`feedback-seed` 和 `rollout-rehearse` 均通过。`evaluate` 的 5/5 个合成 Case 全部通过，`trace_contract_accuracy=1`；共记录 76 个事件、13 个工具 Span、0 个丢弃事件，并与 10 次逻辑 SLS 观察、40 次 Provider 调用代理、3 次 Change Source 调用和 78,080 processed bytes 完全核对。C1/C2 手工链路形成十条活动反馈、五个完整 Case、两名虚拟 Reviewer quorum，并返回 `REHEARSAL_PASSED`、`SYNTHETIC_MOCK`、`production_action_allowed=false`；阻断和证据不足路径由离线测试覆盖。数据集指纹为 `caf2714c80a646c5da15134c6557879565ffc8e083a66da1f1c9e49d3d0dc1f8`，规范化版本指纹为 `14db14acf992ebd06d9d4d71f89056be2a2b984baeb6bf5de2c136db442f7c53`。这些仍只是全合成 Mock 的工程回归结果。`go test -race ./...` 未执行，因为当前 Windows 环境 `CGO_ENABLED=0` 且未安装 GCC，不能写成已通过。
+本轮离线验收中，`gofmt`、`go test -count=1 ./...`、`go vet ./...`、重点包乱序 20 轮、`evaluate`、`summary-evaluate`、`mock-e2e`、快照保存/回放/比较、`feedback-seed` 和 `rollout-rehearse` 均通过。`evaluate` 的 5/5 个合成 Case 全部通过，`trace_contract_accuracy=1`；共记录 76 个事件、13 个工具 Span、0 个丢弃事件，并与 10 次逻辑 SLS 观察、40 次 Provider 调用代理、3 次 Change Source 调用和 78,080 processed bytes 完全核对。`summary-evaluate` 的 9/9 个安全 Case 通过，预期/实际 Mock Provider 调用均为 8，敏感输入 Case 调用为 0，Token、凭据和外部网络调用为 0。C1/C2 手工链路形成十条活动反馈、五个完整 Case、两名虚拟 Reviewer quorum，并返回 `REHEARSAL_PASSED`、`SYNTHETIC_MOCK`、`production_action_allowed=false`；阻断和证据不足路径由离线测试覆盖。Engine 数据集指纹为 `caf2714c80a646c5da15134c6557879565ffc8e083a66da1f1c9e49d3d0dc1f8`，摘要数据集指纹为 `82e813aed0721f15b89a19b053da6b1d47509ab07f45122af4ed0c075e60a0b1`，规范化版本指纹为 `14db14acf992ebd06d9d4d71f89056be2a2b984baeb6bf5de2c136db442f7c53`。这些仍只是全合成 Mock 的工程回归结果。`go test -race ./...` 未执行，因为当前 Windows 环境 `CGO_ENABLED=0` 且未安装 GCC，不能写成已通过。
 
 ## 代码边界
 
@@ -448,11 +459,13 @@ internal/adapters/evalmock            M5-A 逐 Case 的 SLS 与 Change Source Fi
 internal/adapters/replayfs             B2 append-only 评测快照文件存储与严格读取
 internal/adapters/feedbackfs           append-only Mock Reviewer 反馈文件存储
 internal/evaluation                   严格合成数据集、质量/Trace 指标和离线门禁
+internal/evaluation/summaryeval       LLM 摘要严格合成场景、指标和安全门禁
 internal/evaluation/replay            B2 快照 Schema/内容哈希与 B3 兼容快照比较
 internal/evaluation/feedback          反馈记录、哈希、纠正链和活动投影
 internal/evaluation/rollout           版本化策略、quorum 和灰度演练决策
 internal/observability                Noop Observer、Trace 上下文与线程安全有界 Recorder
 internal/adapters/summarymock         默认离线摘要器
+internal/adapters/summaryevalmock     摘要失败、恶意引用、危险动作等评测行为
 internal/adapters/volcark             火山方舟 Responses API 适配器
 internal/application/summary.go       摘要输入投影、引用校验和确定性回退
 ```

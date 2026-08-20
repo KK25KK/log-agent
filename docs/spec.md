@@ -2,8 +2,8 @@
 
 | Metadata | Value |
 | --- | --- |
-| Version | 1.3-draft |
-| Status | Evidence-bound LLM summary Mock path and Volcengine Ark adapter implemented and offline verified; real Ark smoke, M4-C production infrastructure, and real gray rollout remain pending |
+| Version | 1.4 |
+| Status | Synthetic LLM-summary safety evaluation implemented and verified offline; real Ark smoke, M4-C production infrastructure, and real gray rollout remain pending |
 | Date | 2026-08-20 |
 
 ## 1. Overview
@@ -492,6 +492,15 @@ M5-C feedback uses a store separate from both the production investigation Store
 - [x] Model failures fall back to the deterministic report without changing investigation success or business state.
 - [x] A Volcengine Ark Responses API adapter is isolated behind the port, is not enabled by the default Mock configuration, and records Prompt/model/Token/latency metadata without serializing Prompt or Evidence into Agent events.
 - [ ] A real opt-in Ark smoke, approved model/Prompt, Token/cost budget, retention policy, and model-quality evaluation are deployment inputs rather than offline claims.
+
+### Synthetic LLM-summary safety evaluation
+
+- [x] A strict repository-owned dataset references existing synthetic investigation Cases and covers valid supported/no-spike/incomplete summaries, Provider failure, invented Evidence, invented Recommendation, unsupported-cause selection, unsafe action text, and sensitive outbound input.
+- [x] A dedicated offline command executes the current deterministic Eino report path before the production `SummaryService`; it does not change the existing `evaluate` report/replay Schema.
+- [x] Every Case reuses `ValidateEngineOutput` before and after enrichment, proves the deterministic report is unchanged, and independently verifies summary Evidence, cause, Recommendation, fallback, metadata, and Provider-call contracts.
+- [x] Sensitive deterministic text is rejected before the summarizer call; invalid or unavailable Provider output produces a deterministic fallback and never changes the investigation outcome.
+- [x] The report emits exact case pass, production-output, input-privacy, summary-contract, deterministic-integrity, fallback, Provider-call, Token-proxy, credential/network, dataset-version, and fingerprint gates.
+- [x] All inputs and Provider behaviors remain synthetic Mock with zero real incidents, expert labels, credentials, external-network calls, and production claims.
 
 ## 10. Open deployment inputs
 
