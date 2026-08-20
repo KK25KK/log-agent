@@ -27,9 +27,11 @@ LLM 只负责把已经验证的确定性报告改写得更易读，不能参与�
 Worker
   -> ValidateEngineOutput（确定性报告）
   -> SummaryService.BuildSummaryInput
+  -> SummaryQuotaStore.Reserve（可信租户 / 请求 / Token）
   -> ports.ReportSummarizer
        -> summarymock.Summarizer（默认，0 网络）
        -> volcark.Summarizer（显式配置，Responses API）
+  -> SummaryQuotaStore.Settle（实际 Token 或 UNKNOWN 预留）
   -> 严格解析和引用解析
   -> ValidateEngineOutput（含 Summary）
   -> Store.FinishSuccess
@@ -90,7 +92,7 @@ go run ./cmd/logagent worker
 2. 确认批准的方舟推理接入点 ID、地域、网络出口、超时和 QPS。
 3. 对固定 Prompt 做安全评审；Prompt 变化必须更新 `EvidenceSummaryPromptVersion`，并观察新指纹。
 4. 确认方舟侧输入/输出留存、跨境/地域、审计和删除策略；代码里的 `store=false` 不能代替平台合同确认。
-5. 设定 Token/请求数/失败率/时延预算。当前模型调用尚未纳入 SQLite 租户额度，不能直接大规模开放。
+5. 依据批准模型和真实 Prompt 校准 `LOG_AGENT_LLM_QUOTA_*`。当前已实现 SQLite 请求/Token 固定窗额度与熔断，但它不是跨实例生产全局额度，也不是火山账单。
 6. 用脱敏样本执行 opt-in smoke，验证完成响应形状、Request ID、Token 和 fallback；再在试点飞书卡片验收中文展示。
 7. 用 `summary-evaluate` 保持合成安全门禁全绿，再为真实历史故障标签增加摘要可读性、忠实度和成本评测。`evaluate` 仍是 Engine 级确定性评测，不经过 Worker 摘要，因此 `prompt_used=false` 是正确事实。
 
@@ -100,6 +102,7 @@ go run ./cmd/logagent worker
 
 - 模型输入不含已列禁止字段；
 - Mock 主链生成 `GENERATED/MOCK` 摘要且外部调用为 0；
+- Mock 主链在 Provider 前预留一笔摘要请求并结算零 Token；额度拒绝和重放都不会调用 Provider；
 - 方舟 HTTP 请求使用固定地址形状、Bearer、`store=false` 和固定输出上限；
 - 未知字段、伪造 Evidence/Recommendation、危险动作和 Provider 错误安全降级；
 - 摘要失败不改变 `SUCCEEDED`，确定性报告保持不变；

@@ -14,6 +14,7 @@ Mock 飞书消息
 -> SQLite current / baseline Query Checkpoint
 -> SQLite tenant quota reserve / settle
   -> Evidence + Report + Mock 变更关联
+  -> SQLite LLM request / Token reserve / settle
   -> Mock 证据摘要（严格引用 / 0 网络）
   -> Delivery Worker
   -> Mock 飞书 Reply/Patch 记录
@@ -50,6 +51,8 @@ go run ./cmd/logagent mock-e2e
 | `aliyun_sls.query_step_checkpoints` | `2` | current、baseline 的规范化聚合结果已持久化 |
 | `tenant_quota.observations` | `2` | 两个逻辑观察均经过租户额度账本 |
 | `tenant_quota.api_calls` | `8` | 结算值与 Evidence/Backend Provider 调用代理一致 |
+| `llm_quota.requests` | `1` | 摘要 Provider 前经过一笔租户额度预留与结算 |
+| `llm_quota.tokens` | `0` | Mock 摘要报告零实际 Token；不是火山账单 |
 | `aliyun_sls.raw_log_rows_returned` | `0` | 只返回聚合，不返回原始日志 |
 | `investigation.status` | `SUCCEEDED` | 调查成功持久化 |
 | `investigation.report.outcome` | `spike_detected` | 固定测试数据形成错误突增结论 |
@@ -86,7 +89,7 @@ go test -count=1 ./...
 go vet ./...
 ```
 
-测试会检查重复入站幂等、可信身份映射、严格命令、Reply/Patch 同卡顺序、ACL/Schema/预算/审计网关、两个 Query Checkpoint、租户额度结算、两份 Evidence、两次 Backend/八次模拟 Provider 调用、Mock 证据摘要、无原始日志以及最终成功报告。Checkpoint 的崩溃恢复语义另见 [`m4-recoverable-query-steps.md`](m4-recoverable-query-steps.md)，可靠性治理见 [`m4b-reliability-governance.md`](m4b-reliability-governance.md)。另有架构测试禁止双 Mock 源码直接导入真实飞书/SLS 适配器、配置加载器或网络包。
+测试会检查重复入站幂等、可信身份映射、严格命令、Reply/Patch 同卡顺序、ACL/Schema/预算/审计网关、两个 Query Checkpoint、SLS 租户额度结算、LLM 请求/Token 额度结算、两份 Evidence、两次 Backend/八次模拟 Provider 调用、Mock 证据摘要、无原始日志以及最终成功报告。Checkpoint 的崩溃恢复语义另见 [`m4-recoverable-query-steps.md`](m4-recoverable-query-steps.md)，可靠性治理见 [`m4b-reliability-governance.md`](m4b-reliability-governance.md)。另有架构测试禁止双 Mock 源码直接导入真实飞书/SLS 适配器、配置加载器或网络包。
 
 ## 后续替换顺序
 

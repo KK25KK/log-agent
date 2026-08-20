@@ -2,8 +2,8 @@
 
 | Metadata | Value |
 | --- | --- |
-| Version | 1.4 |
-| Status | Synthetic LLM-summary safety evaluation implemented and verified offline; real Ark smoke, M4-C production infrastructure, and real gray rollout remain pending |
+| Version | 1.5 |
+| Status | LLM summary tenant quota and cost circuit implemented and verified offline; real Ark smoke, M4-C production infrastructure, and real gray rollout remain pending |
 | Date | 2026-08-20 |
 
 ## 1. Overview
@@ -48,6 +48,7 @@ Users can ask the bot to investigate an error spike for a known service, environ
 - A mock-first rollout-readiness control plane that binds bounded reviewer feedback to exact immutable evaluation snapshots before producing a non-actionable rehearsal decision.
 - An append-only feedback history with explicit correction lineage, reviewer quorum, closed verdict/reason codes, and deterministic rollout-policy evaluation.
 - A required provider-neutral LLM summary stage that can use a Mock implementation offline and a guarded Volcengine Ark adapter in deployment. It may summarize only validated Findings, Evidence references, cause-analysis status, limitations, and deterministic recommendations.
+- A SQLite technical-preview LLM quota ledger that atomically reserves one summary request plus a conservative Token allowance per trusted tenant before any provider call, then settles actual usage or retains an unknown-cost reservation.
 - A provider-neutral delivery-failure taxonomy, bounded retry, append-only attempt audit, operator-visible dead letters, and transactionally guarded replay of the existing card queue.
 - A SQLite technical-preview tenant quota ledger that reserves fixed query-call and processed-byte proxies before the governed executor and settles success, deterministic denial, or unknown external outcome without retrying paid reads.
 - A closed high-risk approval state contract with immutable request hashes and one-time consumption; no high-risk tool is registered in the current read-only runtime.
@@ -67,6 +68,7 @@ Users can ask the bot to investigate an error spike for a known service, environ
 - Exact RMB cost prediction; processed bytes are the first cost proxy.
 - Cross-process global concurrency quotas; the first implementation limits each worker process.
 - Treating the SQLite tenant quota ledger as an organization-wide or multi-region production quota service.
+- Treating local LLM request/Token quotas as a Volcengine bill, a distributed global limit, or proof that a real model fits the approved cost envelope.
 - Executing a high-risk tool merely because an approval record exists; production identity, tool registration, policy and executor integration remain M4-C inputs.
 - Automatic retry of a paid query whose external outcome is unknown.
 - Provider exactly-once query execution; SLS does not accept an application idempotency key.
@@ -139,8 +141,10 @@ M5-C rollout-readiness rehearsal
 
 Required evidence-bound LLM summary
     -> validated deterministic Report only
+    -> trusted app/tenant quota reservation
     -> provider-neutral ReportSummarizer port
     -> offline Mock or guarded Volcengine Ark adapter
+    -> actual Token settlement or unknown-cost retention
     -> strict structured output and Evidence-ID validation
     -> AI-labelled Feishu summary or deterministic fallback
 ```
@@ -306,6 +310,9 @@ An explicit diagnostic command loads the same catalog and credentials as a real 
 3. The model output is a strict bounded structure for phenomenon summary, possible cause, evidence references, limitations, and next steps. Every referenced Evidence ID must exist in the input report, and the model cannot change confidence, completeness, cause verdict, or authorization.
 4. Timeout, throttling, provider failure, invalid JSON, unknown fields, unsupported claims, or broken references fall back to the original deterministic report. They cannot fail or promote the investigation.
 5. Provider/model, Prompt version/fingerprint, bounded request ID, generated/fallback status, Token usage, and latency are persisted when a real model is enabled; Prompt text and evidence content are not written into Agent events.
+6. When summary quota is enabled, the application derives a tenant key only from the trusted inbound principal and reserves one request plus a configured Token allowance before calling the provider. Quota denial, replay, or ledger failure performs zero provider calls and uses the deterministic fallback summary.
+7. Successful provider calls settle their reported input/output/total Token usage. A timeout, cancellation, transport failure, or process boundary with uncertain provider outcome retains the conservative reservation as `UNKNOWN`; it is never automatically released or retried. A repeated investigation/prompt usage key performs zero new provider calls.
+8. If actual usage exceeds the per-request reservation, the actual usage is still durably recorded because the cost has already occurred, but the model output is not accepted. This opens the fixed-window circuit as applicable and the user receives the deterministic fallback.
 
 ## 7. Behavioral contracts and lifecycle
 
@@ -491,7 +498,10 @@ M5-C feedback uses a store separate from both the production investigation Store
 - [x] Strict output validation rejects unknown fields, invented Evidence references, changed verdicts/confidence, unsafe actions, and sensitive data.
 - [x] Model failures fall back to the deterministic report without changing investigation success or business state.
 - [x] A Volcengine Ark Responses API adapter is isolated behind the port, is not enabled by the default Mock configuration, and records Prompt/model/Token/latency metadata without serializing Prompt or Evidence into Agent events.
-- [ ] A real opt-in Ark smoke, approved model/Prompt, Token/cost budget, retention policy, and model-quality evaluation are deployment inputs rather than offline claims.
+- [x] A trusted tenant is atomically charged one summary request and a conservative Token reservation before any provider call; over-budget, duplicate, or ledger-failure paths make zero provider calls and fall back deterministically.
+- [x] Success settles actual input/output/total Tokens, while timeout, cancellation, transport failure, or uncertain outcome retains the reservation as unknown cost without automatic retry.
+- [x] The full Mock E2E traverses the LLM quota ledger with one request, zero actual Tokens, zero credentials, and zero external-network calls.
+- [ ] A real opt-in Ark smoke, approved model/Prompt, calibrated Token/cost policy, retention policy, production-global quota service, and model-quality evaluation are deployment inputs rather than offline claims.
 
 ### Synthetic LLM-summary safety evaluation
 

@@ -96,6 +96,16 @@
 
 验收：`summary-evaluate` 的 9/9 个合成 Case 通过；生产输出、确定性报告完整性、摘要引用、输入隐私和 fallback 准确率均为 1，8 次预期 Mock Provider 调用完全匹配，敏感输入 Case 在 Provider 前阻断，Token、凭据和外部网络调用均为 0。数据集指纹固定进入报告，失败时命令返回非零退出码。
 
+#### LLM 摘要租户额度与成本熔断（代码与离线验收完成，SQLite 技术预览）
+
+- 用可信 App/Tenant 哈希隔离固定窗口，请求数和 Token 分别计量。
+- 调用 Provider 前原子预留一次请求和保守 Token；额度拒绝、usage key 重放或账本异常时零 Provider 调用并确定性回退。
+- Provider 成功结算实际 input/output/total Tokens；超时、取消或外部结果不确定时保留预留 Token，不自动重试。
+- 实际 Token 超过单次预留时仍记录已发生用量，但拒绝采用模型输出。
+- `mock-e2e` 已验证一笔请求、零实际 Token、零凭据与零网络调用；并发预留和失败路径由离线测试覆盖。
+
+这不是火山账单或生产全局额度。真实模型的 Token/价格校准、组织策略和生产关系库全局原子配额仍待真实输入。完整合同见 [`llm-summary-quota.md`](llm-summary-quota.md)。
+
 ## M4 开工前：飞书 + SLS 双 Mock 纵向联调（已完成）
 
 目标：在申请真实飞书应用和阿里云资源之前，用可重复的离线命令证明外部边界替换后，业务主链仍能完整运行。

@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"logagent/internal/adapters/sqlite"
 	"logagent/internal/config"
 )
 
@@ -18,7 +19,15 @@ func TestBuildSummaryServiceModes(t *testing.T) {
 		{name: "mock", mode: "mock", wantNil: false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			service, err := buildSummaryService(config.Config{LLM: config.LLMConfig{Mode: test.mode, Timeout: time.Second}}, now)
+			store, err := sqlite.Open(":memory:")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			service, err := buildSummaryService(config.Config{
+				LLM:      config.LLMConfig{Mode: test.mode, Timeout: time.Second},
+				LLMQuota: config.LLMQuotaConfig{Window: time.Hour, MaxRequests: 10, MaxTokens: 40960, ReservedTokensPerRequest: 4096},
+			}, store, now)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -30,9 +39,14 @@ func TestBuildSummaryServiceModes(t *testing.T) {
 }
 
 func TestBuildSummaryServiceRejectsUnsafeVolcengineEndpoint(t *testing.T) {
-	_, err := buildSummaryService(config.Config{LLM: config.LLMConfig{
+	store, err := sqlite.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	_, err = buildSummaryService(config.Config{LLM: config.LLMConfig{
 		Mode: "volcengine", APIKey: "test-key", Model: "endpoint", BaseURL: "http://insecure.example", Timeout: time.Second,
-	}}, time.Now)
+	}, LLMQuota: config.LLMQuotaConfig{Window: time.Hour, MaxRequests: 10, MaxTokens: 40960, ReservedTokensPerRequest: 4096}}, store, time.Now)
 	if err == nil {
 		t.Fatal("want insecure Volcengine endpoint error")
 	}

@@ -190,6 +190,35 @@ CREATE TABLE IF NOT EXISTS query_quota_events (
     occurred_at INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS summary_quota_reservations (
+    usage_key TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL,
+    investigation_id TEXT NOT NULL,
+    prompt_version TEXT NOT NULL,
+    window_start INTEGER NOT NULL,
+    window_end INTEGER NOT NULL,
+    reserved_tokens INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    actual_input_tokens INTEGER NOT NULL DEFAULT 0,
+    actual_output_tokens INTEGER NOT NULL DEFAULT 0,
+    actual_total_tokens INTEGER NOT NULL DEFAULT 0,
+    reason_code TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS summary_quota_events (
+    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    usage_key TEXT NOT NULL,
+    tenant_id TEXT NOT NULL,
+    outcome TEXT NOT NULL,
+    reason_code TEXT NOT NULL,
+    input_tokens INTEGER NOT NULL,
+    output_tokens INTEGER NOT NULL,
+    total_tokens INTEGER NOT NULL,
+    occurred_at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS approval_requests (
     id TEXT PRIMARY KEY,
     investigation_id TEXT NOT NULL,
@@ -240,6 +269,12 @@ ON query_quota_reservations(tenant_id, window_start, window_end, status);
 
 CREATE INDEX IF NOT EXISTS idx_query_quota_events_tenant
 ON query_quota_events(tenant_id, occurred_at);
+
+CREATE INDEX IF NOT EXISTS idx_summary_quota_window
+ON summary_quota_reservations(tenant_id, window_start, window_end, status);
+
+CREATE INDEX IF NOT EXISTS idx_summary_quota_events_tenant
+ON summary_quota_events(tenant_id, occurred_at);
 
 CREATE INDEX IF NOT EXISTS idx_approval_status
 ON approval_requests(status, expires_at);

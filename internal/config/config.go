@@ -21,6 +21,7 @@ type Config struct {
 	SLS               SLSConfig
 	Quota             QuotaConfig
 	LLM               LLMConfig
+	LLMQuota          LLMQuotaConfig
 	SmokePrincipal    SmokePrincipal
 }
 
@@ -66,6 +67,13 @@ type LLMConfig struct {
 	Model   string
 	BaseURL string
 	Timeout time.Duration
+}
+
+type LLMQuotaConfig struct {
+	Window                   time.Duration
+	MaxRequests              int64
+	MaxTokens                int64
+	ReservedTokensPerRequest int64
 }
 
 type SmokePrincipal struct {
@@ -220,6 +228,28 @@ func Load() (Config, error) {
 	config.LLM.Timeout, err = durationOrDefault("LOG_AGENT_LLM_TIMEOUT", 12*time.Second)
 	if err != nil {
 		return Config{}, err
+	}
+	config.LLMQuota.Window, err = durationOrDefault("LOG_AGENT_LLM_QUOTA_WINDOW", time.Hour)
+	if err != nil {
+		return Config{}, err
+	}
+	if config.LLMQuota.Window < time.Minute || config.LLMQuota.Window > 24*time.Hour {
+		return Config{}, fmt.Errorf("LOG_AGENT_LLM_QUOTA_WINDOW must be between 1m and 24h")
+	}
+	config.LLMQuota.MaxRequests, err = int64OrDefault("LOG_AGENT_LLM_QUOTA_MAX_REQUESTS", 100)
+	if err != nil {
+		return Config{}, err
+	}
+	config.LLMQuota.MaxTokens, err = int64OrDefault("LOG_AGENT_LLM_QUOTA_MAX_TOKENS", 409600)
+	if err != nil {
+		return Config{}, err
+	}
+	config.LLMQuota.ReservedTokensPerRequest, err = int64OrDefault("LOG_AGENT_LLM_QUOTA_RESERVED_TOKENS", 4096)
+	if err != nil {
+		return Config{}, err
+	}
+	if config.LLMQuota.ReservedTokensPerRequest > config.LLMQuota.MaxTokens {
+		return Config{}, fmt.Errorf("LOG_AGENT_LLM_QUOTA_RESERVED_TOKENS cannot exceed LOG_AGENT_LLM_QUOTA_MAX_TOKENS")
 	}
 	if config.LLM.Mode == "volcengine" && (config.LLM.APIKey == "" || config.LLM.Model == "") {
 		return Config{}, fmt.Errorf("ARK_API_KEY and LOG_AGENT_ARK_MODEL are required when LOG_AGENT_LLM_MODE=volcengine")

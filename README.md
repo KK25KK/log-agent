@@ -1,6 +1,6 @@
 # Log Agent
 
-这是一个用 Go 开发的“证据驱动”日志调查 Agent。M0～M3、M4-A/M4-B、M5-A、M5-B/B1～B3、M5-C 的 Mock Reviewer/离线灰度演练，以及证据约束的 LLM 摘要与摘要安全评测切片已经完成主体代码与离线测试；M4-C、真实火山方舟联调和 M5-C 真实灰度仍未完成。由于仓库没有真实飞书/SLS/发布平台/模型凭据、生产数据库、历史故障标注集与试点资源，当前只能称为“具备试点条件”，不能称为日常可用或生产可用。
+这是一个用 Go 开发的“证据驱动”日志调查 Agent。M0～M3、M4-A/M4-B、M5-A、M5-B/B1～B3、M5-C 的 Mock Reviewer/离线灰度演练，以及证据约束的 LLM 摘要、摘要安全评测和租户请求/Token 额度治理已经完成主体代码与离线测试；M4-C、真实火山方舟联调和 M5-C 真实灰度仍未完成。由于仓库没有真实飞书/SLS/发布平台/模型凭据、生产数据库、历史故障标注集与试点资源，当前只能称为“具备试点条件”，不能称为日常可用或生产可用。
 
 ```text
 飞书消息
@@ -15,7 +15,9 @@
   -> Evidence + M2 Report
   -> 可选的受控 Change Catalog
   -> 支持/反证 Ledger + CauseAnalysis
+  -> LLM 请求/Token 租户额度预留
   -> 证据约束摘要（默认 Mock / 可切火山方舟 / 失败回退）
+  -> 实际 Token 结算或未知成本保留
   -> SQLite 持久化卡片事件
   -> 飞书接单 / 进度 / 最终报告卡
   -> 查看证据 / 取消 / 扩大窗口 / 重新运行
@@ -89,6 +91,8 @@ Eino 只负责流程编排，不负责业务状态、权限、幂等、审计和
 - 模型只能改写现象和证据说明、选择已有 `SUPPORTED_CANDIDATE` 以及选择已有 Recommendation Code；原因和下一步正文由应用从确定性报告反查，模型不能发明动作或提升结论。
 - 未知字段、无效引用、敏感内容、危险动作、超时和 Provider 错误都会生成显式 `FALLBACK` 摘要，不改变调查的成功状态和确定性报告。
 - 保存 Provider、模型、Prompt 版本/指纹、Request ID、Token 与耗时元数据，但不把 Prompt 正文或证据内容写入 Agent Trace。设计与真实接入说明见 [`docs/llm-evidence-summary.md`](docs/llm-evidence-summary.md)。
+- 启用摘要时，Worker 会先按可信 App/Tenant 在 SQLite 固定窗账本预留一次请求和保守 Token；额度拒绝、重放或账本错误时不会调用 Provider，只生成确定性 fallback。
+- Provider 成功结算实际 input/output/total Tokens；超时、取消或结果不确定按预留 Token 保留费用代理，绝不自动重复调用。完整合同见 [`docs/llm-summary-quota.md`](docs/llm-summary-quota.md)。
 
 ### M4-A 可恢复查询步骤
 
@@ -151,6 +155,8 @@ go run ./cmd/logagent mock-e2e
 输出中的 `safety.external_network_calls=0`、`credentials_required=false` 表示当前运行完全离线；`schema_calls=1`、`backend_execute_calls=2`、`provider_api_calls=8`、`query_audit_events=4` 和 `query_step_checkpoints=2` 分别证明固定 Schema、当前/基线观察、四聚合调用元数据、开始/终态审计和两个持久化步骤已经经过真实应用链路。固定的 120/20 条错误、发布事件和飞书标识全部是测试数据，不代表真实阿里云或飞书结果。完整 Mock 边界见 [`docs/local-mock-e2e.md`](docs/local-mock-e2e.md)，恢复合同见 [`docs/m4-recoverable-query-steps.md`](docs/m4-recoverable-query-steps.md)。
 
 `tenant_quota` 还证明两个逻辑观察经过 SQLite 固定窗额度预留/结算且没有打开成本代理熔断。该值是 Mock usage，不是阿里云账单。
+
+`llm_quota.requests=1`、`tokens=0` 证明摘要调用也经过独立的 SQLite 请求/Token 预留与结算；零 Token 来自确定性 Mock，不代表火山方舟实际消耗或账单。
 
 `llm_summary.mode=MOCK`、`status=GENERATED`、`external_api_calls=0` 证明摘要合同经过主链，但没有调用真实模型。`evaluate` 仍是 Engine 级确定性评测，不经过 Worker 摘要，因此其版本清单继续如实记录 `prompt_used=false`。
 
@@ -349,6 +355,10 @@ $env:LOG_AGENT_SLS_ECS_RAM_ROLE_NAME = "your-role-name"
 | `LOG_AGENT_TENANT_QUOTA_MAX_API_CALLS` | `400` | 每租户 Provider 调用代理上限 |
 | `LOG_AGENT_TENANT_QUOTA_MAX_PROCESSED_BYTES` | `8589934592` | 每租户处理字节代理上限 |
 | `LOG_AGENT_TENANT_QUOTA_RESERVED_BYTES` | `268435456` | 每个未结算观察预留的字节代理 |
+| `LOG_AGENT_LLM_QUOTA_WINDOW` | `1h` | 摘要固定 UTC 额度窗口 |
+| `LOG_AGENT_LLM_QUOTA_MAX_REQUESTS` | `100` | 每租户每窗口摘要请求上限 |
+| `LOG_AGENT_LLM_QUOTA_MAX_TOKENS` | `409600` | 每租户每窗口 Token 上限 |
+| `LOG_AGENT_LLM_QUOTA_RESERVED_TOKENS` | `4096` | 每次摘要 Provider 调用前预留 Token |
 
 这些额度由可信 App/Tenant 哈希隔离，只是 SQLite 技术预览，不是多实例全局限额或费用账单。死信运维命令：
 
@@ -439,6 +449,8 @@ go run ./cmd/logagent demo
 
 本轮离线验收中，`gofmt`、`go test -count=1 ./...`、`go vet ./...`、重点包乱序 20 轮、`evaluate`、`summary-evaluate`、`mock-e2e`、快照保存/回放/比较、`feedback-seed` 和 `rollout-rehearse` 均通过。`evaluate` 的 5/5 个合成 Case 全部通过，`trace_contract_accuracy=1`；共记录 76 个事件、13 个工具 Span、0 个丢弃事件，并与 10 次逻辑 SLS 观察、40 次 Provider 调用代理、3 次 Change Source 调用和 78,080 processed bytes 完全核对。`summary-evaluate` 的 9/9 个安全 Case 通过，预期/实际 Mock Provider 调用均为 8，敏感输入 Case 调用为 0，Token、凭据和外部网络调用为 0。C1/C2 手工链路形成十条活动反馈、五个完整 Case、两名虚拟 Reviewer quorum，并返回 `REHEARSAL_PASSED`、`SYNTHETIC_MOCK`、`production_action_allowed=false`；阻断和证据不足路径由离线测试覆盖。Engine 数据集指纹为 `caf2714c80a646c5da15134c6557879565ffc8e083a66da1f1c9e49d3d0dc1f8`，摘要数据集指纹为 `82e813aed0721f15b89a19b053da6b1d47509ab07f45122af4ed0c075e60a0b1`，规范化版本指纹为 `14db14acf992ebd06d9d4d71f89056be2a2b984baeb6bf5de2c136db442f7c53`。这些仍只是全合成 Mock 的工程回归结果。`go test -race ./...` 未执行，因为当前 Windows 环境 `CGO_ENABLED=0` 且未安装 GCC，不能写成已通过。
 
+本次 LLM 额度治理还单独通过了 `SummaryQuota|LLMQuota|MockE2E|BuildSummaryService` 定向 50 轮；Mock 主链为 1 次摘要请求、0 Token、0 凭据和 0 网络调用。
+
 ## 代码边界
 
 ```text
@@ -467,6 +479,7 @@ internal/observability                Noop Observer、Trace 上下文与线程�
 internal/adapters/summarymock         默认离线摘要器
 internal/adapters/summaryevalmock     摘要失败、恶意引用、危险动作等评测行为
 internal/adapters/volcark             火山方舟 Responses API 适配器
+internal/adapters/sqlite/summary_quota.go  LLM 请求/Token 预留、结算与成本熔断账本
 internal/application/summary.go       摘要输入投影、引用校验和确定性回退
 ```
 
@@ -487,7 +500,7 @@ internal/application/summary.go       摘要输入投影、引用校验和确定
 - M3 不增加 SLS 查询，也没有版本分布、首次出现时间、Trace、指标、拓扑或知识库证据；相关性不会被表述成已确认根因。
 - M5-A 数据集没有真实故障和专家标注，只能发现已编码合成场景上的回归；它不测量生产泛化能力，也不能批准灰度。M5-B/B3 已补齐合成 Engine 执行的有界 Trace、版本合同、append-only 历史与兼容运行比较，但真实反馈、真实数据集、团队阈值、试点群和回滚验收仍属于 M5-C。
 - M5-B/B3 不是飞书接单、SQLite Worker、SLS 网络请求到卡片投递的跨进程分布式 Trace，也没有生产 Trace 后端、采样/保留策略或延迟 SLO。内容哈希用于完整性检测，不是加密、签名或身份认证。
-- Eino Graph 和 `evaluate` 仍是确定性、无 LLM 的，因此评测版本清单明确为 `prompt_used=false`。Worker 后处理已经实现证据约束摘要，默认走 Mock；火山方舟协议适配器已具备但尚未用真实凭据联调。真实 Prompt/模型质量、Token 成本和留存门禁仍需真实试点验收。
+- Eino Graph 和 `evaluate` 仍是确定性、无 LLM 的，因此评测版本清单明确为 `prompt_used=false`。Worker 后处理已经实现证据约束摘要和 SQLite 请求/Token 额度治理，默认走 Mock；火山方舟协议适配器已具备但尚未用真实凭据联调。真实 Prompt/模型质量、Token 价格校准、生产全局额度和留存门禁仍需真实试点验收。
 - 非文本消息、格式错误的命令和永久无效事件目前会被安全确认但不会回复用法提示；这是已知的交互限制。
 - 系统只有只读调查能力，不包含自动处置工具。
 

@@ -84,7 +84,7 @@ func executeSummaryEvaluation(ctx context.Context, dataset summaryeval.Dataset, 
 		if err != nil {
 			return summaryeval.Observation{}, err
 		}
-		after := service.Enrich(ctx, evidence, deterministicReport)
+		after := service.Enrich(ctx, baseCase.Request.Requester, evidence, deterministicReport)
 		providerStats := provider.Stats()
 		observation := summaryeval.Observation{
 			Requester: baseCase.Request.Requester, Evidence: append([]domain.Evidence(nil), evidence...),

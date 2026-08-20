@@ -12,7 +12,7 @@
 3. 查询治理（资源目录/ACL/Schema/预算/审计）：`query` Gateway 已经接管真实执行前门禁。
 4. 持久化状态机：当前仍是 `sqlite`，但这是已知技术预览；真实化要实现 DB 适配器并替换启动文件里的 `sqlite.Open`。
 5. 变更来源（M3）：默认 `disabled`，可配静态 Change Catalog 文件；真实接平台还未建模。
-6. LLM 摘要：默认 `summarymock`，火山方舟 Responses API 适配器已实现；真实模型、Prompt、Token/留存策略尚未联调。
+6. LLM 摘要：默认 `summarymock`，火山方舟 Responses API 适配器与 SQLite 请求/Token 额度治理已实现；真实模型、Prompt、Token 价格校准与留存策略尚未联调。
 
 > 关键约束：不允许把飞书 SDK 或阿里云 SDK 引入业务核心层。接口边界由 `internal/ports` 保护；真实/离线实现只切换在适配层和启动组装处。
 
@@ -117,6 +117,7 @@
 - `internal/adapters/volcark/summarizer.go`：火山方舟 Responses API 适配器；固定 `store=false`、超时、响应上限、禁止重定向与错误正文泄漏。
 - `cmd/logagent/summary.go`：按 `LOG_AGENT_LLM_MODE=disabled|mock|volcengine` 组装；只有 `volcengine` 读取 `ARK_API_KEY` 和模型 ID。
 - `internal/application/worker.go`：先校验确定性报告，在租约心跳仍活跃时生成摘要，再连同摘要二次校验并持久化。
+- `internal/ports/reliability.go`、`internal/adapters/sqlite/summary_quota.go`：在 Provider 前按可信租户预留请求/Token，成功结算实际 Token，结果不确定时保留预留额度。
 
 真实接入不得把模型调用放进 Eino Graph、Query Gateway 或飞书适配器，也不得让模型输出直接变成查询、权限或处置动作。完整清单见 [`llm-evidence-summary.md`](llm-evidence-summary.md)。
 
@@ -145,7 +146,7 @@
 ### 4.4 进入真实火山方舟摘要
 
 1. 先保持 `LOG_AGENT_LLM_MODE=mock` 完成飞书/SLS 主链试点。
-2. 完成模型、Prompt、数据留存、Token/费用与密钥托管审批。
+2. 完成模型、Prompt、数据留存、Token/费用与密钥托管审批，并依据真实样本校准 `LOG_AGENT_LLM_QUOTA_*`。
 3. 仅向 Worker 注入 `ARK_API_KEY`，设置 `LOG_AGENT_LLM_MODE=volcengine` 与 `LOG_AGENT_ARK_MODEL`。
 4. 用脱敏样本做 opt-in smoke，确认 Token、时延、Request ID 和错误 fallback；真实错误正文不得进入报告、卡片或 Trace。
 5. 方舟失败不会改变调查成功；如发生异常，查看报告 `summary.status=FALLBACK`，确定性 Evidence/Findings 仍是事实来源。

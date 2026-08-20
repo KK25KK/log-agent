@@ -3,8 +3,8 @@
 | 项目 | 内容 |
 | --- | --- |
 | 盘点日期 | 2026-08-20 |
-| 代码基线 | LLM 摘要安全评测工作树 / `codex/llm-summary-evaluation` |
-| 当前结论 | 主体业务链、治理、证据、恢复、M4-B 本地可靠性治理、评测、回放、Mock Reviewer 反馈、非行动性灰度演练、LLM 摘要 Mock/方舟适配器和摘要安全评测已经实现；真实方舟联调、M4-C 生产基础设施与真实试点仍未完成 |
+| 代码基线 | LLM 摘要额度治理工作树 / `codex/llm-summary-quota` |
+| 当前结论 | 主体业务链、治理、证据、恢复、M4-B 本地可靠性治理、评测、回放、Mock Reviewer 反馈、非行动性灰度演练、LLM 摘要 Mock/方舟适配器、安全评测和请求/Token 额度治理已经实现；真实方舟联调、M4-C 生产基础设施与真实试点仍未完成 |
 | 数据边界 | 当前自动化验收使用合成日志、合成飞书身份、合成变更和合成标签，不代表真实生产效果 |
 
 ## 1. 一句话概括
@@ -90,6 +90,7 @@ flowchart LR
 | 离线灰度决策演练 | 已完成 | 组合 B3 比较、活动反馈、quorum 和版本化策略，输出关闭状态/原因码 | `internal/evaluation/rollout`、`cmd/logagent/rollout.go` | 只产生 `SYNTHETIC_MOCK` 演练结论，永远禁止生产动作 |
 | LLM 证据摘要 | Mock 已验收；方舟代码待真实联调 | Worker 校验后构造隐私安全投影，模型只能引用已有 Evidence/候选/建议，失败走确定性 fallback | `internal/application/summary.go`、`internal/adapters/summarymock`、`internal/adapters/volcark` | Mock 主链 0 网络；真实启用后可生成更易读摘要，但不能改变事实、权限和处置 |
 | LLM 摘要安全评测 | 已完成离线切片 | 9 类严格场景实际运行 Eino Graph 与生产 SummaryService，覆盖异常、恶意引用、危险动作和敏感出站阻断 | `internal/evaluation/summaryeval`、`internal/adapters/summaryevalmock`、`cmd/logagent/summary_evaluate.go` | 当前 9/9 通过、8 次 Mock Provider 调用、敏感 Case 0 调用、Token/凭据/网络为 0；不代表真实模型质量 |
+| LLM 请求/Token 额度 | 已完成 SQLite 技术预览 | 可信租户固定窗预留请求/Token，成功结算实际用量，不确定结果保留预留成本 | `internal/application/summary.go`、`internal/adapters/sqlite/summary_quota.go` | Mock 主链 1 请求/0 Token；真实 Token、价格与生产全局额度待校准 |
 
 ## 5. 哪些部分目前用 Mock，分别负责什么
 
@@ -364,7 +365,7 @@ flowchart LR
 | Trace/指标/拓扑跨信号因果分析 | 未实现 | 当前只分析 SLS 聚合与静态 Change Source |
 | 真实发布平台/CMDB/SOP/错误码知识库 | 未实现 | 只有 ChangeSource 接口和静态目录 |
 | M5-C 真实试点灰度 | 未实现 | 缺真实历史集、专家标签、团队门槛和试点验收 |
-| 火山方舟真实摘要验收 | 适配器代码已具备，未真实联调 | 缺真实 Key、批准模型/Prompt、Token 预算、数据留存策略和 opt-in smoke；摘要仍不能决定权限、查询和事实 |
+| 火山方舟真实摘要验收 | 适配器与本地额度代码已具备，未真实联调 | 缺真实 Key、批准模型/Prompt、真实 Token/价格校准、数据留存策略和 opt-in smoke；摘要仍不能决定权限、查询和事实 |
 
 ## 10. 可以和不可以对外宣称什么
 
@@ -400,6 +401,7 @@ flowchart LR
 | 评测、Trace、回放 | `internal/evaluation`、`internal/observability`、`internal/evaluation/replay` |
 | Mock 反馈与灰度演练 | `internal/evaluation/feedback`、`internal/adapters/feedbackfs`、`internal/evaluation/rollout` |
 | LLM 摘要合同与 Provider | `internal/application/summary.go`、`internal/adapters/summarymock`、`internal/adapters/volcark` |
+| LLM 请求/Token 额度 | `internal/domain/reliability.go`、`internal/ports/reliability.go`、`internal/adapters/sqlite/summary_quota.go` |
 | LLM 摘要安全评测 | `internal/evaluation/summaryeval`、`internal/adapters/summaryevalmock`、`cmd/logagent/summary_evaluate.go` |
 | 唯一当前行为规范 | `docs/spec.md` |
 | 真实接入代码地图 | `docs/m6-real-system-entry-guide.md` |

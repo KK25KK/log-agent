@@ -14,6 +14,7 @@
 | [`offline-feedback-and-rollout-rehearsal.md`](offline-feedback-and-rollout-rehearsal.md) | 严格 Mock Reviewer 反馈账本、纠正链和非行动性灰度/回滚演练 | Feedback Schema、策略、quorum、CLI 或安全边界变化时同步更新 |
 | [`llm-evidence-summary.md`](llm-evidence-summary.md) | 必需 LLM 摘要的输入投影、引用门禁、Mock/火山方舟适配器、降级和真实接入步骤 | 摘要 Schema、Provider、Prompt 或安全边界变化时同步更新 |
 | [`llm-summary-evaluation-gate.md`](llm-summary-evaluation-gate.md) | LLM 摘要的合成安全场景、独立门禁与原评测/回放兼容边界 | 摘要评测数据集、指标、门禁或 CLI 变化时同步更新 |
+| [`llm-summary-quota.md`](llm-summary-quota.md) | LLM 摘要调用前的租户请求/Token 预留、结算、熔断与 Mock 验收 | 摘要额度状态机、配置、SQLite Schema 或生产边界变化时同步更新 |
 | [`m6-real-system-entry-guide.md`](m6-real-system-entry-guide.md) | 真实系统接入地图：SLS/飞书/存储/变更源各真实入口与组装点 | 生产化接入前保持与启动组装和接口边界一致 |
 | [`current-capabilities-and-real-integration-inventory.md`](current-capabilities-and-real-integration-inventory.md) | 当前功能、Mock 边界、真实系统职责、接入步骤和预期效果的统一盘点 | 阶段完成状态、外部适配器或生产接入方式变化时同步更新 |
 | [`../README.md`](../README.md) | 运行、配置和项目入口 | 必须与当前代码一致 |
@@ -35,6 +36,7 @@
 | M5-C/C1-C2 / 第十期离线切片 | [`offline-feedback-and-rollout-rehearsal.md`](offline-feedback-and-rollout-rehearsal.md) | 两名虚拟 Reviewer、append-only 反馈和非行动性灰度演练已完成；不代表真实灰度批准 |
 | 必需 LLM 摘要切片 | [`llm-evidence-summary.md`](llm-evidence-summary.md) | 默认 Mock 主链、严格引用门禁与火山方舟适配器代码完成；真实模型联调与质量/成本验收待输入 |
 | LLM 摘要安全评测切片 | [`llm-summary-evaluation-gate.md`](llm-summary-evaluation-gate.md) | 9 类全合成安全场景、生产摘要链和独立门禁已完成；不代表真实模型质量 |
+| LLM 摘要额度治理切片 | [`llm-summary-quota.md`](llm-summary-quota.md) | 每租户请求/Token 账本与成本熔断已完成离线验收；SQLite 不是生产全局配额 |
 
 阶段归档记录“当时为什么这样做、相对上一期增加了什么、当时验证到哪里”，不会被重写成当前实现。归档中的源码路径默认指向当前工作树，除非文档明确给出 tag/commit；M0、M1 没有可恢复的独立源码快照。
 

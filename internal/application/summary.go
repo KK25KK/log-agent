@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"logagent/internal/domain"
+	"logagent/internal/fingerprint"
 	"logagent/internal/ports"
 )
 
@@ -22,25 +23,59 @@ const (
 	maxSummaryRecommendations = 4
 	maxSummaryNotes           = 4
 	maxSummaryTextRunes       = 480
+	SummaryQuotaPolicyVersion = "tenant-summary-quota-v1"
 )
 
 type SummaryService struct {
-	provider ports.ReportSummarizer
-	timeout  time.Duration
-	now      func() time.Time
+	provider    ports.ReportSummarizer
+	timeout     time.Duration
+	now         func() time.Time
+	quotaStore  ports.SummaryQuotaStore
+	quotaPolicy domain.SummaryQuotaPolicy
 }
 
-func NewSummaryService(provider ports.ReportSummarizer, timeout time.Duration, now func() time.Time) (*SummaryService, error) {
+type SummaryServiceOption func(*SummaryService) error
+
+func WithSummaryQuota(store ports.SummaryQuotaStore, policy domain.SummaryQuotaPolicy) SummaryServiceOption {
+	return func(service *SummaryService) error {
+		if store == nil {
+			return errors.New("summary quota store is required")
+		}
+		if err := validateSummaryQuotaPolicy(policy); err != nil {
+			return err
+		}
+		service.quotaStore = store
+		service.quotaPolicy = policy
+		return nil
+	}
+}
+
+func NewSummaryService(provider ports.ReportSummarizer, timeout time.Duration, now func() time.Time, options ...SummaryServiceOption) (*SummaryService, error) {
 	if provider == nil || timeout <= 0 || now == nil {
 		return nil, errors.New("summary provider, positive timeout, and clock are required")
 	}
-	return &SummaryService{provider: provider, timeout: timeout, now: now}, nil
+	service := &SummaryService{provider: provider, timeout: timeout, now: now}
+	for _, option := range options {
+		if option == nil {
+			return nil, errors.New("summary service option is required")
+		}
+		if err := option(service); err != nil {
+			return nil, err
+		}
+	}
+	return service, nil
+}
+
+type summaryQuotaUsageIdentity struct {
+	TenantID        string `json:"tenant_id"`
+	InvestigationID string `json:"investigation_id"`
+	PromptVersion   string `json:"prompt_version"`
 }
 
 // Enrich never changes the deterministic report fields and never fails the
 // investigation. Invalid/provider output becomes an explicit deterministic
 // fallback summary.
-func (service *SummaryService) Enrich(ctx context.Context, evidence []domain.Evidence, report domain.Report) domain.Report {
+func (service *SummaryService) Enrich(ctx context.Context, requester domain.Principal, evidence []domain.Evidence, report domain.Report) domain.Report {
 	if err := ValidateEngineOutput(report.InvestigationID, evidence, report); err != nil {
 		return report
 	}
@@ -48,10 +83,25 @@ func (service *SummaryService) Enrich(ctx context.Context, evidence []domain.Evi
 	if err := validateSummaryInput(input); err != nil {
 		return attachFallbackSummary(report, service.now().UTC())
 	}
+	reservation, ok := service.reserveSummaryQuota(ctx, requester, report.InvestigationID)
+	if !ok {
+		return attachFallbackSummary(report, service.now().UTC())
+	}
 	runCtx, cancel := context.WithTimeout(ctx, service.timeout)
 	result, err := service.provider.Summarize(runCtx, input)
 	cancel()
 	if err != nil {
+		service.settleSummaryQuota(reservation, domain.QuotaUnknown, 0, 0, reservation.ReservedTokens, "summary_external_outcome_unknown")
+		return attachFallbackSummary(report, service.now().UTC())
+	}
+	if !validSummaryTokenUsage(result) {
+		service.settleSummaryQuota(reservation, domain.QuotaUnknown, 0, 0, reservation.ReservedTokens, "summary_token_usage_invalid")
+		return attachFallbackSummary(report, service.now().UTC())
+	}
+	if err := service.settleSummaryQuota(reservation, domain.QuotaSettled, result.InputTokens, result.OutputTokens, result.TotalTokens, "summary_succeeded"); err != nil {
+		return attachFallbackSummary(report, service.now().UTC())
+	}
+	if service.quotaStore != nil && result.TotalTokens > reservation.ReservedTokens {
 		return attachFallbackSummary(report, service.now().UTC())
 	}
 	summary, err := resolveProviderSummary(report, result, service.now().UTC())
@@ -60,6 +110,68 @@ func (service *SummaryService) Enrich(ctx context.Context, evidence []domain.Evi
 	}
 	report.Summary = &summary
 	return report
+}
+
+func (service *SummaryService) reserveSummaryQuota(ctx context.Context, requester domain.Principal, investigationID string) (domain.SummaryQuotaReservation, bool) {
+	if service.quotaStore == nil {
+		return domain.SummaryQuotaReservation{}, true
+	}
+	if !requester.Complete() || !safeSummaryIdentifier(investigationID, 1, 256) {
+		return domain.SummaryQuotaReservation{}, false
+	}
+	tenantID := domain.TrustedTenantID(requester)
+	usageKey, err := fingerprint.JSON(summaryQuotaUsageIdentity{
+		TenantID: tenantID, InvestigationID: investigationID, PromptVersion: domain.EvidenceSummaryPromptVersion,
+	})
+	if err != nil {
+		return domain.SummaryQuotaReservation{}, false
+	}
+	now := service.now().UTC()
+	windowStart := fixedQuotaWindowStart(now, service.quotaPolicy.Window)
+	reservation := domain.SummaryQuotaReservation{
+		UsageKey: usageKey, TenantID: tenantID, InvestigationID: investigationID,
+		PromptVersion: domain.EvidenceSummaryPromptVersion,
+		WindowStart:   windowStart, WindowEnd: windowStart.Add(service.quotaPolicy.Window),
+		ReservedTokens: service.quotaPolicy.ReservedTokensPerRequest,
+		Status:         domain.QuotaReserved, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := service.quotaStore.ReserveSummaryQuota(ctx, reservation, service.quotaPolicy); err != nil {
+		return domain.SummaryQuotaReservation{}, false
+	}
+	return reservation, true
+}
+
+func (service *SummaryService) settleSummaryQuota(
+	reservation domain.SummaryQuotaReservation,
+	status domain.QuotaReservationStatus,
+	inputTokens, outputTokens, totalTokens int64,
+	reasonCode string,
+) error {
+	if service.quotaStore == nil {
+		return nil
+	}
+	settleCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	return service.quotaStore.SettleSummaryQuota(
+		settleCtx, reservation.UsageKey, status,
+		inputTokens, outputTokens, totalTokens, reasonCode, service.now().UTC(),
+	)
+}
+
+func validateSummaryQuotaPolicy(policy domain.SummaryQuotaPolicy) error {
+	if policy.Version != SummaryQuotaPolicyVersion || policy.Window < time.Minute || policy.Window > 24*time.Hour ||
+		policy.MaxRequests <= 0 || policy.MaxTokens <= 0 || policy.ReservedTokensPerRequest <= 0 ||
+		policy.ReservedTokensPerRequest > policy.MaxTokens {
+		return errors.New("summary quota policy is invalid")
+	}
+	return nil
+}
+
+func validSummaryTokenUsage(result domain.SummaryProviderResult) bool {
+	const maxInt64 = int64(^uint64(0) >> 1)
+	return result.InputTokens >= 0 && result.OutputTokens >= 0 && result.TotalTokens >= 0 &&
+		result.InputTokens <= maxInt64-result.OutputTokens && result.TotalTokens >= result.InputTokens+result.OutputTokens &&
+		(result.Mode != domain.SummaryModeModel || result.TotalTokens > 0)
 }
 
 func attachFallbackSummary(report domain.Report, generatedAt time.Time) domain.Report {

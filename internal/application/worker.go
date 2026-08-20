@@ -74,7 +74,7 @@ func (w *Worker) RunOne(ctx context.Context) (bool, error) {
 		runErr = validateEngineOutput(job, evidence, report)
 	}
 	if runErr == nil && w.summary != nil {
-		report = w.summary.Enrich(runCtx, evidence, report)
+		report = w.summary.Enrich(runCtx, job.Request.Requester, evidence, report)
 		runErr = validateEngineOutput(job, evidence, report)
 	}
 	close(stopHeartbeat)

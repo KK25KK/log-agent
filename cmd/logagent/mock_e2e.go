@@ -19,14 +19,15 @@ import (
 )
 
 type mockE2EResult struct {
-	Scenario      string                  `json:"scenario"`
-	Safety        mockSafetySummary       `json:"safety"`
-	Feishu        mockFeishuSummary       `json:"feishu"`
-	AlibabaSLS    mockSLSSummary          `json:"aliyun_sls"`
-	TenantQuota   domain.TenantQuotaUsage `json:"tenant_quota"`
-	ChangeSource  string                  `json:"change_source"`
-	LLMSummary    mockLLMSummary          `json:"llm_summary"`
-	Investigation domain.Investigation    `json:"investigation"`
+	Scenario      string                         `json:"scenario"`
+	Safety        mockSafetySummary              `json:"safety"`
+	Feishu        mockFeishuSummary              `json:"feishu"`
+	AlibabaSLS    mockSLSSummary                 `json:"aliyun_sls"`
+	TenantQuota   domain.TenantQuotaUsage        `json:"tenant_quota"`
+	LLMQuota      domain.TenantSummaryQuotaUsage `json:"llm_quota"`
+	ChangeSource  string                         `json:"change_source"`
+	LLMSummary    mockLLMSummary                 `json:"llm_summary"`
+	Investigation domain.Investigation           `json:"investigation"`
 }
 
 type mockLLMSummary struct {
@@ -227,7 +228,14 @@ func executeMockE2E(ctx context.Context) (mockE2EResult, error) {
 	if err != nil {
 		return mockE2EResult{}, err
 	}
-	summary, err := application.NewSummaryService(summarymock.New(), 5*time.Second, func() time.Time { return messageAt.Add(time.Second) })
+	summaryQuotaPolicy := domain.SummaryQuotaPolicy{
+		Version: application.SummaryQuotaPolicyVersion, Window: time.Hour,
+		MaxRequests: 10, MaxTokens: 40960, ReservedTokensPerRequest: 4096,
+	}
+	summary, err := application.NewSummaryService(
+		summarymock.New(), 5*time.Second, func() time.Time { return messageAt.Add(time.Second) },
+		application.WithSummaryQuota(store, summaryQuotaPolicy),
+	)
 	if err != nil {
 		return mockE2EResult{}, err
 	}
@@ -354,6 +362,15 @@ func executeMockE2E(ctx context.Context) (mockE2EResult, error) {
 	if quotaUsage.Observations != 2 || quotaUsage.APICalls != int64(providerCalls) || quotaUsage.CircuitOpen {
 		return mockE2EResult{}, fmt.Errorf("unexpected mock tenant quota usage %#v", quotaUsage)
 	}
+	summaryQuotaUsage, err := store.GetTenantSummaryQuotaUsage(
+		ctx, domain.TrustedTenantID(mockPrincipal), quotaStart, quotaStart.Add(time.Hour), summaryQuotaPolicy,
+	)
+	if err != nil {
+		return mockE2EResult{}, err
+	}
+	if summaryQuotaUsage.Requests != 1 || summaryQuotaUsage.Tokens != 0 || summaryQuotaUsage.CircuitOpen {
+		return mockE2EResult{}, fmt.Errorf("unexpected mock LLM quota usage %#v", summaryQuotaUsage)
+	}
 
 	return mockE2EResult{
 		Scenario: "feishu_to_sls_investigation_full_mock",
@@ -383,6 +400,7 @@ func executeMockE2E(ctx context.Context) (mockE2EResult, error) {
 			BaselineErrorCount:   baselineErrors,
 		},
 		TenantQuota:  quotaUsage,
+		LLMQuota:     summaryQuotaUsage,
 		ChangeSource: "mock",
 		LLMSummary: mockLLMSummary{
 			Mode: investigation.Report.Summary.Mode, Status: investigation.Report.Summary.Status,

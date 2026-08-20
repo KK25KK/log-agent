@@ -32,6 +32,9 @@ func TestLoadDefaultsToOfflineMock(t *testing.T) {
 	if config.LLM.Mode != "mock" || config.LLM.Timeout != 12*time.Second || config.LLM.APIKey != "" {
 		t.Fatalf("unexpected offline LLM defaults: %#v", config.LLM)
 	}
+	if config.LLMQuota.Window != time.Hour || config.LLMQuota.MaxRequests != 100 || config.LLMQuota.MaxTokens != 409600 || config.LLMQuota.ReservedTokensPerRequest != 4096 {
+		t.Fatalf("unexpected LLM quota defaults: %#v", config.LLMQuota)
+	}
 	if config.Quota.Window != time.Hour || config.Quota.MaxObservations != 100 || config.Quota.MaxAPICalls != 400 ||
 		config.Quota.ReservedBytesPerObservation != config.SLS.MaxProcessedBytes || config.Quota.MaxProcessedBytes <= config.Quota.ReservedBytesPerObservation {
 		t.Fatalf("unexpected tenant quota defaults: %#v", config.Quota)
@@ -61,6 +64,14 @@ func TestLoadRejectsQuotaReservationAboveWindowBudget(t *testing.T) {
 	t.Setenv("LOG_AGENT_TENANT_QUOTA_RESERVED_BYTES", "2048")
 	if _, err := Load(); err == nil {
 		t.Fatal("want invalid tenant quota reservation error")
+	}
+}
+
+func TestLoadRejectsLLMQuotaReservationAboveWindowBudget(t *testing.T) {
+	t.Setenv("LOG_AGENT_LLM_QUOTA_MAX_TOKENS", "1024")
+	t.Setenv("LOG_AGENT_LLM_QUOTA_RESERVED_TOKENS", "2048")
+	if _, err := Load(); err == nil {
+		t.Fatal("want invalid LLM quota reservation error")
 	}
 }
 

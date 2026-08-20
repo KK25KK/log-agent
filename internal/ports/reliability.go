@@ -10,10 +10,12 @@ import (
 )
 
 var (
-	ErrDeliveryReplayUnsafe = errors.New("delivery replay is unsafe")
-	ErrTenantQuotaExceeded  = errors.New("tenant query quota exceeded")
-	ErrQuotaUsageReplayed   = errors.New("query quota usage key was already reserved")
-	ErrApprovalInvalid      = errors.New("approval transition is invalid")
+	ErrDeliveryReplayUnsafe       = errors.New("delivery replay is unsafe")
+	ErrTenantQuotaExceeded        = errors.New("tenant query quota exceeded")
+	ErrQuotaUsageReplayed         = errors.New("query quota usage key was already reserved")
+	ErrTenantSummaryQuotaExceeded = errors.New("tenant summary quota exceeded")
+	ErrSummaryQuotaUsageReplayed  = errors.New("summary quota usage key was already reserved")
+	ErrApprovalInvalid            = errors.New("approval transition is invalid")
 )
 
 // OperationError lets adapters communicate a closed retry decision without
@@ -60,6 +62,12 @@ type QueryQuotaStore interface {
 	ReserveQueryQuota(ctx context.Context, reservation domain.QueryQuotaReservation, policy domain.TenantQuotaPolicy) error
 	SettleQueryQuota(ctx context.Context, usageKey string, status domain.QuotaReservationStatus, actualAPICalls, actualBytes int64, reasonCode string, now time.Time) error
 	GetTenantQuotaUsage(ctx context.Context, tenantID string, windowStart, windowEnd time.Time, policy domain.TenantQuotaPolicy) (domain.TenantQuotaUsage, error)
+}
+
+type SummaryQuotaStore interface {
+	ReserveSummaryQuota(ctx context.Context, reservation domain.SummaryQuotaReservation, policy domain.SummaryQuotaPolicy) error
+	SettleSummaryQuota(ctx context.Context, usageKey string, status domain.QuotaReservationStatus, inputTokens, outputTokens, totalTokens int64, reasonCode string, now time.Time) error
+	GetTenantSummaryQuotaUsage(ctx context.Context, tenantID string, windowStart, windowEnd time.Time, policy domain.SummaryQuotaPolicy) (domain.TenantSummaryQuotaUsage, error)
 }
 
 type ApprovalStore interface {

@@ -42,7 +42,7 @@ func TestSummaryServiceAcceptsOnlyGroundedProviderDraft(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result := service.Enrich(context.Background(), evidence, report)
+	result := service.Enrich(context.Background(), summaryRequester(), evidence, report)
 	if result.Summary == nil || result.Summary.Status != domain.SummaryGenerated || result.Summary.Mode != domain.SummaryModeModel {
 		t.Fatalf("missing generated summary: %#v", result.Summary)
 	}
@@ -64,7 +64,7 @@ func TestSummaryServiceFallsBackWithoutFailingInvestigation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result := service.Enrich(context.Background(), evidence, report)
+	result := service.Enrich(context.Background(), summaryRequester(), evidence, report)
 	if result.Summary == nil || result.Summary.Status != domain.SummaryFallback || result.Summary.Mode != domain.SummaryModeFallback {
 		t.Fatalf("want deterministic fallback, got %#v", result.Summary)
 	}
@@ -97,7 +97,7 @@ func TestSummaryServiceRejectsInventedOrUnsafeModelOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result := service.Enrich(context.Background(), evidence, report)
+	result := service.Enrich(context.Background(), summaryRequester(), evidence, report)
 	if result.Summary == nil || result.Summary.Status != domain.SummaryFallback {
 		t.Fatalf("unsafe draft must become fallback: %#v", result.Summary)
 	}
@@ -114,7 +114,7 @@ func TestSummaryServiceDoesNotCallProviderForSensitiveOutboundInput(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	result := service.Enrich(context.Background(), evidence, report)
+	result := service.Enrich(context.Background(), summaryRequester(), evidence, report)
 	if called || result.Summary == nil || result.Summary.Status != domain.SummaryFallback {
 		t.Fatalf("sensitive input crossed provider boundary: called=%v summary=%#v", called, result.Summary)
 	}
@@ -149,4 +149,8 @@ func summaryFixture() ([]domain.Evidence, domain.Report) {
 		Evidence:        append([]domain.Evidence(nil), evidence...),
 	}
 	return evidence, report
+}
+
+func summaryRequester() domain.Principal {
+	return domain.Principal{AppID: "app", TenantKey: "tenant", UserID: "user"}
 }

@@ -148,7 +148,13 @@ func runDemo() error {
 	if err != nil {
 		return err
 	}
-	summary, err := application.NewSummaryService(summarymock.New(), 5*time.Second, func() time.Time { return fixedEnd.Add(time.Second) })
+	summary, err := application.NewSummaryService(
+		summarymock.New(), 5*time.Second, func() time.Time { return fixedEnd.Add(time.Second) },
+		application.WithSummaryQuota(store, domain.SummaryQuotaPolicy{
+			Version: application.SummaryQuotaPolicyVersion, Window: time.Hour,
+			MaxRequests: 10, MaxTokens: 40960, ReservedTokensPerRequest: 4096,
+		}),
+	)
 	if err != nil {
 		return err
 	}
@@ -199,7 +205,7 @@ func runWorker(config config.Config) error {
 	if err != nil {
 		return err
 	}
-	summary, err := buildSummaryService(config, time.Now)
+	summary, err := buildSummaryService(config, store, time.Now)
 	if err != nil {
 		return err
 	}
