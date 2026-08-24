@@ -6,9 +6,10 @@
 | --- | --- | --- |
 | [`spec.md`](spec.md) | 唯一当前技术与行为契约 | 行为代码变更前先更新 |
 | [`roadmap.md`](roadmap.md) | 当前阶段边界、完成状态和后续计划 | 只写可独立验收的阶段 |
-| [`local-mock-e2e.md`](local-mock-e2e.md) | 飞书、SLS、指标/Trace 与摘要 Mock 主链的运行、输出与边界 | Mock 行为变化时同步更新 |
+| [`local-mock-e2e.md`](local-mock-e2e.md) | 飞书、SLS、指标/Trace、受治理 SOP 与摘要 Mock 主链的运行、预期输出与边界 | Mock 行为变化或复跑验收时同步更新 |
 | [`m4-recoverable-query-steps.md`](m4-recoverable-query-steps.md) | 第五期 M4-A 的检查点、结果未知与恢复合同 | M4-A 行为或验收变化时同步更新 |
 | [`m3b-cross-signal-incident-timeline.md`](m3b-cross-signal-incident-timeline.md) | M3-B 的 Mock-first 指标/Trace 聚合时间线、信任边界与真实接入前置条件 | 信号 Schema、阈值、状态、接线或验收变化时同步更新 |
+| [`governed-sop-knowledge-guidance.md`](governed-sop-knowledge-guidance.md) | 受治理 SOP 人工核查指引的实现合同、开发记录、Mock E2E/评测兼容实测与真实接入前置条件；当前仅 Mock | SOP Schema、状态、安全边界、接线、实测结果或真实内容治理变化时同步更新 |
 | [`m4b-reliability-governance.md`](m4b-reliability-governance.md) | M4-B 的投递失败分类、死信安全重放、租户额度/成本熔断和审批合同 | M4-B 状态机、额度或运维 CLI 变化时同步更新 |
 | [`m5-offline-evaluation-gate.md`](m5-offline-evaluation-gate.md) | 第六期 M5-A 的全合成离线评测数据、指标、门禁与声明边界 | 数据集、评测规则或 CLI 行为变化时同步更新 |
 | [`m5-agent-observability-replay.md`](m5-agent-observability-replay.md) | 第七至九期 M5-B 的 Agent 自观测、离线回放和兼容快照比较合同；B1～B3 已完成 | Agent 事件、版本清单、Trace 门禁或回放/比较边界变化时同步更新 |
@@ -16,7 +17,7 @@
 | [`llm-evidence-summary.md`](llm-evidence-summary.md) | 必需 LLM 摘要的输入投影、引用门禁、Mock/火山方舟适配器、降级和真实接入步骤 | 摘要 Schema、Provider、Prompt 或安全边界变化时同步更新 |
 | [`llm-summary-evaluation-gate.md`](llm-summary-evaluation-gate.md) | LLM 摘要的合成安全场景、独立门禁与原评测/回放兼容边界 | 摘要评测数据集、指标、门禁或 CLI 变化时同步更新 |
 | [`llm-summary-quota.md`](llm-summary-quota.md) | LLM 摘要调用前的租户请求/Token 预留、结算、熔断与 Mock 验收 | 摘要额度状态机、配置、SQLite Schema 或生产边界变化时同步更新 |
-| [`m6-real-system-entry-guide.md`](m6-real-system-entry-guide.md) | 真实系统接入地图：SLS/飞书/存储/变更源各真实入口与组装点 | 生产化接入前保持与启动组装和接口边界一致 |
+| [`m6-real-system-entry-guide.md`](m6-real-system-entry-guide.md) | 真实系统接入地图：SLS/飞书/存储/变更源/指标 Trace/企业 SOP 各真实入口与组装点 | 生产化接入前保持与启动组装、接口边界和内容治理一致 |
 | [`current-capabilities-and-real-integration-inventory.md`](current-capabilities-and-real-integration-inventory.md) | 当前功能、Mock 边界、真实系统职责、接入步骤和预期效果的统一盘点 | 阶段完成状态、外部适配器或生产接入方式变化时同步更新 |
 | [`../README.md`](../README.md) | 运行、配置和项目入口 | 必须与当前代码一致 |
 

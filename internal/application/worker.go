@@ -18,6 +18,7 @@ type Worker struct {
 	workerID      string
 	leaseDuration time.Duration
 	now           func() time.Time
+	runbook       *RunbookService
 	summary       *SummaryService
 }
 
@@ -35,6 +36,14 @@ func WithWorkerClock(now func() time.Time) WorkerOption {
 func WithWorkerSummary(service *SummaryService) WorkerOption {
 	return func(worker *Worker) {
 		worker.summary = service
+	}
+}
+
+// WithWorkerRunbook enables optional post-engine, human-review-only SOP
+// guidance. The service is deliberately separate from the Eino graph.
+func WithWorkerRunbook(service *RunbookService) WorkerOption {
+	return func(worker *Worker) {
+		worker.runbook = service
 	}
 }
 
@@ -70,8 +79,17 @@ func (w *Worker) RunOne(ctx context.Context) (bool, error) {
 	stopHeartbeat := make(chan struct{})
 	heartbeatDone := w.startHeartbeat(runCtx, cancelRun, stopHeartbeat, job)
 	evidence, report, runErr := w.engine.Run(runCtx, job.InvestigationID, job.Request)
+	if runErr == nil && report.RunbookGuidance != nil {
+		runErr = errors.New("investigation engine returned runbook guidance before governed post-processing")
+	}
 	if runErr == nil {
 		runErr = validateEngineOutput(job, evidence, report)
+	}
+	if runErr == nil && w.runbook != nil {
+		report, runErr = w.runbook.Enrich(runCtx, evidence, report)
+		if runErr == nil {
+			runErr = validateEngineOutput(job, evidence, report)
+		}
 	}
 	if runErr == nil && w.summary != nil {
 		report = w.summary.Enrich(runCtx, job.Request.Requester, evidence, report)
@@ -233,6 +251,9 @@ func ValidateEngineOutput(investigationID string, evidence []domain.Evidence, re
 				return fmt.Errorf("recommendation references unknown evidence %q", evidenceID)
 			}
 		}
+	}
+	if err := validateRunbookGuidance(report.RunbookGuidance, knownEvidence, report); err != nil {
+		return fmt.Errorf("engine returned invalid runbook guidance: %w", err)
 	}
 	if err := validateCauseAnalysis(report.CauseAnalysis, knownEvidence); err != nil {
 		return fmt.Errorf("engine returned invalid cause analysis: %w", err)

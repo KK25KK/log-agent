@@ -11,17 +11,22 @@ Mock 飞书消息
   -> Worker + Eino
   -> 真实 ACL / Schema / 预算 / 审计网关
   -> Mock SLS Backend 当前/基线聚合
--> SQLite current / baseline Query Checkpoint
--> SQLite tenant quota reserve / settle
+  -> SQLite current / baseline Query Checkpoint
+  -> SQLite tenant quota reserve / settle
   -> Evidence + Report + Mock 变更关联
   -> Mock 指标/Trace 聚合 + IncidentTimeline
+  -> 首次生产校验
+  -> 固定 Evidence 模板/治理指纹/可信请求窗口校验
+  -> 独立 5s 超时内的 Mock Runbook Source
+  -> SYNTHETIC_MOCK + HUMAN_REVIEW_ONLY Guidance
+  -> 再次生产校验
   -> SQLite LLM request / Token reserve / settle
   -> Mock 证据摘要（严格引用 / 0 网络）
   -> Delivery Worker
   -> Mock 飞书 Reply/Patch 记录
 ```
 
-这个入口使用真实的应用层、状态机、Eino Graph、查询策略网关、持久化和结果校验，只替换外部 I/O：飞书收发、SLS Provider、指标/Trace 聚合以及管理员资源文件使用固定的内存 Mock。
+这个入口使用真实的应用层、状态机、Eino Graph、查询策略网关、Worker 前后校验、持久化和结果校验，只替换外部 I/O：飞书收发、SLS Provider、指标/Trace 聚合、SOP 目录以及管理员资源文件使用固定的内存 Mock。
 
 ## 运行
 
@@ -62,8 +67,12 @@ go run ./cmd/logagent mock-e2e
 | `operational_signals.source_calls` | `1` | 只调用一次确定性指标/Trace Mock |
 | `operational_signals.timeline_status` | `COMPLETE` | Mock 指标和 Trace 覆盖完整；不代表因果确认 |
 | `operational_signals.signals/timeline_items` | `2 / 3` | 两个聚合观察，加上已有发布事件形成三条时间线 |
+| `runbook_knowledge.source_calls` | `1` | 只调用一次确定性 Runbook Mock；不访问企业知识平台 |
+| `runbook_knowledge.mode` | `SYNTHETIC_MOCK` | 可信组装层声明合成来源；不是 Source 自报的企业内容 |
+| `runbook_knowledge.status` | `COMPLETE` | 当前 Mock 目录完整且有一个受控匹配；不代表内容正确、最新或获批 |
+| `runbook_knowledge.items/steps` | `1 / 3` | 一项人工核查指引，包含核对、观察和升级联系三步 |
 
-当前 Mock 数据固定为当前窗口 120 条错误、基线 20 条错误，并包含一个影响 `order-pod-a` 的 Mock 发布事件、一个指标错误率异常和一个 Trace P95 延迟异常。随机生成的调查、Evidence 和 Ledger ID 每次可能不同。
+当前 Mock 数据固定为当前窗口 120 条错误、基线 20 条错误，并包含一个影响 `order-pod-a` 的 Mock 发布事件、一个指标错误率异常、一个 Trace P95 延迟异常和一个三步 Runbook 条目。随机生成的调查、Evidence 和 Ledger ID 每次可能不同。2026-08-24 完成关闭 Code/本地模板等安全加固后，最新实际命令已再次确认表中的 Runbook 1 次调用/1 项/3 步，以及 SLS 2 次逻辑观察/8 次 Provider 调用/0 次外部网络。
 
 ## Mock 到什么层
 
@@ -94,6 +103,20 @@ go run ./cmd/logagent mock-e2e
 
 它不调用 ARMS、CMS、Prometheus、OpenTelemetry 或其他可观测平台，不能验证真实指标口径、Trace 覆盖、时钟对齐、费用、限流和超时。
 
+### SOP 知识 Mock
+
+- `internal/adapters/runbookmock` 只在 Evidence ResourceID 与可信 Job 的 service/environment/requester 通过同一 Mock Resource Catalog 解析和 ACL 后接收查询；current/baseline 还必须使用固定 `error_analysis_v2` 模板、带完整 Query/Schema/Policy/Governance 元数据，治理身份一致、窗口连续等长，并精确绑定可信 Job 请求。Recommendation Code 由应用重算并要求与报告精确一致，不读取用户消息正文、模型输出或物理知识库定位；
+- Worker 先验证 Eino 的确定性 Evidence/Report，再调用 `RunbookService`；应用计算 Evidence 并集、稳定指纹和 `HUMAN_REVIEW_ONLY`，随后用同一生产门禁再次校验；
+- baseline 错误数为 0 时保持 Engine 的 `data_insufficient` 语义并零调用 Source；Runbook 层不会单独把当前错误数重算成突增；
+- 每次 Lookup 接收独立默认 5 秒子 Context，Adapter 必须遵守其 Deadline；应用在 Source 返回后、本地 cancel 前再次检查 Deadline，因而 Deadline 后的 `(set, nil)` 也只会降级为 `UNAVAILABLE`。Source 自身超时同样只降级，父 Worker Context 真正取消才向外传播。条目更新时间同时不能超过报告时间和可信服务时钟各自加 5 分钟；
+- `SYNTHETIC_MOCK` 由 Mock E2E 的可信组装层传入并持久化，`runbookmock` 无权自报或覆盖。正式飞书 Renderer 对该模式固定显示“受控 SOP 参考（Mock）”，真实企业来源才使用不带 Mock 的标题；空值或非法来源只显示来源未确认的不可用文案，不显示任何夹带条目；
+- Mock 条目只选择 `VERIFY_ERROR_PATTERN / OBSERVE_HOT_INSTANCE / ESCALATE_SERVICE_OWNER` 三个关闭 Code；`VERIFY/OBSERVE/ESCALATE` 类型和 Instruction 必须与本地固定模板一致，Source 不能注入自由步骤文本。领域合同不存在 URL、Shell/SQL、执行参数或自动处置字段；飞书不生成 SOP 按钮或动作值；
+- `NO_MATCH/INCONCLUSIVE/UNAVAILABLE/SKIPPED_NO_TRIGGER` 只改变可选 Guidance，不修改原 Finding、Recommendation、CauseAnalysis、IncidentTimeline 或调查成功状态；
+- `SKIPPED_NO_TRIGGER` 仅用于没有确定性错误突增，正常 Engine 的 baseline=0 报告属于该路径；若报告声称突增但 Evidence 是零基线、Recommendation 缺失或治理资源不一致，则为 `UNAVAILABLE`。上述前置条件不成立时都保持零 Source 调用；
+- SOP 内容不进入 Eino Graph、LLM `SummaryInput`、Agent Trace、Replay 快照比较或当前离线评测数据集/版本指纹。
+
+它不连接 Wiki、文档平台、错误码平台或企业搜索。双时钟门禁只能拒绝伪造的未来时间，不能证明内容实际最新、已经审批或尚未失效，也不能验证企业 Owner、租户权限、审计和真实检索质量。
+
 ## 自动验收
 
 ```powershell
@@ -102,14 +125,15 @@ go test -count=1 ./...
 go vet ./...
 ```
 
-测试会检查重复入站幂等、可信身份映射、严格命令、Reply/Patch 同卡顺序、ACL/Schema/预算/审计网关、两个 Query Checkpoint、SLS 租户额度结算、LLM 请求/Token 额度结算、两份 Evidence、两次 Backend/八次模拟 Provider 调用、一次指标/Trace Mock 调用、三条受控时间线、Mock 证据摘要、无原始日志以及最终成功报告。Checkpoint 的崩溃恢复语义另见 [`m4-recoverable-query-steps.md`](m4-recoverable-query-steps.md)，可靠性治理见 [`m4b-reliability-governance.md`](m4b-reliability-governance.md)。另有架构测试禁止飞书、SLS、指标/Trace 与摘要 Mock 源码直接导入对应真实适配器、配置加载器或网络包。
+测试应检查重复入站幂等、可信身份映射、严格命令、Reply/Patch 同卡顺序、ACL/Schema/预算/审计网关、两个 Query Checkpoint、SLS 租户额度结算、LLM 请求/Token 额度结算、两份严格治理 Evidence、请求窗口绑定、baseline=0 零 Runbook 调用、独立超时降级、可信时钟、可信 `SYNTHETIC_MOCK` 来源、Renderer 单测中的 Mock SOP 区块标题、两次 Backend/八次模拟 Provider 调用、一次指标/Trace Mock 调用、三条受控时间线、一次 Runbook Mock 调用、一项三步人工指引、Mock 证据摘要、无原始日志以及最终成功报告。`feishumock.Sender` 不保存卡片 JSON，因此 `mock-e2e` 本身只能证明投递状态和 SOP 持久化，不能证明标题或真实客户端视觉。第一轮安全加固后的 `mock-e2e`、全仓测试、vet、重点包乱序和仓库级链接/diff 总检均有实跑记录；第二轮边界补强后的结果以本轮实际复跑记录为准。Checkpoint 的崩溃恢复语义另见 [`m4-recoverable-query-steps.md`](m4-recoverable-query-steps.md)，可靠性治理见 [`m4b-reliability-governance.md`](m4b-reliability-governance.md)。Mock 源码还必须保持与真实适配器、配置加载器和网络包隔离。
 
 ## 后续替换顺序
 
 1. 保持 SLS 为 Mock，先把 `feishumock` 替换为真实飞书企业自建应用，验证收消息和卡片；
 2. 保持飞书只读调查不变，再配置一个资源级只读的 SLS 试点；
 3. 运行 `sls-check`，通过后再运行 `sls-smoke`；
-4. 两边分别通过后，才做真实飞书到真实 SLS 的小范围联调；此时仍保持指标/Trace Source 禁用。
-5. 最后单独替换 `signalmock`，补齐该外部调用的目录、额度、审计、超时和结果未知语义后，再让真实指标/Trace 时间线进入试点卡片。
+4. 两边分别通过后，才做真实飞书到真实 SLS 的小范围联调；此时仍保持指标/Trace 与 Runbook Source 禁用。
+5. 单独替换 `signalmock`，补齐该外部调用的目录、额度、审计、超时和结果未知语义后，再让真实指标/Trace 时间线进入试点卡片。
+6. 最后实现真实 `RunbookSource`，先完成内容 Owner/Revision/审批/失效、租户授权、审计、无链接/无命令合同和检索质量评测，再允许企业 SOP 进入试点卡片。
 
-Mock 主链通过只表示应用离线闭环成立，不代表真实飞书、SLS、指标/Trace 平台或生产可靠性已经验收。
+Mock 主链通过只表示应用离线闭环成立，不代表真实飞书、SLS、指标/Trace 平台、企业知识系统或生产可靠性已经验收。

@@ -2,9 +2,9 @@
 
 | Metadata | Value |
 | --- | --- |
-| Version | 1.6 |
-| Status | Mock-first cross-signal incident timeline implemented and verified offline; real metric/Trace connectors, Ark smoke, M4-C infrastructure, and real gray rollout remain pending |
-| Date | 2026-08-20 |
+| Version | 1.7 |
+| Status | Governed Mock-first SOP guidance and security hardening implemented; latest Mock E2E/demo/full-test/vet/shuffle/repository-link/replay/evaluation checks passed; real knowledge connectors, metric/Trace connectors, Ark smoke, M4-C infrastructure, and real gray rollout remain pending |
+| Date | 2026-08-24 |
 
 ## 1. Overview
 
@@ -35,6 +35,7 @@ Users can ask the bot to investigate an error spike for a known service, environ
 - A versioned, administrator-managed change catalog for bounded release/configuration context.
 - A deterministic cause-analysis projection with explicit support tests, counter-tests, confidence factors, and limitations.
 - An optional Mock-first incident timeline that combines governed change references with bounded metric and Trace aggregate observations derived from the same Evidence resource and time range.
+- Optional governed SOP guidance that maps validated deterministic Recommendations to bounded human-review-only steps without changing facts or conclusions.
 - Feishu acknowledgement, progress, terminal-report cards, and requester-authorized card actions.
 - A minimal durable delivery queue so the Feishu and worker processes can exchange card updates without sharing memory.
 - Append-only query audit events for denied, started, succeeded, incomplete, and failed attempts.
@@ -77,6 +78,7 @@ Users can ask the bot to investigate an error spike for a known service, environ
 - SLS version-distribution or first-seen-time queries in the first M3 slice; M3 reuses the existing M2 query budget.
 - Live release-platform, configuration-center, CMDB, Trace, metric, error-code, SOP, or service-topology connectors.
 - Raw spans, Trace IDs, span names, metric labels, arbitrary attributes, or model-generated causal statements in the Mock-first cross-signal timeline.
+- Generated or automatically executed SOPs; arbitrary URLs, commands, scripts, write operations, or knowledge content supplied by the user or model.
 - Claiming that synthetic fixtures are historical incidents, expert labels, production accuracy, or permission to start a real gray rollout.
 - Real Feishu/SLS/change-platform traffic, credentials, model calls, Prompt quality, Token accounting, or production SLO validation in M5-A.
 - Claiming that the first Agent Trace is a distributed Feishu-to-delivery production Trace; it covers only the synthetic evaluation and Engine boundary.
@@ -108,6 +110,7 @@ Feishu Receiver
          -> optional governed Change Catalog enrichment
          -> support/counter-evidence ledger
          -> optional governed metric/Trace aggregate timeline
+         -> optional governed SOP guidance in the Worker post-processing boundary
     -> Durable notification queue
     -> Feishu delivery worker -> acknowledgement/progress/result card
 
@@ -153,6 +156,8 @@ Required evidence-bound LLM summary
 ```
 
 The M3 Change Source and the Mock-first Operational Signal Source are enrichment-only. They are called only after governed SLS evidence has established the resource identity and a conclusive spike. Source absence, failure, or invalid output cannot erase an M2 fact or fail the investigation; it produces an explicit unavailable or inconclusive enrichment status.
+
+Governed SOP guidance runs later in the Worker, only after the deterministic Engine output has passed the shared production validator. It consumes governed Evidence identity and existing Recommendation codes, never changes the Engine report facts, and is validated again before the LLM summary. SOP content is excluded from `SummaryInput`.
 
 ### Framework boundary
 
@@ -281,6 +286,17 @@ An explicit diagnostic command loads the same catalog and credentials as a real 
 7. `COMPLETE` means the bounded source returned complete metric and Trace coverage for the requested interval. It does not mean a root cause was confirmed. Missing, truncated, unavailable, or invalid source data becomes `INCONCLUSIVE` or `UNAVAILABLE` without changing M2/M3 findings.
 8. Feishu renders a bounded timeline and the explicit limitation “时间相关不等于因果证明”. The LLM summary input remains unchanged in this slice.
 
+### Attach governed human-only SOP guidance
+
+1. The Worker first validates the deterministic Engine Evidence and Report using the shared production validator.
+2. If a conclusive error spike exists, the application accepts only a current/baseline pair using the fixed `error_analysis_v2` template, valid QuerySpec and governance SHA-256 identities, complete template/schema/policy/usage/order metadata, a shared governance identity, distinct query hashes, contiguous equal windows, and exact binding to the trusted Job request window plus its preceding equal baseline. It then binds the Evidence resource to the Job service/environment/requester through the same `ResourceCatalog.Resolve` and `Allowed` boundary used by the investigation. A zero-error baseline remains data-insufficient and performs zero source calls.
+3. One optional `RunbookSource` call runs under an independent default five-second child Context and returns only versioned curated entries with stable identity, revision, owner, update time, matched Recommendation codes, and closed step codes `VERIFY_ERROR_PATTERN / OBSERVE_HOT_INSTANCE / ESCALATE_SERVICE_OWNER`. The application samples the child Context after Source return and before local cancellation, so a successful Set returned after the deadline is rejected. Each code must match its locally canonical Kind and Instruction; the Provider cannot inject free-form step text, Evidence IDs, URLs, commands, scripts, execution parameters, or arbitrary attributes.
+4. The application computes each item's Recommendation and Evidence references locally, assigns `HUMAN_REVIEW_ONLY`, calculates a stable content fingerprint, and sorts all collections deterministically. The trusted assembly layer also assigns the closed `SYNTHETIC_MOCK` or `ENTERPRISE_GOVERNED` data source; neither Engine nor Source can self-report it.
+5. The Worker validates the enriched Report again. Every referenced Recommendation must exist, and each Evidence set must exactly equal the union grounded by those Recommendations.
+6. The LLM summary continues to receive only the pre-existing deterministic Recommendations. It cannot see, generate, select, or rewrite SOP content.
+7. A missing Service leaves the optional field unset. No conclusive spike returns `SKIPPED_NO_TRIGGER`; once a report claims a conclusive spike, a zero baseline, missing deterministic Recommendations, or invalid governed resource/Evidence identity returns `UNAVAILABLE` without a Source call. No match, incomplete results, provider failure, or invalid output also has a closed status and cannot change the investigation's facts or successful result.
+8. Feishu renders bounded plain text with the fixed warning that the steps are for human review and are never executed automatically. A `SYNTHETIC_MOCK` projection uses the explicit section heading `受控 SOP 参考（Mock）`; only `ENTERPRISE_GOVERNED` uses the heading without the Mock marker. An empty or unknown data source fails closed to an unavailable, source-unconfirmed message and renders no supplied entries.
+
 ### Run the synthetic offline evaluation gate
 
 1. The evaluator loads a repository-owned dataset using strict JSON decoding and rejects unknown fields, duplicate case IDs, invalid time ranges, unsafe labels, or impossible aggregate fixtures.
@@ -363,6 +379,10 @@ Change Source errors, disabled configuration, or incomplete source coverage neve
 `Report.IncidentTimeline` is optional for backward compatibility. When present it uses `operational-signal-timeline-v1` and has one of `COMPLETE`, `INCONCLUSIVE`, `UNAVAILABLE`, or `SKIPPED_NO_SPIKE`. `COMPLETE` requires a complete, untruncated source set with at least one metric observation and one Trace observation; it is a data-coverage status, not a causal verdict.
 
 Operational-signal observations use a closed schema and finite non-negative values. Error-rate values are ratios in `[0,1]`; latency values are milliseconds. The application derives anomaly flags from versioned local thresholds and the Worker recalculates them before persistence. Timeline references must resolve to the same report's Evidence, Change Events, and signals. Optional enrichment failures never fail an otherwise valid investigation.
+
+`Report.RunbookGuidance` is optional for backward compatibility. Its closed statuses are `COMPLETE`, `NO_MATCH`, `INCONCLUSIVE`, `UNAVAILABLE`, and `SKIPPED_NO_TRIGGER`. `COMPLETE` means only that the bounded source query completed and returned at least one valid match; it is not a correctness, freshness, approval, or causality statement. `NO_MATCH` is scoped to the queried catalog version and cannot be phrased as proof that no enterprise SOP exists.
+
+Runbook entries are untrusted adapter output. They must use stable identifiers, immutable revisions, update timestamps no later than five minutes after both the report generation time and the trusted service clock, safe bounded metadata, and closed human-only step codes. `CanonicalRunbookStep` uniquely owns each code's Kind and Instruction; Provider-authored free-form step text is rejected. Entry fingerprints, Recommendation references, Evidence unions, and the closed `SYNTHETIC_MOCK / ENTERPRISE_GOVERNED` data source are application-owned. The default independent Lookup timeout is five seconds, and a Set returned after that deadline is invalid even when the Source returns no error. A healthy parent Context treats that child timeout and Source-local cancellation/timeouts as `UNAVAILABLE`; only the Worker's actual Context cancellation propagates. Renderers must not display entries when the data source is empty or outside the closed set. No Runbook executor, approval consumer, URL, command, script, or write-action field exists in this contract.
 
 M5-A is a deterministic engineering regression gate, not a production-readiness decision. Outcome, Finding, Recommendation, and cause-verdict agreement are measured only against repository-owned synthetic labels. Recommendation matching is exact by code and Evidence name, so an omitted, injected, duplicated, or misgrounded next step fails closed. Evidence coverage verifies reference integrity, not factual completeness outside the fixture. Processed bytes and fixed Provider-call counts are cost proxies rather than an Alibaba Cloud bill. Local elapsed time is recorded for trend inspection but is not a production latency SLO. Prompt and Token metrics remain not applicable until the required LLM summary slice is enabled and evaluated.
 
@@ -462,6 +482,23 @@ M5-C feedback uses a store separate from both the production investigation Store
 - [x] The normal demo, mock Worker assembly, and `mock-e2e` use only `signalmock`; real SLS mode does not silently inject a Mock signal source.
 - [x] The full offline suite and static checks pass without credentials or network access; real metric/Trace connectors, external-call governance, and production calibration remain explicitly pending.
 
+### Governed Mock-first SOP knowledge guidance
+
+- [x] The Worker enriches only a previously validated conclusive-spike report and calls the optional source at most once with Evidence-derived resource identity and deterministic Recommendation codes.
+- [x] Before lookup, the application requires fixed-template, fully governed current/baseline Evidence with matching governance identity, contiguous equal windows, and exact binding to the trusted Job request; it then binds the resource to `ResourceCatalog` requester ACL, recomputes the closed Recommendation set, and rejects mismatched report grounding.
+- [x] Source-provided entries cannot provide Evidence references, arbitrary URLs, commands, scripts, execution parameters, or write actions.
+- [x] Application-derived Guidance items use stable fingerprints, exact Recommendation/Evidence grounding, deterministic ordering, and `HUMAN_REVIEW_ONLY` execution mode.
+- [x] No conclusive spike performs zero source calls with `SKIPPED_NO_TRIGGER`; a zero baseline never triggers lookup, and a report claiming a spike with zero baseline, missing Recommendations, or invalid governed identity performs zero calls with `UNAVAILABLE`; complete no-match, incomplete, truncated, unavailable, and invalid results preserve the original report.
+- [x] The Worker rejects fabricated or missing references, unsafe metadata, duplicate identity, invalid revision/fingerprint, unknown step codes, non-canonical Kind/Instruction pairs, non-human execution mode, and oversized collections.
+- [x] Lookup has an independent default five-second timeout. Its expiry and Source-local cancellation/timeout degrade to `UNAVAILABLE` while real parent cancellation propagates; entries beyond either the report-time or trusted-service-clock five-minute skew are rejected.
+- [x] Data source is assigned by trusted assembly, never by Engine or Source; Feishu renders bounded plain text without an execution button, marks `SYNTHETIC_MOCK` as `受控 SOP 参考（Mock）`, and states that the steps are only for human review.
+- [x] A no-error Set returned after the child deadline is rejected, and empty or invalid data source values render only an unavailable/source-unconfirmed message with no SOP entries.
+- [x] The Mock end-to-end run recorded one Runbook source call, one item, three steps, two SLS observations, eight Provider calls, and zero external network calls.
+- [x] The demo completed `SUCCEEDED` with `COMPLETE/HUMAN_REVIEW_ONLY` guidance; `evaluate` and `summary-evaluate` remained `PASSED` with dataset fingerprints `caf2714c80a646c5da15134c6557879565ffc8e083a66da1f1c9e49d3d0dc1f8` and `82e813aed0721f15b89a19b053da6b1d47509ab07f45122af4ed0c075e60a0b1`.
+- [x] `go test -count=1 ./...` passed on the first hardened worktree; the final second-round tree is revalidated by the root task.
+- [x] First-round `gofmt`, `go vet`, shuffled focused tests, repository link/diff checks, snapshot/replay/compare/feedback/rehearsal checks, and the unavailable race-toolchain status were recorded from actual runs; they are not presented as the final second-round result.
+- [x] Eino/LLM input/evaluation/Trace/replay and their existing fingerprints exclude SOP data; real enterprise knowledge connectors, content approval, tenant authorization, audit, expiry, and production calibration remain explicitly pending.
+
 ### M4-A recoverable metered query steps
 
 - [x] A successful current-window checkpoint survives SQLite reopen and is reused while only the missing baseline window reaches the Provider.
@@ -550,6 +587,7 @@ M5-C feedback uses a store separate from both the production investigation Store
 - Approved RAM role and resource-level read-only policy.
 - Organization-specific sensitive-value redaction patterns.
 - Approved owner/change metadata classification and the production change-system connector contract.
+- An approved enterprise Runbook/error-code source, logical-resource authorization model, content owner/revision/approval/expiry/rollback policy, audit and retention rules, and production matching-quality gate.
 - Approved Volcengine Ark model/endpoint, API-key custody, Prompt review, Token/cost budget, timeout, and model-output retention policy.
 - A real historical-incident dataset and its lawful retention/redaction rules.
 - An approved reviewer identity source, reviewer roles, quorum, conflict-resolution process, and feedback retention policy.

@@ -140,6 +140,8 @@ go run ./cmd/logagent rollout-rehearse `
 - 候选失败、Gate 删除/失败、指标回归和一致 `UNSAFE` 反馈触发阻断或模拟回滚建议；
 - 全链零凭据、零外部网络调用、零生产状态修改。
 
+2026-08-24 在最新受治理 SOP 安全加固工作树上，临时目录链路重新生成十条活动 Mock 反馈，`rollout-rehearse` 返回 `REHEARSAL_PASSED`、`SYNTHETIC_MOCK` 和 `production_action_allowed=false`；临时数据随后从工作树清理。这不是实际 Reviewer 结论或生产灰度批准。
+
 ## 8. 不能证明什么
 
 - 虚拟 Reviewer 不是专家标注，也不能预测真实审核意见；

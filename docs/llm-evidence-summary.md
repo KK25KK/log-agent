@@ -21,11 +21,15 @@ LLM 只负责把已经验证的确定性报告改写得更易读，不能参与�
 
 明确不发送：飞书 App/Tenant/User/Chat/Message，物理 Endpoint/Project/LogStore/ResourceID，Query ID/Hash/SQL/SPL，原始日志，Provider 原始错误，凭据、Token 或 AccessKey。Top Error 在进入这里之前已经过 Query Gateway 的长度和敏感模式脱敏。
 
+`Report.RunbookGuidance` 也明确不进入 `SummaryInput`：SOP 的标题、owner、revision、条目 ID、步骤、执行模式和指纹都不会发送给模型。模型不能选择、改写、排序或补写 SOP；它只能从确定性 `Recommendations` 的关闭 Code 集合中选择下一步。
+
 ## 2. 代码路径
 
 ```text
 Worker
   -> ValidateEngineOutput（确定性报告）
+  -> RunbookService.Enrich（可选；只读、人工核查指引）
+  -> ValidateEngineOutput（含 RunbookGuidance）
   -> SummaryService.BuildSummaryInput
   -> SummaryQuotaStore.Reserve（可信租户 / 请求 / Token）
   -> ports.ReportSummarizer
@@ -57,10 +61,13 @@ Worker
 - 所有 Evidence ID 必须存在于当前报告且不能重复。
 - 原因只能选择已有 `SUPPORTED_CANDIDATE`；最终原因正文从确定性报告反查，不使用模型自行生成的原因。
 - Recommendation 只能选择已有 Code；最终下一步正文和 Evidence 绑定从确定性报告反查。
+- Recommendation Code 的允许集合只来自确定性 `Recommendations`，不从 `RunbookGuidance` 生成或扩展。
 - URL、凭据形态、代码围栏和显式危险动作文本会被拒绝。
 - 输出集合、文本长度、Request ID、模型名、Token 和耗时都有上限或结构校验。
 
 模型超时、限流、非 2xx、响应过大、非法 JSON、未知字段、虚构引用或危险内容都不会让调查失败。应用会保存 `status=FALLBACK`、`mode=FALLBACK` 的确定性摘要，且不保存 Provider 错误正文。
+
+受治理 SOP 同样不会因为模型失败而被模型替换或改写：它由 Worker 在模型调用前独立检索和校验，展示层只呈现已经通过领域校验的有界纯文本人工参考。
 
 ## 4. Mock 与真实方舟切换
 
@@ -108,6 +115,8 @@ go run ./cmd/logagent worker
 - 摘要失败不改变 `SUCCEEDED`，确定性报告保持不变；
 - 飞书卡片只展示有界、转义后的摘要，并继续展示原报告。
 - `summary-evaluate` 的 9 类合成场景验证原报告不变、输入隐私、引用/原因/建议合同、fallback 和调用预算。
+
+2026-08-24 在加入受治理 SOP 的当前工作树上实跑 `summary-evaluate`，结果仍为 `PASSED`，数据集指纹保持 `82e813aed0721f15b89a19b053da6b1d47509ab07f45122af4ed0c075e60a0b1`；同轮 `mock-e2e` 也通过。该结果验证 SOP 没有进入 `SummaryInput` 或改变现有摘要评测数据集，但仍不代表真实方舟模型质量。
 
 尚不能宣称：真实模型质量已达标、真实 Token 费用已测量、Prompt 已获组织批准、方舟数据留存已满足要求、模型可判断根因或执行处置。
 

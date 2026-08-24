@@ -6,7 +6,7 @@
 >
 > 数据边界：五个 Case、SLS 聚合、变更事件和全部外部边界均为仓库内置合成 Mock；不读取凭据，外部网络调用为 0
 >
-> Trace 边界：只覆盖 `evaluate` 的 Engine/evaluation 级执行，不是飞书入站、SQLite Worker、真实 SLS 网络调用到卡片投递的跨进程分布式 Trace
+> Trace 边界：只覆盖 `evaluate` 的 Engine/evaluation 级执行，不是飞书入站、SQLite Worker、Worker 追加的受治理 SOP、真实 SLS 网络调用到卡片投递的跨进程分布式 Trace
 >
 > 结论边界：本期不是生产遥测后端、采样/保留方案、延迟 SLO、真实成本评估或灰度批准
 
@@ -109,6 +109,8 @@ SHA-256 用于完整性、关联和版本识别，不是匿名化手段；敏感
 ```
 
 版本指纹绑定的是规范化行为合同，不包含主机名或墙上时钟。任一清单字段变化都应形成新指纹，不能把不同合同下的评测数字直接视为同一条趋势。
+
+当前清单没有 Runbook/SOP 字段。受治理 SOP 由 Worker 在 Engine 输出首次校验后追加，不进入 `evaluate`、Agent Trace、回放快照的行为投影或版本指纹；Source 版本、条目 revision、内容指纹和步骤也不会写进这些 Trace。由此，已有 Trace/replay 只能证明 Engine/evaluation 路径，不能证明 SOP 检索或内容治理。若未来需要回放 SOP，必须新增显式 Schema/版本字段和隐私门禁，不能复用当前指纹冒充同一合同。
 
 `evaluation-replay-v1` 是 B2 快照 Schema，并继续纳入版本指纹；B3 的临时比较投影使用 `evaluation-replay-comparison-v1`。比较结果不写回快照 Store，也不改变运行版本指纹。
 
@@ -222,6 +224,10 @@ Graph、模板、策略、原因方法、评测规则与 Prompt/模型元数据�
 
 验收数字只说明当前二进制在仓库内置五个合成 Case 上满足固定工程合同。它没有验证真实飞书、真实 SLS、发布平台、跨进程 Trace、生产并发、网络抖动、采样保留或 SLO。
 
+这些既有验收数字及版本指纹也不包含 Worker 的受治理 SOP 后处理，不能作为 SOP Mock E2E、`RunbookSource` 或飞书 SOP 展示的验收证据。
+
+2026-08-24 当前工作树的 `evaluate` 已重新运行并保持 `PASSED`，数据集指纹仍为 `caf2714c80a646c5da15134c6557879565ffc8e083a66da1f1c9e49d3d0dc1f8`；随后在临时目录重新保存快照、执行 replay，并由 `replay-compare` 返回 `COMPARABLE`。临时数据已从工作树清理。该结果仍只描述当前二进制与合成数据，不包含 SOP 投影或生产访问。
+
 ## 7. 切片状态与后续输入
 
 ### B2：append-only 离线回放历史（代码与离线验收完成）
@@ -243,4 +249,5 @@ Graph、模板、策略、原因方法、评测规则与 Prompt/模型元数据�
 - 飞书到投递的分布式 Trace 与真实遥测后端；
 - 生产采样、保留、租户隔离、告警和 SLO；
 - 真实 LLM Prompt/Token/模型成本观测；
+- Worker 级受治理 SOP 的 Source 调用、内容 revision、审核/撤销和卡片展示观测；
 - 历史故障、专家标签、真实试点群和灰度批准。

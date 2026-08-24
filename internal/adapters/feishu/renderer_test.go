@@ -362,6 +362,171 @@ func TestRendererShowsBoundedCrossSignalTimelineAndCausalLimit(t *testing.T) {
 	}
 }
 
+func TestReportCardRendersBoundedRunbookGuidanceAsPlainText(t *testing.T) {
+	item := cardInvestigation(domain.StatusSucceeded)
+	updatedAt := time.Date(2026, 8, 24, 8, 0, 0, 0, time.UTC)
+	item.Report.RunbookGuidance = &domain.RunbookGuidance{
+		Status:     domain.RunbookGuidanceComplete,
+		DataSource: domain.RunbookGuidanceSourceSyntheticMock,
+		Items: []domain.RunbookGuidanceItem{
+			{
+				Title: "核查 *支付* 依赖", Revision: "rev_[1]", Owner: "team_<ops>", UpdatedAt: updatedAt,
+				Steps: []domain.RunbookStep{
+					{Kind: domain.RunbookStepVerify, Instruction: "核对 payment_timeout 聚合"},
+					{Kind: domain.RunbookStepObserve, Instruction: "观察 P95 延迟"},
+					{Kind: domain.RunbookStepEscalate, Instruction: "联系支付值班团队"},
+					{Kind: domain.RunbookStepVerify, Instruction: "STEP_FOUR_MUST_NOT_RENDER"},
+				},
+			},
+			{Title: "第二份 SOP", Revision: "rev-2", Owner: "team-two", UpdatedAt: updatedAt, Steps: []domain.RunbookStep{{Kind: domain.RunbookStepObserve, Instruction: "观察依赖恢复"}}},
+			{Title: "THIRD_ITEM_MUST_NOT_RENDER", Revision: "rev-3", Owner: "team-three", UpdatedAt: updatedAt, Steps: []domain.RunbookStep{{Kind: domain.RunbookStepVerify, Instruction: "不可见"}}},
+		},
+	}
+
+	card := renderReportCard(item)
+	payload, err := marshalCard(card)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := markdownContents(card)
+	for _, expected := range []string{
+		"受控 SOP 参考（Mock）", "核查 \\*支付\\* 依赖", "rev\\_\\[1\\]", "team\\_\\<ops\\>",
+		"2026-08-24 16:00:00", "【核对】", "【观察】", "【升级联系】", "第二份 SOP",
+		"仅供人工核查，不会自动执行处置",
+	} {
+		if !strings.Contains(content, expected) {
+			t.Fatalf("runbook card lacks %q: %s", expected, content)
+		}
+	}
+	for _, forbidden := range []string{"STEP_FOUR_MUST_NOT_RENDER", "THIRD_ITEM_MUST_NOT_RENDER"} {
+		if strings.Contains(content, forbidden) {
+			t.Fatalf("runbook limit leaked %q: %s", forbidden, content)
+		}
+	}
+	recommendationIndex := strings.Index(content, "**建议 1：**")
+	runbookIndex := strings.Index(content, "**受控 SOP 参考（Mock）：**")
+	if recommendationIndex < 0 || runbookIndex <= recommendationIndex {
+		t.Fatalf("runbook guidance must follow deterministic recommendations: %s", content)
+	}
+	if len(payload) >= maxCardBytes {
+		t.Fatalf("card exceeds limit: %d", len(payload))
+	}
+	var document map[string]interface{}
+	if err := json.Unmarshal([]byte(payload), &document); err != nil {
+		t.Fatal(err)
+	}
+	actions := collectButtonActions(t, document)
+	sort.Strings(actions)
+	want := []string{"expand_window", "rerun", "view_evidence"}
+	if strings.Join(actions, ",") != strings.Join(want, ",") {
+		t.Fatalf("runbook introduced an action: got %v want %v", actions, want)
+	}
+}
+
+func TestReportCardTruncatesRunbookText(t *testing.T) {
+	item := cardInvestigation(domain.StatusSucceeded)
+	longTitle := strings.Repeat("标题", maxStatementRunes) + "TITLE_TAIL_MUST_NOT_RENDER"
+	longInstruction := strings.Repeat("核查", maxStatementRunes) + "STEP_TAIL_MUST_NOT_RENDER"
+	item.Report.RunbookGuidance = &domain.RunbookGuidance{
+		Status:     domain.RunbookGuidanceComplete,
+		DataSource: domain.RunbookGuidanceSourceSyntheticMock,
+		Items: []domain.RunbookGuidanceItem{{
+			Title: longTitle, Revision: strings.Repeat("r", maxIdentifierRunes+20) + "REVISION_TAIL_MUST_NOT_RENDER",
+			Owner:     strings.Repeat("o", maxAggregateRunes+20) + "OWNER_TAIL_MUST_NOT_RENDER",
+			UpdatedAt: time.Date(2026, 8, 24, 8, 0, 0, 0, time.UTC),
+			Steps:     []domain.RunbookStep{{Kind: domain.RunbookStepVerify, Instruction: longInstruction}},
+		}},
+	}
+	card := renderReportCard(item)
+	payload, err := marshalCard(card)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := markdownContents(card)
+	for _, forbidden := range []string{"TITLE_TAIL_MUST_NOT_RENDER", "STEP_TAIL_MUST_NOT_RENDER", "REVISION_TAIL_MUST_NOT_RENDER", "OWNER_TAIL_MUST_NOT_RENDER"} {
+		if strings.Contains(content, forbidden) {
+			t.Fatalf("runbook text was not truncated: %q", forbidden)
+		}
+	}
+	if !strings.Contains(content, "…") || len(payload) >= maxCardBytes {
+		t.Fatalf("runbook truncation/card-size guard is missing: bytes=%d", len(payload))
+	}
+}
+
+func TestReportCardUsesFixedRunbookStatusMessages(t *testing.T) {
+	tests := []struct {
+		name     string
+		status   domain.RunbookGuidanceStatus
+		expected string
+		mustOmit bool
+	}{
+		{name: "no match", status: domain.RunbookGuidanceNoMatch, expected: "当前受控目录未匹配到适用条目；这不代表企业不存在相关 SOP"},
+		{name: "inconclusive", status: domain.RunbookGuidanceInconclusive, expected: "当前目录结果不完整，暂不展示 SOP 条目；不能据此推断没有相关 SOP"},
+		{name: "unavailable", status: domain.RunbookGuidanceUnavailable, expected: "当前不可用；既有调查结论和建议不受影响"},
+		{name: "skipped", status: domain.RunbookGuidanceSkippedNoTrigger, mustOmit: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			item := cardInvestigation(domain.StatusSucceeded)
+			item.Report.RunbookGuidance = &domain.RunbookGuidance{
+				Status:        test.status,
+				DataSource:    domain.RunbookGuidanceSourceSyntheticMock,
+				MissingInputs: []string{"TOP_SECRET_PROVIDER_DETAIL"},
+				Items:         []domain.RunbookGuidanceItem{{Title: "TOP_SECRET_PROVIDER_TITLE"}},
+			}
+			card := renderReportCard(item)
+			if _, err := marshalCard(card); err != nil {
+				t.Fatal(err)
+			}
+			content := markdownContents(card)
+			if test.mustOmit {
+				if strings.Contains(content, "受控 SOP 参考") {
+					t.Fatalf("skipped runbook guidance was rendered: %s", content)
+				}
+				return
+			}
+			if !strings.Contains(content, test.expected) || !strings.Contains(content, "仅供人工核查，不会自动执行处置") {
+				t.Fatalf("fixed status message missing: %s", content)
+			}
+			if strings.Contains(content, "TOP_SECRET_PROVIDER") {
+				t.Fatalf("runbook provider detail leaked: %s", content)
+			}
+		})
+	}
+}
+
+func TestReportCardDoesNotPresentUnknownRunbookSourceAsGovernedEnterpriseKnowledge(t *testing.T) {
+	item := cardInvestigation(domain.StatusSucceeded)
+	item.Report.RunbookGuidance = &domain.RunbookGuidance{
+		Status: domain.RunbookGuidanceComplete,
+		Items: []domain.RunbookGuidanceItem{{
+			Title: "UNTRUSTED_SOURCE_ITEM_MUST_NOT_RENDER",
+			Steps: []domain.RunbookStep{{Instruction: "UNTRUSTED_SOURCE_STEP_MUST_NOT_RENDER"}},
+		}},
+	}
+
+	content := markdownContents(renderReportCard(item))
+	if !strings.Contains(content, "SOP 参考（来源未确认）") || !strings.Contains(content, "当前不可用") {
+		t.Fatalf("unknown runbook source is not labeled explicitly: %s", content)
+	}
+	if strings.Contains(content, "**受控 SOP 参考：**") {
+		t.Fatalf("unknown runbook source was presented as governed enterprise knowledge: %s", content)
+	}
+	if strings.Contains(content, "UNTRUSTED_SOURCE") {
+		t.Fatalf("unknown runbook source content was rendered: %s", content)
+	}
+}
+
+func markdownContents(card cardDocument) string {
+	contents := make([]string, 0, len(card.Body.Elements))
+	for _, element := range card.Body.Elements {
+		if item, ok := element.(cardMarkdown); ok {
+			contents = append(contents, item.Content)
+		}
+	}
+	return strings.Join(contents, "\n")
+}
+
 func collectButtonActions(t *testing.T, value interface{}) []string {
 	t.Helper()
 	actions := make([]string, 0)

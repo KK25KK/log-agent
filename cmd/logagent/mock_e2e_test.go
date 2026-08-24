@@ -55,6 +55,9 @@ func TestExecuteMockE2ECoversInboundAnalysisAndCardLifecycle(t *testing.T) {
 	if result.OperationalSignals.Mode != "mock" || result.OperationalSignals.SourceCalls != 1 || result.OperationalSignals.TimelineStatus != domain.TimelineComplete || result.OperationalSignals.Signals != 2 || result.OperationalSignals.TimelineItems != 3 {
 		t.Fatalf("unexpected mock operational timeline: %#v", result.OperationalSignals)
 	}
+	if result.RunbookKnowledge.Mode != domain.RunbookGuidanceSourceSyntheticMock || result.RunbookKnowledge.SourceCalls != 1 || result.RunbookKnowledge.Status != domain.RunbookGuidanceComplete || result.RunbookKnowledge.Items != 1 || result.RunbookKnowledge.Steps != 3 {
+		t.Fatalf("unexpected mock runbook knowledge: %#v", result.RunbookKnowledge)
+	}
 	if result.Investigation.Status != domain.StatusSucceeded || result.Investigation.Report == nil || result.Investigation.Report.Outcome != "spike_detected" {
 		t.Fatalf("unexpected investigation: %#v", result.Investigation)
 	}
@@ -69,5 +72,8 @@ func TestExecuteMockE2ECoversInboundAnalysisAndCardLifecycle(t *testing.T) {
 	}
 	if result.Investigation.Report.IncidentTimeline == nil || len(result.Investigation.Report.IncidentTimeline.Items) != 3 {
 		t.Fatalf("mock cross-signal timeline missing: %#v", result.Investigation.Report.IncidentTimeline)
+	}
+	if result.Investigation.Report.RunbookGuidance == nil || result.Investigation.Report.RunbookGuidance.Status != domain.RunbookGuidanceComplete || len(result.Investigation.Report.RunbookGuidance.Items) != 1 {
+		t.Fatalf("mock governed runbook guidance missing: %#v", result.Investigation.Report.RunbookGuidance)
 	}
 }

@@ -13,7 +13,9 @@ import (
 
 	"logagent/internal/adapters/eino"
 	"logagent/internal/adapters/feishu"
+	"logagent/internal/adapters/runbookmock"
 	"logagent/internal/adapters/signalmock"
+	"logagent/internal/adapters/slsmock"
 	"logagent/internal/adapters/sqlite"
 	"logagent/internal/adapters/summarymock"
 	"logagent/internal/application"
@@ -132,6 +134,7 @@ func runDemo() error {
 	if err != nil {
 		return err
 	}
+	demoPrincipal := domain.Principal{AppID: "local", TenantKey: "local", UserID: "demo-user"}
 	intake := application.NewIntake(store)
 	investigationID, _, err := intake.Accept(ctx, domain.InboundMessage{
 		AppID:      "local",
@@ -160,9 +163,17 @@ func runDemo() error {
 	if err != nil {
 		return err
 	}
+	runbook, err := application.NewRunbookService(
+		runbookmock.New(), slsmock.NewCatalog(demoPrincipal), domain.RunbookGuidanceSourceSyntheticMock,
+		application.WithRunbookClock(func() time.Time { return fixedEnd.Add(time.Second) }),
+	)
+	if err != nil {
+		return err
+	}
 	worker, err := application.NewWorker(
 		store, engine, "demo-worker", time.Minute,
 		application.WithWorkerClock(func() time.Time { return fixedEnd.Add(time.Second) }),
+		application.WithWorkerRunbook(runbook),
 		application.WithWorkerSummary(summary),
 	)
 	if err != nil {
@@ -215,7 +226,16 @@ func runWorker(config config.Config) error {
 	if err != nil {
 		return err
 	}
-	options := make([]application.WorkerOption, 0, 1)
+	options := make([]application.WorkerOption, 0, 2)
+	if config.SLS.Mode == "mock" {
+		runbook, runbookErr := application.NewRunbookService(
+			runbookmock.New(), runbookmock.NewCatalog(), domain.RunbookGuidanceSourceSyntheticMock,
+		)
+		if runbookErr != nil {
+			return runbookErr
+		}
+		options = append(options, application.WithWorkerRunbook(runbook))
+	}
 	if summary != nil {
 		options = append(options, application.WithWorkerSummary(summary))
 	}

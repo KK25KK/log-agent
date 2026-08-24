@@ -20,6 +20,8 @@ const (
 	maxCauseEvidenceItems    = 3
 	maxTimelineSummaryItems  = 3
 	maxTimelineEvidenceItems = 6
+	maxRunbookItems          = 2
+	maxRunbookSteps          = 3
 	maxAISummaryNotes        = 2
 	maxAggregateItems        = 5
 	maxStatementRunes        = 480
@@ -187,12 +189,101 @@ func renderReportCard(investigation domain.Investigation) cardDocument {
 	for index, recommendation := range boundedRecommendations(report.Recommendations) {
 		elements = append(elements, markdown(fmt.Sprintf("**建议 %d：** %s", index+1, safeMarkdown(recommendation.Statement, maxStatementRunes))))
 	}
+	elements = appendRunbookGuidance(elements, report.RunbookGuidance)
 	elements = append(elements, buttonRow(investigation.ID,
 		buttonSpec{label: "查看证据", action: domain.ActionViewEvidence, style: "primary"},
 		buttonSpec{label: "扩大时间窗", action: domain.ActionExpandWindow},
 		buttonSpec{label: "重新运行", action: domain.ActionRerun},
 	))
 	return newCard(title, template, elements)
+}
+
+func appendRunbookGuidance(elements []any, guidance *domain.RunbookGuidance) []any {
+	if guidance == nil || guidance.Status == domain.RunbookGuidanceSkippedNoTrigger {
+		return elements
+	}
+	elements = append(elements, cardDivider{Tag: "hr"})
+	if !domain.ValidateRunbookGuidanceDataSource(guidance.DataSource) {
+		return append(elements, markdown("**SOP 参考（来源未确认）：** 当前不可用；既有调查结论和建议不受影响。\n\n仅供人工核查，不会自动执行处置。"))
+	}
+	heading := runbookGuidanceHeading(guidance.DataSource)
+	switch guidance.Status {
+	case domain.RunbookGuidanceNoMatch:
+		return append(elements, markdown(fmt.Sprintf("**%s：** 当前受控目录未匹配到适用条目；这不代表企业不存在相关 SOP。\n\n仅供人工核查，不会自动执行处置。", heading)))
+	case domain.RunbookGuidanceInconclusive:
+		return append(elements, markdown(fmt.Sprintf("**%s：** 当前目录结果不完整，暂不展示 SOP 条目；不能据此推断没有相关 SOP。\n\n仅供人工核查，不会自动执行处置。", heading)))
+	case domain.RunbookGuidanceUnavailable:
+		return append(elements, markdown(fmt.Sprintf("**%s：** 当前不可用；既有调查结论和建议不受影响。\n\n仅供人工核查，不会自动执行处置。", heading)))
+	case domain.RunbookGuidanceComplete:
+		return appendCompleteRunbookGuidance(elements, heading, guidance.Items)
+	default:
+		return append(elements, markdown(fmt.Sprintf("**%s：** 当前不可用；既有调查结论和建议不受影响。\n\n仅供人工核查，不会自动执行处置。", heading)))
+	}
+}
+
+func runbookGuidanceHeading(source domain.RunbookGuidanceDataSource) string {
+	switch source {
+	case domain.RunbookGuidanceSourceSyntheticMock:
+		return "受控 SOP 参考（Mock）"
+	case domain.RunbookGuidanceSourceEnterpriseGoverned:
+		return "受控 SOP 参考"
+	default:
+		return "SOP 参考（来源未确认）"
+	}
+}
+
+func appendCompleteRunbookGuidance(elements []any, heading string, items []domain.RunbookGuidanceItem) []any {
+	if len(items) == 0 {
+		return append(elements, markdown(fmt.Sprintf("**%s：** 当前目录结果不完整，暂不展示 SOP 条目；不能据此推断没有相关 SOP。\n\n仅供人工核查，不会自动执行处置。", heading)))
+	}
+	if len(items) > maxRunbookItems {
+		items = items[:maxRunbookItems]
+	}
+	elements = append(elements, markdown(fmt.Sprintf("**%s：**", heading)))
+	for index, item := range items {
+		content := fmt.Sprintf(
+			"**SOP %d：** %s\n\n版本：%s｜负责人：%s｜更新时间：%s",
+			index+1,
+			safeMarkdown(item.Title, maxStatementRunes),
+			safeMarkdown(item.Revision, maxIdentifierRunes),
+			safeMarkdown(item.Owner, maxAggregateRunes),
+			formatRunbookUpdatedAt(item.UpdatedAt),
+		)
+		steps := item.Steps
+		if len(steps) > maxRunbookSteps {
+			steps = steps[:maxRunbookSteps]
+		}
+		for stepIndex, step := range steps {
+			content += fmt.Sprintf(
+				"\n\n%d. 【%s】%s",
+				stepIndex+1,
+				runbookStepKindLabel(step.Kind),
+				safeMarkdown(step.Instruction, maxStatementRunes),
+			)
+		}
+		elements = append(elements, markdown(content))
+	}
+	return append(elements, markdown("仅供人工核查，不会自动执行处置。"))
+}
+
+func runbookStepKindLabel(kind domain.RunbookStepKind) string {
+	switch kind {
+	case domain.RunbookStepVerify:
+		return "核对"
+	case domain.RunbookStepObserve:
+		return "观察"
+	case domain.RunbookStepEscalate:
+		return "升级联系"
+	default:
+		return "人工核查"
+	}
+}
+
+func formatRunbookUpdatedAt(value time.Time) string {
+	if value.IsZero() {
+		return "-"
+	}
+	return value.In(shanghaiLocation).Format("2006-01-02 15:04:05")
 }
 
 func appendReportSummary(elements []any, summary *domain.ReportSummary) []any {

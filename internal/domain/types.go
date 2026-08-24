@@ -180,6 +180,7 @@ type Report struct {
 	Evidence         []Evidence        `json:"evidence"`
 	CauseAnalysis    *CauseAnalysis    `json:"cause_analysis,omitempty"`
 	IncidentTimeline *IncidentTimeline `json:"incident_timeline,omitempty"`
+	RunbookGuidance  *RunbookGuidance  `json:"runbook_guidance,omitempty"`
 	Summary          *ReportSummary    `json:"summary,omitempty"`
 	GeneratedAt      time.Time         `json:"generated_at"`
 }

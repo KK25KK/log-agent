@@ -1,6 +1,6 @@
 # Log Agent
 
-这是一个用 Go 开发的“证据驱动”日志调查 Agent。M0～M3、M3-B 跨信号时间线 Mock、M4-A/M4-B、M5-A、M5-B/B1～B3、M5-C 的 Mock Reviewer/离线灰度演练，以及证据约束的 LLM 摘要、摘要安全评测和租户请求/Token 额度治理已经完成主体代码与离线测试；M4-C、真实可观测平台、真实火山方舟联调和 M5-C 真实灰度仍未完成。由于仓库没有真实飞书/SLS/发布平台/指标与 Trace 平台/模型凭据、生产数据库、历史故障标注集与试点资源，当前只能称为“具备试点条件”，不能称为日常可用或生产可用。
+这是一个用 Go 开发的“证据驱动”日志调查 Agent。M0～M3、M3-B 跨信号时间线 Mock、受治理 SOP 人工核查 Mock、M4-A/M4-B、M5-A、M5-B/B1～B3、M5-C 的 Mock Reviewer/离线灰度演练，以及证据约束的 LLM 摘要、摘要安全评测和租户请求/Token 额度治理已经完成主体代码；M4-C、真实可观测平台、真实企业知识源、真实火山方舟联调和 M5-C 真实灰度仍未完成。由于仓库没有真实飞书/SLS/发布平台/指标与 Trace 平台/企业 SOP 内容/模型凭据、生产数据库、历史故障标注集与试点资源，当前只能称为“具备试点条件”，不能称为日常可用或生产可用。
 
 ```text
 飞书消息
@@ -16,6 +16,7 @@
   -> 可选的受控 Change Catalog
   -> 支持/反证 Ledger + CauseAnalysis
   -> 可选的受控指标/Trace 聚合 + IncidentTimeline
+  -> Worker 首次校验 -> 可选的受治理 SOP 人工核查 -> 再次校验
   -> LLM 请求/Token 租户额度预留
   -> 证据约束摘要（默认 Mock / 可切火山方舟 / 失败回退）
   -> 实际 Token 结算或未知成本保留
@@ -94,6 +95,17 @@ Eino 只负责流程编排，不负责业务状态、权限、幂等、审计和
 - 信号源未配置时旧报告保持兼容；可选源失败、非法、不完整或截断只降级时间线，不改变 M2/M3 事实。
 - 当前只有确定性 `signalmock`，没有真实 ARMS/CMS/Prometheus/OTel 连接器。设计与接入前置条件见 [`docs/m3b-cross-signal-incident-timeline.md`](docs/m3b-cross-signal-incident-timeline.md)。
 
+### 受治理 SOP 人工核查（Mock-first）
+
+- `RunbookSource` 只接收严格治理的 current/baseline Evidence 所对应的逻辑 `resource_id`、应用重算且与报告精确一致的 Recommendation Code 和固定上限。Evidence 必须使用固定 `error_analysis_v2` 模板，带完整 Query/Schema/Policy/Governance 元数据，两个窗口治理身份一致、连续等长，并与可信 Job 请求窗口精确绑定；调用前还要经 `ResourceCatalog.Resolve + Allowed` 重新绑定和授权。
+- Worker 先校验 Eino 确定性输出，再用独立默认 5 秒子 Context 调用至多一次可选 `RunbookService`；返回后会先检查子 Deadline，所以 Deadline 后的 `(set, nil)` 也会降级而不会被接受。应用计算 Recommendation/Evidence 引用、内容指纹和 `HUMAN_REVIEW_ONLY` 投影，随后再次执行相同生产校验。
+- Source 只能选择 `VERIFY_ERROR_PATTERN / OBSERVE_HOT_INSTANCE / ESCALATE_SERVICE_OWNER` 三个关闭步骤 Code；`VERIFY/OBSERVE/ESCALATE` 类型和展示文案由本地固定模板唯一生成，Provider 不能注入自由步骤文本。合同不存在 URL、命令、脚本、按钮、执行参数或自动处置入口。
+- `NO_MATCH/INCONCLUSIVE/UNAVAILABLE/SKIPPED_NO_TRIGGER` 都保留原 Evidence、Finding、原因判断、时间线和确定性 Recommendation，不会把知识匹配写成根因或批准动作。
+- `SKIPPED_NO_TRIGGER` 表示没有确定性错误突增；baseline 为 0 时继续按 `data_insufficient` 处理、不会调用 Source。已有确定性突增但 Recommendation 缺失或治理资源不一致时为 `UNAVAILABLE`，同样保持零调用。
+- `RunbookGuidance.data_source` 由可信启动组装层固定为 `SYNTHETIC_MOCK / ENTERPRISE_GOVERNED`，Source 不能自报；条目更新时间同时受报告时间和可信服务时钟的 5 分钟偏差上限约束。飞书对合成目录的 SOP 区块明确显示“受控 SOP 参考（Mock）”；空值或非法来源只显示“来源未确认/当前不可用”，不会展示夹带条目。
+- 当前只有 `internal/adapters/runbookmock` 的确定性目录。真实 Wiki、文档平台、错误码知识库、内容审批、租户授权、审计、失效和检索质量评测尚未接入。完整合同见 [`docs/governed-sop-knowledge-guidance.md`](docs/governed-sop-knowledge-guidance.md)。
+- SOP 不进入 Eino Graph、`SummaryInput`、Agent Trace、Replay 或现有 `evaluate` 数据集/版本指纹。
+
 ### 证据约束的 LLM 摘要
 
 - `ports.ReportSummarizer` 只接收通过 Worker 校验的有界投影；不发送飞书身份、物理资源、Query ID/Hash、SQL、原始日志、凭据或 Provider 错误。
@@ -161,8 +173,9 @@ go run ./cmd/logagent mock-e2e
 5. 将 current、baseline 两个规范化聚合结果写入真实 SQLite Checkpoint；
 6. 生成 Evidence、M2 报告和 Mock 变更关联账本；
 7. 用一次 Mock Operational Signal Source 调用生成三条跨信号时间线；
-8. 使用确定性 Mock 摘要器生成有引用约束的报告摘要；
-9. 通过真实 Delivery Worker 模拟飞书卡片 `REPLY(QUEUED) -> PATCH(RUNNING) -> PATCH(SUCCEEDED)`。
+8. 在首次报告校验后，校验固定 Evidence 模板、治理指纹和可信请求窗口，用一次独立 5 秒边界内的 Mock Runbook Source 调用生成一项、三步的人工核查指引，写入可信 `SYNTHETIC_MOCK` 来源并再次校验引用和安全边界；
+9. 使用确定性 Mock 摘要器生成有引用约束的报告摘要，SOP 内容不进入模型输入；
+10. 通过真实 Delivery Worker 模拟飞书卡片 `REPLY(QUEUED) -> PATCH(RUNNING) -> PATCH(SUCCEEDED)`。
 
 输出中的 `safety.external_network_calls=0`、`credentials_required=false` 表示当前运行完全离线；`schema_calls=1`、`backend_execute_calls=2`、`provider_api_calls=8`、`query_audit_events=4` 和 `query_step_checkpoints=2` 分别证明固定 Schema、当前/基线观察、四聚合调用元数据、开始/终态审计和两个持久化步骤已经经过真实应用链路。固定的 120/20 条错误、发布事件和飞书标识全部是测试数据，不代表真实阿里云或飞书结果。完整 Mock 边界见 [`docs/local-mock-e2e.md`](docs/local-mock-e2e.md)，恢复合同见 [`docs/m4-recoverable-query-steps.md`](docs/m4-recoverable-query-steps.md)。
 
@@ -173,6 +186,8 @@ go run ./cmd/logagent mock-e2e
 `llm_summary.mode=MOCK`、`status=GENERATED`、`external_api_calls=0` 证明摘要合同经过主链，但没有调用真实模型。`evaluate` 仍是 Engine 级确定性评测，不经过 Worker 摘要，因此其版本清单继续如实记录 `prompt_used=false`。
 
 `operational_signals.source_calls=1`、`timeline_status=COMPLETE`、`signals=2` 和 `timeline_items=3` 证明指标/Trace Mock 已经过真实 Engine、Worker 校验、SQLite Report 持久化和飞书展示合同；它们不是生产监控结果，也没有增加 SLS 调用。
+
+本轮实际 `mock-e2e` 输出为 `runbook_knowledge.mode=SYNTHETIC_MOCK`、`source_calls=1`、`status=COMPLETE`、`items=1`、`steps=3`。正式飞书 Renderer 对该来源使用“受控 SOP 参考（Mock）”标题。该投影全部来自确定性 Mock，只供人工核查，不代表真实企业 SOP 已接入，也没有增加两个 SLS 观察、八次 Provider 调用代理或外部网络访问。
 
 ## 运行第六至八期离线评测与 Trace 门禁
 
@@ -250,13 +265,13 @@ go run ./cmd/logagent rollout-rehearse `
 
 ## 只查看离线报告 Demo（可选）
 
-环境要求：Go 1.26 或更高版本。Demo 永远使用 Mock SLS 和内置 Mock Change Source，不需要飞书、阿里云或发布平台凭证。
+环境要求：Go 1.26 或更高版本。Demo 永远使用 Mock SLS、内置 Mock Change Source 和 Mock Runbook Source，不需要飞书、阿里云、发布平台或企业知识系统凭证。
 
 ```powershell
 go run ./cmd/logagent demo
 ```
 
-输出是一份 JSON 调查报告，包含结论、资源与模板版本、查询指纹、完整性、统计证据和 M3 原因分析。Mock 中固定为当前窗口 120 条错误、基线 20 条，并放入一个影响 `order-pod-a` 的发布事件，因此会得到 6 倍突增和一个由固定规则计算出的变更关联候选；这些都是测试数据，不是生产日志或真实发布结果。
+输出是一份 JSON 调查报告，包含结论、资源与模板版本、查询指纹、完整性、统计证据、M3 原因分析和受控 SOP 人工核查投影。Mock 中固定为当前窗口 120 条错误、基线 20 条，并放入一个影响 `order-pod-a` 的发布事件和一个内置 Runbook 条目；这些都是测试数据，不是生产日志、真实发布结果或企业 SOP。
 
 ## 配置 M3 Change Catalog（可选）
 
@@ -461,7 +476,9 @@ go run ./cmd/logagent demo
 
 默认测试全部离线，不读取云凭据、不访问 SLS 或发布平台。只有显式运行 `sls-check`、`sls-smoke`，或以 `LOG_AGENT_SLS_MODE=aliyun` 启动 Worker，才会访问真实 SLS。
 
-本轮离线验收中，`gofmt`、`go test -count=1 ./...`、`go vet ./...`、重点包乱序 20 轮、`evaluate`、`summary-evaluate`、`mock-e2e`、快照保存/回放/比较、`feedback-seed` 和 `rollout-rehearse` 均通过。`evaluate` 的 5/5 个合成 Case 全部通过，`trace_contract_accuracy=1`；共记录 76 个事件、13 个工具 Span、0 个丢弃事件，并与 10 次逻辑 SLS 观察、40 次 Provider 调用代理、3 次 Change Source 调用和 78,080 processed bytes 完全核对。`summary-evaluate` 的 9/9 个安全 Case 通过，预期/实际 Mock Provider 调用均为 8，敏感输入 Case 调用为 0，Token、凭据和外部网络调用为 0。C1/C2 手工链路形成十条活动反馈、五个完整 Case、两名虚拟 Reviewer quorum，并返回 `REHEARSAL_PASSED`、`SYNTHETIC_MOCK`、`production_action_allowed=false`；阻断和证据不足路径由离线测试覆盖。Engine 数据集指纹为 `caf2714c80a646c5da15134c6557879565ffc8e083a66da1f1c9e49d3d0dc1f8`，摘要数据集指纹为 `82e813aed0721f15b89a19b053da6b1d47509ab07f45122af4ed0c075e60a0b1`，规范化版本指纹为 `14db14acf992ebd06d9d4d71f89056be2a2b984baeb6bf5de2c136db442f7c53`。这些仍只是全合成 Mock 的工程回归结果。`go test -race ./...` 未执行，因为当前 Windows 环境 `CGO_ENABLED=0` 且未安装 GCC，不能写成已通过。
+以下是受治理 SOP 进入 Worker 之前保存的离线基线验收记录：当时 `gofmt`、`go test -count=1 ./...`、`go vet ./...`、重点包乱序 20 轮、`evaluate`、`summary-evaluate`、`mock-e2e`、快照保存/回放/比较、`feedback-seed` 和 `rollout-rehearse` 均通过。`evaluate` 的 5/5 个合成 Case 全部通过，`trace_contract_accuracy=1`；共记录 76 个事件、13 个工具 Span、0 个丢弃事件，并与 10 次逻辑 SLS 观察、40 次 Provider 调用代理、3 次 Change Source 调用和 78,080 processed bytes 完全核对。`summary-evaluate` 的 9/9 个安全 Case 通过，预期/实际 Mock Provider 调用均为 8，敏感输入 Case 调用为 0，Token、凭据和外部网络调用为 0。C1/C2 手工链路形成十条活动反馈、五个完整 Case、两名虚拟 Reviewer quorum，并返回 `REHEARSAL_PASSED`、`SYNTHETIC_MOCK`、`production_action_allowed=false`；阻断和证据不足路径由离线测试覆盖。Engine 数据集指纹为 `caf2714c80a646c5da15134c6557879565ffc8e083a66da1f1c9e49d3d0dc1f8`，摘要数据集指纹为 `82e813aed0721f15b89a19b053da6b1d47509ab07f45122af4ed0c075e60a0b1`，规范化版本指纹为 `14db14acf992ebd06d9d4d71f89056be2a2b984baeb6bf5de2c136db442f7c53`。这些仍只是全合成 Mock 的工程回归结果，并且都不包含 SOP 数据。`go test -race ./...` 当时未执行，因为 Windows 环境 `CGO_ENABLED=0` 且未安装 GCC，不能写成已通过。
+
+2026-08-24 第二轮严格 Evidence、可信来源/时钟及两个 fail-closed 边界全部落地后，最终工作树再次通过 `gofmt -w .`、`go test -count=1 ./...`、`go vet ./...` 和重点包 `-shuffle=on -count=20`。`mock-e2e` 为 `SUCCEEDED`，Runbook 为 `SYNTHETIC_MOCK/COMPLETE`、1 次调用/1 项/3 步，SLS 保持 2 次逻辑观察/8 次 Provider 调用代理/0 次外部网络；`demo` 为 `SUCCEEDED` 且为 `HUMAN_REVIEW_ONLY`。`evaluate` 5/5 与 `summary-evaluate` 9/9 均为 `PASSED`，数据集指纹分别保持 `caf2714c80a646c5da15134c6557879565ffc8e083a66da1f1c9e49d3d0dc1f8` 和 `82e813aed0721f15b89a19b053da6b1d47509ab07f45122af4ed0c075e60a0b1`。最终临时链路也重新完成快照保存、replay、`replay-compare=COMPARABLE`（27 项指标、3 个工具维度、0 回归）、十条活动 Mock 反馈和 `rollout-rehearse=REHEARSAL_PASSED`，仍固定为 `SYNTHETIC_MOCK`、`production_action_allowed=false`；最终安全复查未发现 P0–P3。`go test -race ./...` 仍因 `CGO_ENABLED=0` 且未安装 GCC 而未执行。
 
 本次 LLM 额度治理还单独通过了 `SummaryQuota|LLMQuota|MockE2E|BuildSummaryService` 定向 50 轮；Mock 主链为 1 次摘要请求、0 Token、0 凭据和 0 网络调用。
 
@@ -474,7 +491,7 @@ cmd/logagent                          进程组装与诊断命令
 internal/application                 接单、调查 Worker、查询 Checkpoint、卡片 Delivery 和动作控制用例
 internal/application/query           ACL、预算、Schema、审计与脱敏网关
 internal/domain                      领域数据、资源、查询、原因假设、证据账本、Agent 事件与版本清单模型
-internal/ports                       Store、Engine、QueryGateway、SLSBackend、ChangeSource、AgentObserver 接口
+internal/ports                       Store、Engine、QueryGateway、SLSBackend、ChangeSource、OperationalSignalSource、RunbookSource、ReportSummarizer、AgentObserver 接口
 internal/adapters/eino               唯一允许导入 Eino 的包
 internal/adapters/feishu             唯一允许导入飞书 SDK 的包
 internal/adapters/feishumock         离线飞书收件与卡片投递模拟，不导入 SDK
@@ -482,6 +499,7 @@ internal/adapters/aliyunsls           唯一允许导入阿里云 SLS SDK 的包
 internal/adapters/resourcecatalog     JSON 资源目录与静态 ACL
 internal/adapters/changecatalog       M3 版本化发布/配置变更目录
 internal/adapters/signalmock          M3-B 指标/Trace 聚合离线 Mock
+internal/adapters/runbookmock         受治理 SOP 人工核查离线 Mock，不访问知识平台
 internal/adapters/sqlite              本地持久化、查询审计/Checkpoint、卡片死信、租户额度与审批合同
 internal/adapters/slsmock             离线确定性数据
 internal/adapters/evalmock            M5-A 逐 Case 的 SLS 与 Change Source Fixture Mock
@@ -498,6 +516,7 @@ internal/adapters/summaryevalmock     摘要失败、恶意引用、危险动作
 internal/adapters/volcark             火山方舟 Responses API 适配器
 internal/adapters/sqlite/summary_quota.go  LLM 请求/Token 预留、结算与成本熔断账本
 internal/application/summary.go       摘要输入投影、引用校验和确定性回退
+internal/application/runbook.go       Worker 后处理的 SOP 查询、引用派生与安全降级
 ```
 
 ## 当前边界与已知限制
@@ -514,10 +533,11 @@ internal/application/summary.go       摘要输入投影、引用校验和确定
 - SQLite 继续用于本地技术验证；卡片发送只有分类后的有限本地重试，不承诺 exactly-once。M4-B 已提供安全死信重放、本地租户额度/成本代理熔断和审批状态合同；多实例卡片全局顺序、生产数据库、组织级全局配额、真实 DLQ RBAC 与审批执行仍在 M4-C。
 - SQLite 技术预览当前没有 schema version、正式迁移和回滚工具；升级已有数据库前必须备份，本地试验环境可按阶段说明重建。
 - M3 Change Catalog 是启动时加载的静态文件，不是已接通的发布平台、配置中心或 CMDB；关联候选、权重和阈值尚未经过企业历史故障集校准。
-- M3-B 已用 Mock 聚合跑通指标/Trace 时间线，但没有真实 ARMS/CMS/Prometheus/OTel 连接器、原始 Trace 下钻、拓扑或知识库证据；相关性不会被表述成已确认根因。
+- M3-B 已用 Mock 聚合跑通指标/Trace 时间线，但没有真实 ARMS/CMS/Prometheus/OTel 连接器、原始 Trace 下钻或拓扑；相关性不会被表述成已确认根因。
+- 受治理 SOP 已有严格 Evidence/请求窗口绑定、Mock Source、可信来源标记、独立 5 秒超时、可信服务时钟、Worker 双重校验、持久化投影和带 Mock 标题的飞书纯文本展示，但没有真实 `RunbookSource`、企业内容、审批/失效、租户授权、审计或检索质量验收。它只供人工核查，不提供 URL、命令、按钮或自动处置。
 - M5-A 数据集没有真实故障和专家标注，只能发现已编码合成场景上的回归；它不测量生产泛化能力，也不能批准灰度。M5-B/B3 已补齐合成 Engine 执行的有界 Trace、版本合同、append-only 历史与兼容运行比较，但真实反馈、真实数据集、团队阈值、试点群和回滚验收仍属于 M5-C。
 - M5-B/B3 不是飞书接单、SQLite Worker、SLS 网络请求到卡片投递的跨进程分布式 Trace，也没有生产 Trace 后端、采样/保留策略或延迟 SLO。内容哈希用于完整性检测，不是加密、签名或身份认证。
-- Eino Graph 和 `evaluate` 仍是确定性、无 LLM 的，因此评测版本清单明确为 `prompt_used=false`。Worker 后处理已经实现证据约束摘要和 SQLite 请求/Token 额度治理，默认走 Mock；火山方舟协议适配器已具备但尚未用真实凭据联调。真实 Prompt/模型质量、Token 价格校准、生产全局额度和留存门禁仍需真实试点验收。
+- Eino Graph 和 `evaluate` 仍是确定性、无 LLM 的；Runbook 也是 Worker 校验后的可选后处理，不进入现有评测、Trace 或 Replay 版本合同，因此历史数据集与版本指纹不因该投影自动变化。Worker 后处理还实现了证据约束摘要和 SQLite 请求/Token 额度治理，默认走 Mock；火山方舟协议适配器已具备但尚未用真实凭据联调。真实 Prompt/模型质量、Token 价格校准、生产全局额度和留存门禁仍需真实试点验收。
 - 非文本消息、格式错误的命令和永久无效事件目前会被安全确认但不会回复用法提示；这是已知的交互限制。
 - 系统只有只读调查能力，不包含自动处置工具。
 

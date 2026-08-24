@@ -10,6 +10,7 @@ import (
 
 	"logagent/internal/adapters/eino"
 	"logagent/internal/adapters/feishumock"
+	"logagent/internal/adapters/runbookmock"
 	"logagent/internal/adapters/signalmock"
 	"logagent/internal/adapters/slsmock"
 	"logagent/internal/adapters/sqlite"
@@ -28,6 +29,7 @@ type mockE2EResult struct {
 	LLMQuota           domain.TenantSummaryQuotaUsage `json:"llm_quota"`
 	ChangeSource       string                         `json:"change_source"`
 	OperationalSignals mockOperationalSignalSummary   `json:"operational_signals"`
+	RunbookKnowledge   mockRunbookKnowledgeSummary    `json:"runbook_knowledge"`
 	LLMSummary         mockLLMSummary                 `json:"llm_summary"`
 	Investigation      domain.Investigation           `json:"investigation"`
 }
@@ -38,6 +40,14 @@ type mockOperationalSignalSummary struct {
 	TimelineStatus domain.TimelineStatus `json:"timeline_status"`
 	Signals        int                   `json:"signals"`
 	TimelineItems  int                   `json:"timeline_items"`
+}
+
+type mockRunbookKnowledgeSummary struct {
+	Mode        domain.RunbookGuidanceDataSource `json:"mode"`
+	SourceCalls int                              `json:"source_calls"`
+	Status      domain.RunbookGuidanceStatus     `json:"status"`
+	Items       int                              `json:"items"`
+	Steps       int                              `json:"steps"`
 }
 
 type mockLLMSummary struct {
@@ -181,8 +191,9 @@ func executeMockE2E(ctx context.Context) (mockE2EResult, error) {
 	if err != nil {
 		return mockE2EResult{}, err
 	}
+	mockCatalog := slsmock.NewCatalog(mockPrincipal)
 	queryGateway, err := queryapp.NewGateway(
-		slsmock.NewCatalog(mockPrincipal),
+		mockCatalog,
 		mockBackend,
 		store,
 		queryapp.Budget{
@@ -254,9 +265,21 @@ func executeMockE2E(ctx context.Context) (mockE2EResult, error) {
 	if err != nil {
 		return mockE2EResult{}, err
 	}
+	runbookSource, err := runbookmock.NewIncident("mock/order-service/prod")
+	if err != nil {
+		return mockE2EResult{}, err
+	}
+	runbook, err := application.NewRunbookService(
+		runbookSource, mockCatalog, domain.RunbookGuidanceSourceSyntheticMock,
+		application.WithRunbookClock(func() time.Time { return messageAt.Add(time.Second) }),
+	)
+	if err != nil {
+		return mockE2EResult{}, err
+	}
 	worker, err := application.NewWorker(
 		store, engine, "mock-investigation-worker", time.Minute,
 		application.WithWorkerClock(func() time.Time { return messageAt.Add(time.Second) }),
+		application.WithWorkerRunbook(runbook),
 		application.WithWorkerSummary(summary),
 	)
 	if err != nil {
@@ -332,6 +355,13 @@ func executeMockE2E(ctx context.Context) (mockE2EResult, error) {
 	if investigation.Report.IncidentTimeline == nil || investigation.Report.IncidentTimeline.Status != domain.TimelineComplete {
 		return mockE2EResult{}, fmt.Errorf("mock investigation is missing its incident timeline: %#v", investigation.Report.IncidentTimeline)
 	}
+	if investigation.Report.RunbookGuidance == nil || investigation.Report.RunbookGuidance.Status != domain.RunbookGuidanceComplete {
+		return mockE2EResult{}, fmt.Errorf("mock investigation is missing governed runbook guidance: %#v", investigation.Report.RunbookGuidance)
+	}
+	runbookStats := runbookSource.Stats()
+	if runbookStats.LookupCalls != 1 {
+		return mockE2EResult{}, fmt.Errorf("unexpected mock runbook activity %#v", runbookStats)
+	}
 	operationalStats := operationalSource.Stats()
 	if operationalStats.ListCalls != 1 {
 		return mockE2EResult{}, fmt.Errorf("unexpected mock operational signal activity %#v", operationalStats)
@@ -399,7 +429,7 @@ func executeMockE2E(ctx context.Context) (mockE2EResult, error) {
 		Safety: mockSafetySummary{
 			ExternalNetworkCalls: 0,
 			CredentialsRequired:  false,
-			DataNotice:           "All Feishu messages, SLS aggregates, change events, operational signals, and report summaries are deterministic test data.",
+			DataNotice:           "All Feishu messages, SLS aggregates, change events, operational signals, runbook guidance, and report summaries are deterministic test data.",
 		},
 		Feishu: mockFeishuSummary{
 			Mode:                        "mock",
@@ -430,6 +460,12 @@ func executeMockE2E(ctx context.Context) (mockE2EResult, error) {
 			Signals:        len(investigation.Report.IncidentTimeline.Signals),
 			TimelineItems:  len(investigation.Report.IncidentTimeline.Items),
 		},
+		RunbookKnowledge: mockRunbookKnowledgeSummary{
+			Mode: investigation.Report.RunbookGuidance.DataSource, SourceCalls: runbookStats.LookupCalls,
+			Status: investigation.Report.RunbookGuidance.Status,
+			Items:  len(investigation.Report.RunbookGuidance.Items),
+			Steps:  countRunbookSteps(investigation.Report.RunbookGuidance.Items),
+		},
 		LLMSummary: mockLLMSummary{
 			Mode: investigation.Report.Summary.Mode, Status: investigation.Report.Summary.Status,
 			Provider: investigation.Report.Summary.Provider, PromptVersion: investigation.Report.Summary.PromptVersion,
@@ -437,4 +473,12 @@ func executeMockE2E(ctx context.Context) (mockE2EResult, error) {
 		},
 		Investigation: investigation,
 	}, nil
+}
+
+func countRunbookSteps(items []domain.RunbookGuidanceItem) int {
+	total := 0
+	for _, item := range items {
+		total += len(item.Steps)
+	}
+	return total
 }

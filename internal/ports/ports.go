@@ -109,6 +109,13 @@ type OperationalSignalSource interface {
 	List(ctx context.Context, query domain.OperationalSignalQuery) (domain.OperationalSignalSet, error)
 }
 
+// RunbookSource provides bounded, read-only, versioned human-review guidance
+// after validated Evidence and deterministic Recommendations establish scope.
+// It has no execution, approval, URL, or Evidence-reference capability.
+type RunbookSource interface {
+	Lookup(ctx context.Context, query domain.RunbookQuery) (domain.RunbookSet, error)
+}
+
 // ResourceCatalog resolves logical scope and owns default-deny ACL bindings.
 type ResourceCatalog interface {
 	Resolve(ctx context.Context, service, environment string) (domain.LogResource, error)

@@ -75,13 +75,27 @@
 
 设计与验收见 [`m3b-cross-signal-incident-timeline.md`](m3b-cross-signal-incident-timeline.md)。
 
+### 受治理 SOP 知识指引（Mock-first，主体代码完成）
+
+- 在 Worker 首次校验确定性报告后，仅接受固定 `error_analysis_v2` 模板、完整 Query/Schema/Policy/Governance 元数据、治理身份一致且连续等长并精确绑定可信 Job 请求窗口的 current/baseline Evidence；再用 Job + Resource Catalog/requester ACL 绑定 ResourceID，并重算与报告精确一致的 Recommendation Code。
+- Worker 完成 SOP enrich 后再次执行生产输出校验，再进入不含 SOP 的 LLM 摘要路径。
+- SOP 只形成 `HUMAN_REVIEW_ONLY` 的人工核查投影，不修改 Finding、Recommendation、原因 verdict、时间线或调查状态。
+- 首期只接确定性 Mock，Source 只能选择三个关闭步骤 Code，Kind/Instruction 使用本地 canonical 模板；不把 SOP 发送给 Eino/LLM/Trace/replay/离线评测，不提供 URL、命令、执行按钮、动作值或自动处置。
+- baseline 为 0 时保持 `data_insufficient` 并零 Source 调用；失败、非法、不完整或无匹配均显式降级并保留原报告，SLS 查询与现有评测边界不变。
+- Lookup 使用独立默认 5 秒子超时，Deadline 后即使返回 `(set, nil)` 也拒绝；条目更新时间同时受报告时间和可信服务时钟约束。`data_source` 只能由可信组装层设置为 `SYNTHETIC_MOCK / ENTERPRISE_GOVERNED`，Engine/Source 不能自报；Mock 飞书 SOP 区块标题明确带“（Mock）”，空值或非法来源不展示条目。
+- 最终 `mock-e2e` 实测 `source_calls=1`、`items=1`、`steps=3`，SLS 保持 2 次逻辑观察/8 次 Provider 调用/0 次外部网络；`demo` 为 `SUCCEEDED`，全仓 `go test -count=1 ./...` 通过。
+- 最终工作树的 `evaluate` 5/5、`summary-evaluate` 9/9 为 `PASSED` 且数据集指纹不变，`gofmt`、全仓测试、`go vet`、重点包乱序 20 轮、仓库链接/diff 与快照/replay/比较/反馈/演练链路均完成；最终安全复查未发现 P0–P3。
+- 真实 `RunbookSource`、企业内容 owner/revision/审批/失效/回滚、租户授权、审计和检索质量门禁均未完成。
+
+设计、开发记录与验收见 [`governed-sop-knowledge-guidance.md`](governed-sop-knowledge-guidance.md)。
+
 ### M3 后续增强项（未实现）
 
 - SLS `version_field`、版本分布、首次出现时间和版本前后固定查询模板。
 - 真实发布平台、配置中心和 CMDB 连接器。
 - 通过受控 TraceID 映射下钻到真实 Trace；首个 Mock 时间线不保存或展示 TraceID。
 - Pod/主机元数据与服务拓扑。
-- 企业错误码、SOP 和知识检索。
+- 企业错误码解释、真实 SOP/知识平台连接器、内容审批与检索质量评测。
 
 这些能力需要真实数据源、字段契约、权限和成本预算；首个 Mock 时间线只能证明端口、验证、报告与展示合同，不能冒充已接通真实可观测平台。
 

@@ -2,14 +2,15 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 盘点日期 | 2026-08-20 |
-| 代码基线 | M3-B 跨信号时间线工作树 / `codex/cross-signal-timeline` |
-| 当前结论 | 主体业务链、治理、证据、恢复、M4-B 本地可靠性治理、评测、回放、Mock Reviewer 反馈、非行动性灰度演练、LLM 摘要与额度，以及 Mock 指标/Trace 时间线已经实现；真实可观测源、真实方舟联调、M4-C 生产基础设施与真实试点仍未完成 |
-| 数据边界 | 当前自动化验收使用合成日志、合成飞书身份、合成变更、合成指标/Trace 聚合和合成标签，不代表真实生产效果 |
+| 盘点日期 | 2026-08-24 |
+| 代码基线 | 当前仓库工作树（受治理 SOP 人工核查主体代码已加入） |
+| 当前结论 | 主体业务链、治理、证据、恢复、M4-B 本地可靠性治理、评测、回放、Mock Reviewer 反馈、非行动性灰度演练、LLM 摘要与额度、Mock 指标/Trace 时间线和 Mock SOP 人工核查已经实现；SOP Mock E2E 与全仓测试已各实跑通过一次，真实可观测源、真实 `RunbookSource` 与内容治理、真实方舟联调、M4-C 生产基础设施和真实试点仍未完成 |
+| 数据边界 | 当前自动化路径使用合成日志、合成飞书身份、合成变更、合成指标/Trace 聚合、确定性 Mock SOP 和合成标签，不代表真实生产效果或企业知识内容 |
+| 验证边界 | 第二轮严格门禁及两个 fail-closed 边界落地后的最终工作树已完成 `gofmt`、全仓测试、`go vet`、重点包乱序 20 轮、仓库链接/diff、`mock-e2e`、`demo`、两类评测与快照/replay/比较/反馈/灰度演练总检；Runbook 为 1 次调用/1 项/3 步，SLS 为 2 次观察/8 次 Provider 调用/0 次外部网络，安全复查未发现 P0–P3。race 因 `CGO_ENABLED=0` 且无 GCC 未执行 |
 
 ## 1. 一句话概括
 
-这个项目已经是一套能完整运行的“证据驱动日志调查引擎”：它能接单、排队、查询当前/基线、生成证据、做保守判断、关联变更、整理 Mock 指标/Trace 时间线、生成受约束摘要、更新飞书卡片、处理查询恢复、死信安全重放和租户成本代理治理，并对自身进行离线评测、回放、Mock 审核和灰度演练；除真实系统外，主要仍缺 M4-C 生产基础设施、真实跨信号连接器与企业知识增强。
+这个项目已经是一套能完整运行的“证据驱动日志调查引擎”：它能接单、排队、查询当前/基线、生成证据、做保守判断、关联变更、整理 Mock 指标/Trace 时间线、附加 Mock SOP 人工核查、生成受约束摘要、更新飞书卡片、处理查询恢复、死信安全重放和租户成本代理治理，并对自身进行离线评测、回放、Mock 审核和灰度演练；除真实系统外，主要仍缺 M4-C 生产基础设施、真实跨信号连接器、真实企业知识连接器与内容治理。
 
 ## 2. 状态说明
 
@@ -43,20 +44,24 @@ flowchart LR
     EV --> SG{Operational Signal Source}
     SG --> SGM[指标/Trace Mock<br/>离线已验收]
     SG --> SGR[真实可观测平台<br/>未接入]
-    EV --> OUT[持久化 Delivery]
+    EV --> V1[Worker 首次生产校验]
+    V1 --> RB{Runbook Source}
+    RB --> RBM[确定性 SOP Mock<br/>离线已实跑]
+    RB --> RBR[真实企业知识平台<br/>未接入]
+    RB --> V2[Worker 再次生产校验]
+    V2 --> LLM[LLM 证据摘要<br/>SOP 不进入输入]
+    LLM --> OUT[持久化 Delivery]
     OUT --> FO[飞书卡片<br/>真实 SDK 待联调 / Mock 已验收]
     EG --> OBS[Trace + Evaluation + Replay<br/>离线已完成]
     OBS --> FB[Mock Reviewer Feedback<br/>append-only]
     FB --> RD[Rollout Rehearsal<br/>禁止生产动作]
-    EV --> LLM[LLM 证据摘要<br/>Mock 已验收 / 方舟代码待联调]
-    LLM --> OUT
 
     classDef done fill:#d9f7be,stroke:#389e0d,color:#000;
     classDef mock fill:#fff1b8,stroke:#d48806,color:#000;
     classDef pending fill:#ffd6e7,stroke:#c41d7f,color:#000;
-    class IN,WK,CP,EG,GW,EV,OUT,OBS,FB,RD done;
-    class SM,CM,SGM,DB,LLM mock;
-    class SR,CR,SGR pending;
+    class IN,WK,CP,EG,GW,EV,V1,RB,V2,OUT,OBS,FB,RD done;
+    class SM,CM,SGM,RBM,DB,LLM mock;
+    class SR,CR,SGR,RBR pending;
 ```
 
 ⭐ 这里是重点：Mock 只替代“外部系统返回什么”和“消息实际发到哪里”，不会绕开真实的 Intake、SQLite 状态机、Worker、Eino Graph、Query Gateway、Evidence、Checkpoint、Delivery 和评测逻辑。
@@ -80,12 +85,13 @@ flowchart LR
 | 保守结论门禁 | 已完成 | Incomplete、截断、非穷尽、脱敏冲突或治理身份不一致时禁止确定性根因表述 | `internal/adapters/eino/engine.go`、`internal/application/worker.go` | 数据不足时输出 `data_insufficient/INCONCLUSIVE`，不会猜根因 |
 | 发布/配置变更关联 | 已完成静态切片 | 读取受控 Change Catalog，对每个候选执行 4 项支持和 3 项反证测试 | `internal/adapters/changecatalog/catalog.go`、`internal/adapters/eino/engine.go` | 输出 `SUPPORTED_CANDIDATE/REFUTED/INCONCLUSIVE`，不宣称因果 |
 | 跨信号故障时间线 | Mock 已验收 | 从 Evidence 派生资源/时间，一次获取有界指标/Trace 聚合，本地计算异常并与 Change Event 稳定排序 | `internal/domain/incident_timeline.go`、`internal/adapters/eino/incident_timeline.go`、`internal/adapters/signalmock` | Mock 主链生成 1 个变更+2 个信号条目；时间相关不等于因果，真实源待接 |
+| 受治理 SOP 人工核查 | Mock 可验收（安全加固后已实跑） | Worker 首次验证后，严格绑定固定模板、治理身份与可信 Job 请求窗口；baseline=0 零调用；再经 Resource Catalog ACL 和独立 5 秒边界查询 `RunbookSource`，由可信组装层写入来源并以双时钟校验条目 | `internal/application/runbook.go`、`internal/application/runbook_validation.go`、`internal/adapters/runbookmock` | Mock 形成 1 项 3 步 `HUMAN_REVIEW_ONLY/SYNTHETIC_MOCK` 指引；飞书 SOP 区块标题带“（Mock）”，无 URL、命令、按钮或自动处置，真实知识源待接 |
 | 飞书结果卡片 | 代码已具备，待真实联调 | 持久化 Delivery Worker 先 Reply 创建卡片，再 Patch 同一张卡 | `internal/application/delivery.go`、`internal/adapters/feishu/sender.go` | 真实接入后可看到接单、运行、成功、失败、证据和下一步 |
 | 卡片动作 | 已完成业务逻辑；真实 UI 待联调 | 查看证据、取消、扩大窗口、重新运行、成本确认重跑均做身份和状态校验 | `internal/application/actions.go`、`internal/adapters/feishu/receiver.go` | 按钮不能携带物理资源或绕过请求者权限 |
 | 付费查询 Checkpoint | 已完成 | `sls.current/sls.baseline` 保存治理指纹、输入哈希和规范化结果 | `internal/application/checkpoint_executor.go`、`internal/adapters/sqlite/query_steps.go` | 崩溃恢复时复用已完成窗口，只补缺失窗口 |
 | 外部结果未知保护 | 已完成 | 请求可能已到 Provider 但未落盘时转 `UNKNOWN -> NEEDS_REVIEW`，禁止自动重发 | `internal/application/checkpoint_executor.go`、`internal/adapters/sqlite/query_steps.go` | 避免静默重复付费查询；用户需明确确认成本后重跑 |
 | 查询与交付审计 | 已完成 | 查询 start/terminal 审计、Evidence Ledger、Delivery 状态都持久化 | `internal/adapters/sqlite` | 能定位查询、证据、报告和卡片状态，不记录原始日志/密钥 |
-| 双 Mock 端到端 | 已完成 | Mock 飞书 + Mock SLS，但复用真实业务链与 SQLite | `cmd/logagent/mock_e2e.go`、`internal/adapters/feishumock`、`internal/adapters/slsmock` | 离线验证重复接单、2 个观察、8 次 Provider 代理、2 个 Checkpoint 和 3 次卡片投递 |
+| 全 Mock 端到端 | Mock 可验收（本轮已实跑） | Mock 飞书、SLS、指标/Trace、Runbook 与摘要复用真实业务链和 SQLite | `cmd/logagent/mock_e2e.go`、`internal/adapters/feishumock`、`internal/adapters/slsmock`、`internal/adapters/runbookmock` | 实测保持 2 个 SLS 观察、8 次 Provider 代理和 0 网络，并增加 1 次 Runbook 查询、1 项 3 步人工指引 |
 | 合成黄金集评测 | 已完成 | 5 类严格 Fixture 运行真实 Eino Graph，对结果、证据、建议、Cause、成本和 Trace 做门禁 | `internal/evaluation`、`internal/adapters/evalmock` | 当前合成集 5/5 通过；失败门禁返回非零退出码 |
 | Agent 自观测 | 已完成离线切片 | 关闭枚举的 RUN/GRAPH_NODE/TOOL Span，有界 Recorder 和版本清单 | `internal/observability`、`internal/domain/agent_trace.go` | 评测可验证固定执行路径、调用数、字节数和事件完整性 |
 | 离线快照与回放 | 已完成 | append-only JSON 快照、SHA-256、严格 Schema、父引用和当前二进制重跑 | `internal/evaluation/replay`、`internal/adapters/replayfs` | 成功/失败评测可归档；重复、篡改和不兼容输入会拒绝 |
@@ -106,6 +112,7 @@ flowchart LR
 | 飞书身份与资源授权 | Mock Principal + Mock Catalog | 真实 AppID、TenantKey、OpenID 和资源绑定 | ACL 决策和 fail-closed 行为 | 需把真实飞书身份写入管理员资源目录 |
 | 发布/配置变更 | Demo/Fixture ChangeSet，或管理员静态 JSON | 发布事件、版本、负责人、影响实例 | 七项支持/反证规则和 Evidence Ledger | 静态 JSON 可用；真实发布平台/CMDB 连接器未实现 |
 | 指标/Trace 调查信号 | `signalmock` 固定错误率与 P95 延迟聚合 | ARMS/CMS/Prometheus/OTel 的受控聚合结果 | Evidence 派生查询、闭集校验、异常复算、Worker 引用门禁和飞书时间线 | 端口与 Mock 已实现；真实连接器、额度、审计和试点未实现 |
+| SOP/知识指引 | `runbookmock` 固定返回版本化的一项三步人工核查条目；可信组装标记 `SYNTHETIC_MOCK` | Wiki、文档平台、错误码平台或企业搜索的受控匹配结果；可信组装标记 `ENTERPRISE_GOVERNED` | 严格 Evidence/Job 窗口绑定、Worker 首次/二次校验、Recommendation/Evidence 派生、内容指纹、独立超时、可信时钟、安全状态和带来源标题的飞书纯文本展示 | 端口、应用服务与 Mock 已实现；真实 `RunbookSource`、内容治理、租户权限、审计和质量评测未实现 |
 | 历史故障与专家标签 | `synthetic-v1.json` | 历史事故、专家期望、成本代理 | 真实 Graph、结果校验、Trace、评测门禁 | 真实脱敏数据集和专家标注流程未实现 |
 | Reviewer 反馈与灰度策略 | `feedback-seed` + 固定策略 | 两名虚拟 Reviewer、Verdict/Reason、quorum 与演练阈值 | 严格快照引用、append-only 纠正、B3 对比和决策状态机 | 真实 Reviewer 身份、UI、团队策略和生产动作未实现 |
 | Agent Trace 后端 | 内存 `BoundedRecorder` + 本地回放文件 | 生产 Trace Collector、检索、保留和告警 | Span 合同、版本指纹、完整性检查 | 真实 OTel/AgentSight/可观测后端未实现 |
@@ -301,7 +308,42 @@ go run ./cmd/logagent worker
 - 可选源故障不会破坏日志事实；不完整覆盖会明确降级。
 - 用户能更快定位需要下钻的方向，但系统仍不会把时间重合写成已确认根因。
 
-### 6.6 生产 Agent 可观测后端
+### 6.6 企业 SOP 与错误码知识源
+
+#### 负责什么
+
+- 把已验证的确定性 Recommendation 映射为团队维护、有版本和 Owner 的人工核查步骤。
+- 提供内容来源、Revision、更新时间和失效边界，但不能把匹配结果升级为根因、审批或处置授权。
+
+#### 当前怎么实现
+
+- 端口：`ports.RunbookSource`。
+- Mock：`internal/adapters/runbookmock`，只选择 `VERIFY_ERROR_PATTERN / OBSERVE_HOT_INSTANCE / ESCALATE_SERVICE_OWNER` 三个关闭 Code；类型和展示 Instruction 由本地固定模板约束，不访问网络。
+- 应用与门禁：`internal/application/runbook.go`、`internal/application/runbook_validation.go`。Worker 先验证 Eino 确定性报告，Enrich 后再次验证，再进入摘要阶段。
+- Evidence 与请求绑定：current/baseline 必须使用固定 `error_analysis_v2` 模板，具备完整 Query/Schema/Policy/Governance 元数据，治理身份一致、QuerySpecHash 不同、窗口连续等长，并精确等于可信 Job 请求的当前窗口和前置等长基线窗口；只看 `Complete=true` 不足以触发查询。
+- 资源与建议信任：应用用可信 Job 的 service/environment/requester 重新解析 `ResourceCatalog` 并执行 `Allowed`，要求目录资源等于 Evidence ResourceID；同时重算关闭 Recommendation 集合，只接受与报告 Code/Evidence 绑定精确一致的项。baseline 为 0 时保持 `data_insufficient`，零 Runbook Source 调用。
+- 来源、超时与时钟：`RunbookGuidance.data_source` 由 `NewRunbookService` 的可信启动组装层指定为 `SYNTHETIC_MOCK / ENTERPRISE_GOVERNED`，Source 无权自报；每次 Lookup 有独立默认 5 秒子超时，返回后会在本地 cancel 前检查 Deadline，超时后的 `(set, nil)` 也拒绝。条目更新时间同时受报告时间和可信服务时钟的 5 分钟偏差上限约束。
+- 展示：`internal/adapters/feishu/renderer.go` 最多展示两项、每项三步，并固定声明“仅供人工核查，不会自动执行处置”；`SYNTHETIC_MOCK` 标题明确显示“受控 SOP 参考（Mock）”。空值或非法来源只显示来源未确认的不可用文案，不展示条目。
+- 当前只在 Demo、`LOG_AGENT_SLS_MODE=mock` Worker 和 `mock-e2e` 注入 Mock；真实 SLS 模式不注入，因此不会把 Mock SOP 混入真实日志调查。
+- `SKIPPED_NO_TRIGGER` 只用于没有确定性错误突增；已有确定性突增但 Recommendation 缺失或治理资源不一致时零调用并返回 `UNAVAILABLE`。
+
+#### 怎么接入
+
+1. 先建立企业知识条目的 Owner、Revision、审批、失效、回滚、租户范围和保留制度。
+2. 为选定的 Wiki/文档/错误码平台实现独立 `RunbookSource.Lookup` Adapter；只接收 Evidence 派生的逻辑 ResourceID、已有 Recommendation Code 和固定上限。
+3. 复用与 SLS 查询一致的 `ResourceCatalog` 与 requester ACL；禁止 Adapter 根据用户正文、模型文本或 Provider 自报资源扩大知识空间。
+4. 只返回关闭投影；首个合同继续禁止 URL、Markdown 链接、Shell/SQL、危险命令、执行参数和任意属性，步骤只能选择关闭 Code。
+5. 真实接入仍由启动组装层配置显式模式、只读身份和审计，并由该可信层向 `NewRunbookService` 传入 `ENTERPRISE_GOVERNED`；禁止 Adapter 或知识条目自报来源。保留独立默认 5 秒 Lookup Deadline，真实 Adapter/传输层必须遵守并设置响应上限；未配置、Source 自身超时、权限不足、不完整或非法数据必须降级 Guidance，不能使原调查失败，只有父 Context 真正取消才传播。
+6. 注入可信服务时钟并用脱敏历史事故和专家标签评估覆盖率、误匹配、内容时效和误导风险；条目更新时间晚于报告时间或可信服务时间任一方 5 分钟以上都必须拒绝。该门禁只能防未来时间伪造，不能证明内容真实、获批或未失效，评审通过前不进入真实飞书卡片。
+
+#### 预期效果
+
+- 值班人员在确定性建议之后看到可追溯的人工核查清单，而不是搜索一堆未经限定的文档。
+- Source 故障或无匹配不改变日志事实、变更候选、跨信号时间线和调查成功状态。
+- 真实企业来源使用普通“受控 SOP 参考”标题；只有合成目录使用带“（Mock）”标题，两者不能由 Source 混淆。
+- 系统始终没有 Runbook Executor、执行按钮或自动处置能力。
+
+### 6.7 生产 Agent 可观测后端
 
 #### 负责什么
 
@@ -326,7 +368,7 @@ go run ./cmd/logagent worker
 - 能回答一次调查执行了哪些节点、在哪一步失败、调用了多少次工具、使用了哪个版本合同。
 - 遥测失败不会改变调查结果，但自身丢事件和积压可被监控。
 
-### 6.7 真实历史故障、专家标注和用户反馈
+### 6.8 真实历史故障、专家标注和用户反馈
 
 #### 负责什么
 
@@ -362,7 +404,8 @@ flowchart LR
     D --> E[5. 飞书自建应用<br/>单用户/单群]
     E --> F[6. 生产数据库<br/>多实例与备份恢复]
     F --> G[7. 真实 Change Source<br/>生产可观测]
-    G --> H[8. 历史事故评测<br/>专家门槛与灰度]
+    G --> H[8. 真实 Runbook Source<br/>内容治理与质量评测]
+    H --> I[9. 历史事故评测<br/>专家门槛与灰度]
 ```
 
 | 顺序 | 为什么这样排 | 完成标志 |
@@ -372,7 +415,8 @@ flowchart LR
 | 5：再接飞书 | 此时问题更容易定位为入口/卡片问题，而不是查询问题 | 单用户真实卡片完整走完并通过按钮权限测试 |
 | 6：再换生产库 | 先证明业务正确，再扩大多实例可靠性 | 迁移、并发、备份恢复和故障转移演练通过 |
 | 7：再加变更和可观测 | 这是增强证据与运维能力，不应阻塞基础日志事实 | 真实变更失败可降级；Trace 无敏感字段且可检索 |
-| 8：最后扩大灰度 | 合成评测不能代替真实数据与专家批准 | 真实门槛、试点范围、回滚方案得到团队确认 |
+| 8：再接企业知识 | 人工 SOP 是增强项，必须先完成内容治理、租户授权与误导风险评测 | 真实条目版本/Owner/审批/失效可审计，卡片仍无执行入口 |
+| 9：最后扩大灰度 | 合成评测不能代替真实数据与专家批准 | 真实门槛、试点范围、回滚方案得到团队确认 |
 
 ## 8. 接入后的预期整体效果
 
@@ -382,10 +426,11 @@ flowchart LR
 2. Worker 在可信 Principal、资源 ACL、固定模板和预算限制下查询真实 SLS 聚合。
 3. 当前/基线证据完整时输出错误突增、模式占比和实例集中；数据不足时明确降级。
 4. 若有真实发布/配置变化，报告展示支持、反证和未知项，但不把相关性写成已确认根因。
-5. 飞书同一张卡持续更新状态、Evidence 和下一步建议，取消和重跑保持幂等。
-6. 进程故障后复用已完成查询；外部结果未知时进入人工确认，不自动重复付费。
-7. 每次调查留下状态、查询审计、Evidence、Ledger、Delivery 和 Agent Trace，可用于复盘和质量趋势。
-8. 只有真实历史故障与专家门槛通过后，才扩大用户、服务和环境范围。
+5. 若存在已治理知识匹配，确定性建议后展示有版本的人工核查清单；它不进入 LLM，也没有 URL、命令、按钮或自动处置。
+6. 飞书同一张卡持续更新状态、Evidence 和下一步建议，取消和重跑保持幂等。
+7. 进程故障后复用已完成查询；外部结果未知时进入人工确认，不自动重复付费。
+8. 每次调查留下状态、查询审计、Evidence、Ledger、Delivery 和 Agent Trace，可用于复盘和质量趋势。
+9. 只有真实历史故障与专家门槛通过后，才扩大用户、服务和环境范围。
 
 ## 9. 当前仍未实现的能力
 
@@ -396,7 +441,8 @@ flowchart LR
 | 高风险工具审批与自动处置 | 只完成审批合同 | 已有职责分离、hash、过期和一次性消费；当前无真实工具执行器，继续只读 |
 | 生产数据库与多实例全局配额 | 未实现 | SQLite 只用于本地和技术预览 |
 | Trace/指标/拓扑跨信号因果分析 | Mock 时间线已实现，真实系统未接入 | 已有关闭聚合合同、异常复算、引用校验和飞书展示；真实平台、Trace 下钻、拓扑与因果评测仍未实现 |
-| 真实发布平台/CMDB/SOP/错误码知识库 | 未实现 | 只有 ChangeSource 接口和静态目录 |
+| 真实发布平台/CMDB | 未实现 | 只有 ChangeSource 接口和静态目录 |
+| 真实 SOP/错误码知识库 | Mock 合同与主体代码已实现，真实系统未接入 | 已有 `RunbookSource`、双重校验和人工展示；缺真实内容、审批/失效、租户授权、审计和检索质量验收 |
 | M5-C 真实试点灰度 | 未实现 | 缺真实历史集、专家标签、团队门槛和试点验收 |
 | 火山方舟真实摘要验收 | 适配器与本地额度代码已具备，未真实联调 | 缺真实 Key、批准模型/Prompt、真实 Token/价格校准、数据留存策略和 opt-in smoke；摘要仍不能决定权限、查询和事实 |
 
@@ -405,7 +451,7 @@ flowchart LR
 ### 可以宣称
 
 - 主体 Go 架构、Eino 固定 Graph、状态机、证据链、查询治理、恢复、离线评测、回放、兼容快照比较、Mock 反馈和灰度演练已实现。
-- Mock 飞书 + Mock SLS + Mock 指标/Trace 聚合可以完成可重复的离线端到端验收。
+- Mock 飞书、SLS、指标/Trace 和 Runbook 具备可重复的离线端到端合同；Runbook 只产生人工核查投影。
 - 真实飞书、阿里云 SLS 与火山方舟适配器已经存在，并有明确配置入口；当前只有 Mock 路径完成离线主链验收。
 - 当前 Engine 合成黄金集 5/5 通过，摘要安全集 9/9 通过，Trace 合同完整，外部网络调用为 0。
 
@@ -415,6 +461,7 @@ flowchart LR
 - 不可以把 Mock 的 120/20、错误模式、发布事件当成真实业务结果。
 - 不可以把 `SUPPORTED_CANDIDATE` 称为已确认根因。
 - 不可以把合成评测准确率当成真实事故准确率。
+- 不可以称为已接企业知识库，或把 Mock SOP 匹配称为内容已批准、根因证明、执行授权和自动处置。
 - 不可以宣称 Provider exactly-once、生产多实例可靠性或 `go test -race` 已通过。
 
 ## 11. 代码入口速查
@@ -434,6 +481,7 @@ flowchart LR
 | 评测、Trace、回放 | `internal/evaluation`、`internal/observability`、`internal/evaluation/replay` |
 | Mock 反馈与灰度演练 | `internal/evaluation/feedback`、`internal/adapters/feedbackfs`、`internal/evaluation/rollout` |
 | LLM 摘要合同与 Provider | `internal/application/summary.go`、`internal/adapters/summarymock`、`internal/adapters/volcark` |
+| SOP 人工核查合同与 Mock | `internal/domain/runbook.go`、`internal/application/runbook.go`、`internal/adapters/runbookmock` |
 | LLM 请求/Token 额度 | `internal/domain/reliability.go`、`internal/ports/reliability.go`、`internal/adapters/sqlite/summary_quota.go` |
 | LLM 摘要安全评测 | `internal/evaluation/summaryeval`、`internal/adapters/summaryevalmock`、`cmd/logagent/summary_evaluate.go` |
 | 唯一当前行为规范 | `docs/spec.md` |
