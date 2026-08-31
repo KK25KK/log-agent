@@ -19,6 +19,7 @@
 | [`llm-summary-quota.md`](llm-summary-quota.md) | LLM 摘要调用前的租户请求/Token 预留、结算、熔断与 Mock 验收 | 摘要额度状态机、配置、SQLite Schema 或生产边界变化时同步更新 |
 | [`m6-real-system-entry-guide.md`](m6-real-system-entry-guide.md) | 真实系统接入地图：SLS/飞书/存储/变更源/指标 Trace/企业 SOP 各真实入口与组装点 | 生产化接入前保持与启动组装、接口边界和内容治理一致 |
 | [`current-capabilities-and-real-integration-inventory.md`](current-capabilities-and-real-integration-inventory.md) | 当前功能、Mock 边界、真实系统职责、接入步骤和预期效果的统一盘点 | 阶段完成状态、外部适配器或生产接入方式变化时同步更新 |
+| [`oss-sre-agent-study-and-lightweight-adoption.md`](oss-sre-agent-study-and-lightweight-adoption.md) | OpenSRE、HolmesGPT、rca-agent、K8sGPT、RunLore 对比，以及本项目轻量借鉴决策 | 外部项目结论、当前能力边界或轻量演进决策变化时同步更新 |
 | [`../README.md`](../README.md) | 运行、配置和项目入口 | 必须与当前代码一致 |
 
 ## 历史阶段归档
