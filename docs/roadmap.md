@@ -258,3 +258,14 @@ M5-A 的指标只说明代码对受控合成样例没有回归，不是历史真
 - 团队批准的准确率、安全、时延和成本门槛，以及明确的停止/回滚 Runbook。
 
 完整验收：只有 C3 在团队批准的真实数据、身份、阈值和试点范围内通过后，才能扩大服务和用户范围。C1/C2 的 Mock 演练永远不能替代该批准。
+
+### 飞书权限等待期：本地 Web 试点入口
+
+- [x] 保留真实飞书适配器，新增回环 Web 入口和本地 Delivery Sender。
+- [x] 单进程复用正式 Intake、SQLite、Worker、Eino、SLS、LLM、ActionService 和 Delivery Worker。
+- [x] 完成固定服务端身份、CSRF/Host/Origin、严格 JSON、幂等和安全报告投影。
+- [x] 完成 Mock SLS + Mock LLM 的完整 Web 应用链路自动化验收。
+- [ ] 执行并归档一次 DAM 真实 SLS + 火山方舟真实 LLM 的同调查联合运行。
+- [ ] 获得飞书权限后回到真实 WebSocket、OpenID、Reply/Patch、卡片视觉和回调验收。
+
+该入口只减少飞书权限阻塞，不改变 C3 对真实身份、真实样本、阈值审批、持久化和灰度治理的要求。

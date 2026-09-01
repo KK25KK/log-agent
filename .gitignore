@@ -8,4 +8,5 @@ data/
 *.db-shm
 *.db-wal
 coverage.out
+.playwright-cli/
 references/

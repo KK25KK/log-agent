@@ -14,7 +14,7 @@
 5. 变更来源（M3）：默认 `disabled`，可配静态 Change Catalog 文件；真实接平台还未建模。
 6. 指标/Trace 时间线：默认不启用；Mock 模式注入 `signalmock`，真实 Operational Signal Adapter 尚未实现。
 7. 受治理 SOP：只有 Mock SLS 模式注入 `runbookmock`；真实 `RunbookSource` Adapter、企业内容治理和审批生命周期尚未接入。
-8. LLM 摘要：默认 `summarymock`，火山方舟 Responses API 适配器、SQLite 请求/Token 额度治理和独立 `llm-check/llm-smoke` 已实现；2026-09-01 独立真实 Smoke 已通过，Prompt、Token 价格/账单、留存、真实质量和联合 E2E 仍分别验收。
+8. LLM 摘要：默认 `summarymock`，火山方舟 Responses API 适配器、SQLite 请求/Token 额度治理和独立 `llm-check/llm-smoke` 已实现；2026-09-01 独立真实 Smoke 已通过，本地 Web + 真实 SLS + Mock LLM 联合链路也已通过；真实 SLS + 方舟同调查联合调用、Prompt、Token 价格/账单、留存和真实质量仍分别验收。
 
 > 关键约束：不允许把飞书 SDK 或阿里云 CLI 执行引入业务核心层。接口边界由 `internal/ports` 保护；真实/离线实现只切换在适配层和启动组装处。
 
@@ -39,6 +39,16 @@
   - `internal/adapters/feishu.New` + `NewSender`：真实飞书 WebSocket 与消息 API 适配器。
   - `application.NewDeliveryWorker(..., sender)`：把卡片写入持久 outbox 后异步发送。
 - 与数据库强绑定：`runFeishu` 与 `runWorker` 使用同一 `DatabasePath`。
+
+### 2.3 调用链路：本地 Web 试点
+
+- 命令：`cmd/logagent/main.go` 的 `web` 分支与 `cmd/logagent/web.go`（`go run ./cmd/logagent web`）。
+- 单进程复用：`buildInvestigationWorker`、`application.NewIntake`、`application.NewActionService`、`application.NewDeliveryWorker` 和同一个 SQLite Store。
+- 入口/展示：`internal/adapters/localweb/server.go`、`projection.go`、`assets.go`。
+- 投递替代：`internal/adapters/localweb/sender.go` 只替代飞书 Reply/Patch 边界；持久化 Delivery 队列、租约、顺序、审计和卡片重绑仍是真实应用逻辑。
+- 固定身份：默认 `local-web/local-pilot/operator`，只能由服务端环境配置修改，不能由 HTTP 请求提交。真实 SLS Catalog Binding 必须与它一致。
+- 数据库：默认 `data/web-pilot.db`，不要与同时运行的 `feishu` 进程共享，以免两个不同 Sender 竞争同一 Delivery 队列。
+- 验收含义：可以联合真实 SLS/方舟验证应用内核；不能替代真实飞书 WebSocket、OpenID、Reply/Patch、卡片视觉或 callback 验收。完整命令见 [`local-web-pilot-console.md`](local-web-pilot-console.md)。
 
 ## 三、源代码接入点（按模块）
 

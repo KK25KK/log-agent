@@ -343,7 +343,7 @@ aliyun configure --mode StsToken --profile default
 
 完整迁移影响、安全边界和逐步接入操作见 [`docs/sls-cli-sts-migration.md`](docs/sls-cli-sts-migration.md)。
 
-DAM 当前采用单主 Logstore 的 `error_count_v1` 轻量试点。2026-09-01 真实 `sls-check` 与 `sls-smoke` 已通过，`env=test + level=error` 固定计数、`data/meta` 响应、显式 Region 与 host-only endpoint 已完成验证；试点不要求新增 `error_type/instance_id`，也不会输出错误类型、实例或根因。独立方舟 Smoke 同日通过，但 DAM 的“真实 SLS -> Worker -> 真实 LLM -> 飞书”联合 E2E 尚未执行，飞书仍为 Mock。实现和验收范围见 [`docs/error-count-v1-implementation.md`](docs/error-count-v1-implementation.md) 与 [`docs/dam-single-logstore-pilot.md`](docs/dam-single-logstore-pilot.md)。
+DAM 当前采用单主 Logstore 的 `error_count_v1` 轻量试点。2026-09-01 真实 `sls-check` 与 `sls-smoke` 已通过，`env=test + level=error` 固定计数、`data/meta` 响应、显式 Region 与 host-only endpoint 已完成验证；试点不要求新增 `error_type/instance_id`，也不会输出错误类型、实例或根因。本地 Web 同日完成了“页面 -> Worker/Eino -> 真实 SLS -> Mock LLM -> 本地 Delivery”的同调查验收。独立方舟 Smoke 已通过，但当前进程未注入方舟 Key，所以“真实 SLS -> Worker -> 真实 LLM”的联合运行仍待执行；飞书也仍为 Mock。实现和验收范围见 [`docs/error-count-v1-implementation.md`](docs/error-count-v1-implementation.md)、[`docs/dam-single-logstore-pilot.md`](docs/dam-single-logstore-pilot.md) 与 [`docs/local-web-pilot-console.md`](docs/local-web-pilot-console.md)。
 
 最小只读 RAM 策略模板见 `config/sls-readonly-policy.example.json`。它只包含定向检查和查询需要的 `GetProject`、`GetLogStore`、`GetIndex`、`GetLogStoreLogs`，请替换地域、账号、Project 和 LogStore 占位符；不要给 Agent `AliyunLogFullAccess`。
 
@@ -426,6 +426,34 @@ go run ./cmd/logagent sls-smoke order-service prod 10m
 ```
 
 该命令经过完整资源解析、ACL、Schema、预算、审计和脱敏网关，执行一次固定聚合观察。它不会返回原始日志正文。
+
+## 飞书权限未就绪时运行本地 Web 排障台
+
+`web` 命令把本地 HTTP 入口、SQLite、正式 Worker、Eino、当前配置的 SLS/LLM 和持久化 Delivery Worker 放在同一个进程中。它默认只监听 `127.0.0.1:8080`，并使用独立的 `data/web-pilot.db`，不会改动或删除飞书适配器。
+
+先用完全离线模式验证：
+
+```powershell
+$env:LOG_AGENT_SLS_MODE = "mock"
+$env:LOG_AGENT_LLM_MODE = "mock"
+go run ./cmd/logagent web
+```
+
+然后打开 [http://127.0.0.1:8080](http://127.0.0.1:8080)。页面支持提交、自动刷新、报告/Evidence、取消、扩大窗口和重跑。入口身份固定为 `local-web/local-pilot/operator`，HTTP 参数不能覆盖；真实 SLS 资源目录的 Binding 必须与该身份一致。
+
+真实 SLS 与真实方舟的联合本地试点仍使用同一个命令，只显式切换既有配置：
+
+```powershell
+$env:LOG_AGENT_SLS_MODE = "aliyun"
+$env:LOG_AGENT_SLS_CATALOG = ".\config\sls-resources.json"
+$env:LOG_AGENT_SLS_CLI_PROFILE = "default"
+$env:LOG_AGENT_LLM_MODE = "volcengine"
+$env:ARK_API_KEY = "<仅注入当前终端，不写入文件或仓库>"
+$env:LOG_AGENT_ARK_MODEL = "doubao-seed-2-0-mini-260428"
+go run ./cmd/logagent web
+```
+
+该结果可以验收“网页 → Intake/SQLite → Worker/Eino → SLS → LLM → 报告/动作/本地 Delivery”的应用链路，但不能冒充真实飞书 WebSocket、OpenID、Reply/Patch、卡片视觉或回调权限验收。实现、配置和测试边界见 [`docs/local-web-pilot-console.md`](docs/local-web-pilot-console.md)。
 
 ## 运行 Worker 与飞书入口
 

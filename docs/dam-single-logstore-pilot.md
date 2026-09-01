@@ -64,3 +64,9 @@ go run ./cmd/logagent sls-smoke dam-server test 10m
 - 任一权限、STS、字段、完整性、用量元数据或预算门禁失败时安全降级，不生成确定性结论。
 
 上述标准已于 2026-09-01 在真实 SLS 上通过。它只代表 DAM 主 Logstore 测试环境的计数型试点，不代表 DAM 8 个 Logstore 的完整排障覆盖；LLM 和飞书仍为 Mock。
+
+## 后续本地 Web 联合试点
+
+同日新增的 `web` 命令允许在不修改飞书代码的前提下，把本地页面、正式 Worker、DAM 真实 SLS 和火山方舟真实摘要连接到同一次调查。资源目录 Binding 使用服务端固定的 `local-web/local-pilot/operator`，页面仍只能提交 `dam-server/test/10m/error_count_v1` 这类逻辑范围。
+
+本地 Web 的 Mock 联合链路已有自动化测试；真实 SLS + 真实方舟的同调查联合运行仍需执行并单独记录。在它完成前，本节不能把前文的独立 SLS Smoke 和独立方舟 Smoke 合并描述为联合验收。飞书 WebSocket、OpenID、Reply/Patch 和卡片回调继续保持未验收。操作见 [`local-web-pilot-console.md`](local-web-pilot-console.md)。

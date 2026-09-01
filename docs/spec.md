@@ -593,6 +593,18 @@ M5-C feedback uses a store separate from both the production investigation Store
 - [x] The report emits exact case pass, production-output, input-privacy, summary-contract, deterministic-integrity, fallback, Provider-call, Token-proxy, credential/network, dataset-version, and fingerprint gates.
 - [x] All inputs and Provider behaviors remain synthetic Mock with zero real incidents, expert labels, credentials, external-network calls, and production claims.
 
+### Local Web pilot console while Feishu access is pending
+
+- [x] A `web` command runs the existing Intake, SQLite state machine, Worker, Eino graph, configured SLS executor, configured LLM summarizer, and durable Delivery Worker in one local process.
+- [x] The HTTP listener defaults to `127.0.0.1:8080` and rejects non-loopback bind addresses. It is a single-operator pilot surface, not a shared or production web service.
+- [x] The browser can submit a strict logical investigation scope, poll `QUEUED/RUNNING/SUCCEEDED/FAILED/CANCELLED/NEEDS_REVIEW`, inspect the bounded report/evidence projection, and invoke the existing view, cancel, expand-window, and rerun actions.
+- [x] App, tenant, user, chat, source-message, card-message, and action-event identities are created or fixed by the server. HTTP callers cannot supply or override a Principal or physical SLS resource.
+- [x] Mutating HTTP requests require a per-process anti-CSRF token and same-origin request metadata, use bounded strict JSON, and preserve application-level request/action idempotency.
+- [x] A local Delivery adapter exercises the same durable queued/running/terminal delivery events and card-rebinding semantics without importing or changing the Feishu SDK adapter.
+- [x] Web responses exclude requester identities, provider errors, credentials, raw logs, SQL/SPL, Project, LogStore, and physical resource configuration. Failed investigations expose only a stable user-safe state.
+- [x] Mock mode remains the zero-network default. Real SLS and real Ark are enabled only by the existing explicit environment configuration and are reported separately from Feishu validation.
+- [x] Passing the local Web acceptance proves the Agent application chain and local interaction loop. It does not prove `im.message.receive_v1`, Feishu OpenID/TenantKey, Reply/Patch OpenAPI, visual card rendering, `card.action.trigger`, or Feishu permission scope.
+
 ## 10. Open deployment inputs
 
 - Production module path and repository namespace.

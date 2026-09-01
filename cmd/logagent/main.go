@@ -32,7 +32,7 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: logagent <evaluate|summary-evaluate|replay|replay-compare|feedback-seed|rollout-rehearse|delivery-dlq-list|delivery-dlq-replay|mock-e2e|demo|worker|feishu|sls-check|sls-smoke|llm-check|llm-smoke>")
+		return errors.New("usage: logagent <evaluate|summary-evaluate|replay|replay-compare|feedback-seed|rollout-rehearse|delivery-dlq-list|delivery-dlq-replay|mock-e2e|demo|worker|feishu|web|sls-check|sls-smoke|llm-check|llm-smoke>")
 	}
 	switch args[0] {
 	case "evaluate":
@@ -83,6 +83,15 @@ func run(args []string) error {
 			return err
 		}
 		return runFeishu(loaded)
+	case "web":
+		if len(args) != 1 {
+			return errors.New("usage: logagent web")
+		}
+		loaded, err := config.Load()
+		if err != nil {
+			return err
+		}
+		return runWeb(loaded)
 	case "sls-check":
 		if len(args) != 1 {
 			return errors.New("usage: logagent sls-check")
@@ -120,7 +129,7 @@ func run(args []string) error {
 		}
 		return runLLMSmoke(loaded)
 	default:
-		return fmt.Errorf("unknown command %q; use evaluate, summary-evaluate, replay, replay-compare, feedback-seed, rollout-rehearse, delivery-dlq-list, delivery-dlq-replay, mock-e2e, demo, worker, feishu, sls-check, sls-smoke, llm-check, or llm-smoke", args[0])
+		return fmt.Errorf("unknown command %q; use evaluate, summary-evaluate, replay, replay-compare, feedback-seed, rollout-rehearse, delivery-dlq-list, delivery-dlq-replay, mock-e2e, demo, worker, feishu, web, sls-check, sls-smoke, llm-check, or llm-smoke", args[0])
 	}
 }
 
@@ -224,17 +233,25 @@ func runWorker(config config.Config) error {
 		return err
 	}
 	defer store.Close()
-	executor, err := buildWorkerExecutor(config, store)
+	worker, err := buildInvestigationWorker(ctx, config, store)
 	if err != nil {
 		return err
+	}
+	return runInvestigationWorkerLoop(ctx, worker, config.WorkerPoll)
+}
+
+func buildInvestigationWorker(ctx context.Context, config config.Config, store *sqlite.Store) (*application.Worker, error) {
+	executor, err := buildWorkerExecutor(config, store)
+	if err != nil {
+		return nil, err
 	}
 	checkpointedExecutor, err := application.NewCheckpointExecutor(executor, store, time.Now)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	changeSource, err := buildChangeSource(config)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	engineOptions := []eino.Option{eino.WithChangeSource(changeSource)}
 	if config.SLS.Mode == "mock" {
@@ -242,11 +259,11 @@ func runWorker(config config.Config) error {
 	}
 	engine, err := eino.New(ctx, checkpointedExecutor, time.Now, engineOptions...)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	summary, err := buildSummaryService(config, store, time.Now)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	options := make([]application.WorkerOption, 0, 2)
 	if config.SLS.Mode == "mock" {
@@ -254,7 +271,7 @@ func runWorker(config config.Config) error {
 			runbookmock.New(), runbookmock.NewCatalog(), domain.RunbookGuidanceSourceSyntheticMock,
 		)
 		if runbookErr != nil {
-			return runbookErr
+			return nil, runbookErr
 		}
 		options = append(options, application.WithWorkerRunbook(runbook))
 	}
@@ -263,10 +280,13 @@ func runWorker(config config.Config) error {
 	}
 	worker, err := application.NewWorker(store, engine, config.WorkerID, config.WorkerLease, options...)
 	if err != nil {
-		return err
+		return nil, err
 	}
+	return worker, nil
+}
 
-	ticker := time.NewTicker(config.WorkerPoll)
+func runInvestigationWorkerLoop(ctx context.Context, worker *application.Worker, poll time.Duration) error {
+	ticker := time.NewTicker(poll)
 	defer ticker.Stop()
 	for {
 		run, runErr := worker.RunOne(ctx)

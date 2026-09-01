@@ -76,9 +76,9 @@ flowchart LR
 | 调查任务状态机 | 已完成 | `QUEUED -> RUNNING -> SUCCEEDED/FAILED/CANCELLED/NEEDS_REVIEW` | `internal/application/worker.go`、`internal/adapters/sqlite/store.go` | 调查过程可恢复、可审计，不靠内存保存状态 |
 | Worker 租约与旧进程隔离 | 已完成 | Worker ID、租约、Attempt fencing token、续租与过期重领 | `internal/application/worker.go`、`internal/adapters/sqlite/store.go` | 旧 Worker 恢复后不能覆盖新 Worker 的结果 |
 | Eino 固定 Graph | 已完成 | 固定执行计划、查询、报告、变更关联节点；Eino 只负责流程编排 | `internal/adapters/eino/engine.go` | 调查逻辑可测试且不依赖 LLM 自由发挥 |
-| SLS 资源目录与 ACL | 已完成；真实配置待录入 | `service/environment` 映射到受控资源，Principal 到 ResourceID 静态授权 | `internal/adapters/resourcecatalog/catalog.go` | 用户不能越权切换 Project/LogStore |
+| SLS 资源目录与 ACL | 已完成；DAM 本地试点配置已录入但不进 Git | `service/environment` 映射到受控资源，Principal 到 ResourceID 静态授权 | `internal/adapters/resourcecatalog/catalog.go` | 用户不能越权切换 Project/LogStore；生产配置托管仍待落地 |
 | 查询治理网关 | 已完成 | 统一做资源解析、ACL、Schema、模板、窗口、行数、调用数、并发、超时、成本代理和审计 | `internal/application/query/gateway.go` | 所有 SLS 查询必须先经过同一个安全闸门 |
-| 阿里云 SLS 查询 | 代码已具备，待真实联调 | 本机 CLI + SLS 插件，固定执行 count-before、Top5 错误、Top5 实例、count-after | `internal/adapters/aliyuncli/backend.go` | 真实接入后只返回聚合证据，不返回原始日志正文 |
+| 阿里云 SLS 查询 | DAM 单 Logstore 计数模板已真实联调 | 本机 CLI + SLS 插件；分析模板固定执行 count-before、Top5 错误、Top5 实例、count-after，DAM 试点模板只执行两次一致性 count | `internal/adapters/aliyuncli/backend.go` | `dam-server/test/error_count_v1` 的连接、ACL、Schema 和聚合 Smoke 已通过；8 库覆盖未实现 |
 | 当前/基线错误分析 | 已完成 | 两个等长时间窗，每窗四次固定聚合；首尾 count 必须一致 | `internal/adapters/eino/engine.go`、`internal/domain/query.go` | 能识别突增、错误模式占比、实例集中和数据不足 |
 | 近实时安全水位 | 已完成 | 查询窗口结束时间向前扣除 ingestion grace，Gateway 再次 fail closed | `internal/command`、`internal/application/query/gateway.go` | 减少日志尚未完成索引时产生的过度自信结论 |
 | Evidence 证据链 | 已完成 | Finding、Recommendation、Cause Ledger 都必须引用同一报告中的 Evidence/Change ID | `internal/domain/types.go`、`internal/application/worker.go` | 每个结论都能追溯查询窗口、模板、质量和来源 |
@@ -87,6 +87,7 @@ flowchart LR
 | 跨信号故障时间线 | Mock 已验收 | 从 Evidence 派生资源/时间，一次获取有界指标/Trace 聚合，本地计算异常并与 Change Event 稳定排序 | `internal/domain/incident_timeline.go`、`internal/adapters/eino/incident_timeline.go`、`internal/adapters/signalmock` | Mock 主链生成 1 个变更+2 个信号条目；时间相关不等于因果，真实源待接 |
 | 受治理 SOP 人工核查 | Mock 可验收（安全加固后已实跑） | Worker 首次验证后，严格绑定固定模板、治理身份与可信 Job 请求窗口；baseline=0 零调用；再经 Resource Catalog ACL 和独立 5 秒边界查询 `RunbookSource`，由可信组装层写入来源并以双时钟校验条目 | `internal/application/runbook.go`、`internal/application/runbook_validation.go`、`internal/adapters/runbookmock` | Mock 形成 1 项 3 步 `HUMAN_REVIEW_ONLY/SYNTHETIC_MOCK` 指引；飞书 SOP 区块标题带“（Mock）”，无 URL、命令、按钮或自动处置，真实知识源待接 |
 | 飞书结果卡片 | 代码已具备，待真实联调 | 持久化 Delivery Worker 先 Reply 创建卡片，再 Patch 同一张卡 | `internal/application/delivery.go`、`internal/adapters/feishu/sender.go` | 真实接入后可看到接单、运行、成功、失败、证据和下一步 |
+| 本地 Web 排障台 | Mock 联合链路和真实 SLS 路径已验收 | 单进程复用 Intake、SQLite、Worker、Eino、SLS/LLM 配置、ActionService 和持久化 Delivery Worker | `cmd/logagent/web.go`、`internal/adapters/localweb` | 真实 SLS + Mock LLM 已在同调查通过；真实 SLS + 方舟联合运行和真实飞书仍需分别验收 |
 | 卡片动作 | 已完成业务逻辑；真实 UI 待联调 | 查看证据、取消、扩大窗口、重新运行、成本确认重跑均做身份和状态校验 | `internal/application/actions.go`、`internal/adapters/feishu/receiver.go` | 按钮不能携带物理资源或绕过请求者权限 |
 | 付费查询 Checkpoint | 已完成 | `sls.current/sls.baseline` 保存治理指纹、输入哈希和规范化结果 | `internal/application/checkpoint_executor.go`、`internal/adapters/sqlite/query_steps.go` | 崩溃恢复时复用已完成窗口，只补缺失窗口 |
 | 外部结果未知保护 | 已完成 | 请求可能已到 Provider 但未落盘时转 `UNKNOWN -> NEEDS_REVIEW`，禁止自动重发 | `internal/application/checkpoint_executor.go`、`internal/adapters/sqlite/query_steps.go` | 避免静默重复付费查询；用户需明确确认成本后重跑 |
@@ -108,7 +109,8 @@ flowchart LR
 | --- | --- | --- | --- | --- |
 | 飞书入站 | `feishumock` 构造可信消息 | App/Tenant/User/Chat/Message 和用户命令 | Intake、幂等事务、调查/Job 创建 | 官方 SDK Receiver 已实现，待企业应用联调 |
 | 飞书出站 | `feishumock.Sender` 记录 Reply/Patch | 飞书 OpenAPI 返回和远端 Message ID | Delivery Outbox、租约、顺序、卡片渲染 | 官方 SDK Sender 已实现，待真实卡片视觉与限流联调 |
-| 阿里云 SLS | `slsmock` / `evalmock` 返回固定聚合 | Schema、当前/基线错误数、Top5 模式/实例、Provider usage | Resource/ACL Gateway、预算、审计、Checkpoint、Evidence、Graph | `aliyuncli` 已实现，待试点 Project/LogStore 联调 |
+| 本地 Web 交互 | `localweb` Receiver/Sender | 飞书消息入口、远端卡片 Message ID 和卡片按钮 | Intake、Worker、报告、ActionService、Delivery Outbox/租约/顺序/重绑 | 回环页面可用；固定身份不是飞书 OpenID，不能作为飞书验收 |
+| 阿里云 SLS | `slsmock` / `evalmock` 返回固定聚合 | Schema、当前/基线错误数、Top5 模式/实例、Provider usage | Resource/ACL Gateway、预算、审计、Checkpoint、Evidence、Graph | `aliyuncli` 已实现；DAM 单 Logstore 计数试点已真实联调，其他资源待接 |
 | 飞书身份与资源授权 | Mock Principal + Mock Catalog | 真实 AppID、TenantKey、OpenID 和资源绑定 | ACL 决策和 fail-closed 行为 | 需把真实飞书身份写入管理员资源目录 |
 | 发布/配置变更 | Demo/Fixture ChangeSet，或管理员静态 JSON | 发布事件、版本、负责人、影响实例 | 七项支持/反证规则和 Evidence Ledger | 静态 JSON 可用；真实发布平台/CMDB 连接器未实现 |
 | 指标/Trace 调查信号 | `signalmock` 固定错误率与 P95 延迟聚合 | ARMS/CMS/Prometheus/OTel 的受控聚合结果 | Evidence 派生查询、闭集校验、异常复算、Worker 引用门禁和飞书时间线 | 端口与 Mock 已实现；真实连接器、额度、审计和试点未实现 |

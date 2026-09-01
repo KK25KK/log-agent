@@ -23,6 +23,18 @@ type Config struct {
 	LLM               LLMConfig
 	LLMQuota          LLMQuotaConfig
 	SmokePrincipal    SmokePrincipal
+	Web               WebConfig
+}
+
+// WebConfig owns the fixed, server-side identity and loopback surface used by
+// the local pilot console. It is intentionally separate from Feishu settings.
+type WebConfig struct {
+	Address      string
+	DatabasePath string
+	AppID        string
+	TenantKey    string
+	UserID       string
+	ChatID       string
 }
 
 type DeliveryConfig struct {
@@ -106,6 +118,14 @@ func Load() (Config, error) {
 			AppID:     os.Getenv("LOG_AGENT_SMOKE_APP_ID"),
 			TenantKey: os.Getenv("LOG_AGENT_SMOKE_TENANT_KEY"),
 			UserID:    os.Getenv("LOG_AGENT_SMOKE_USER_ID"),
+		},
+		Web: WebConfig{
+			Address:      valueOrDefault("LOG_AGENT_WEB_ADDR", "127.0.0.1:8080"),
+			DatabasePath: valueOrDefault("LOG_AGENT_WEB_DB_PATH", "./data/web-pilot.db"),
+			AppID:        valueOrDefault("LOG_AGENT_WEB_APP_ID", "local-web"),
+			TenantKey:    valueOrDefault("LOG_AGENT_WEB_TENANT_KEY", "local-pilot"),
+			UserID:       valueOrDefault("LOG_AGENT_WEB_USER_ID", "operator"),
+			ChatID:       valueOrDefault("LOG_AGENT_WEB_CHAT_ID", "local-console"),
 		},
 	}
 	if config.SLS.Mode != "mock" && config.SLS.Mode != "aliyun" {
@@ -252,6 +272,9 @@ func Load() (Config, error) {
 	}
 	if config.LLM.Mode == "volcengine" && (config.LLM.APIKey == "" || config.LLM.Model == "") {
 		return Config{}, fmt.Errorf("ARK_API_KEY and LOG_AGENT_ARK_MODEL are required when LOG_AGENT_LLM_MODE=volcengine")
+	}
+	if config.Web.DatabasePath == "" || config.Web.AppID == "" || config.Web.TenantKey == "" || config.Web.UserID == "" || config.Web.ChatID == "" {
+		return Config{}, fmt.Errorf("local Web database path and fixed identity must be set")
 	}
 	return config, nil
 }

@@ -358,6 +358,29 @@ WHERE app_id = ? AND tenant_key = ? AND chat_id = ? AND card_message_id = ? AND 
 	return investigationID, nil
 }
 
+// GetInteractionTarget returns the adapter-neutral routing projection for one
+// investigation. Local operator surfaces use it to invoke ActionService with
+// the same persisted binding that a Feishu card callback would carry.
+func (s *Store) GetInteractionTarget(ctx context.Context, investigationID string) (domain.InteractionTarget, error) {
+	var target domain.InteractionTarget
+	err := s.db.QueryRowContext(ctx, `
+SELECT app_id, tenant_key, chat_id, source_message_id, card_message_id
+FROM interaction_targets WHERE investigation_id = ?`, investigationID).Scan(
+		&target.AppID,
+		&target.TenantKey,
+		&target.ChatID,
+		&target.SourceMessageID,
+		&target.CardMessageID,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.InteractionTarget{}, ports.ErrNotFound
+	}
+	if err != nil {
+		return domain.InteractionTarget{}, fmt.Errorf("get interaction target: %w", err)
+	}
+	return target, nil
+}
+
 func (s *Store) ResolveActionReplay(
 	ctx context.Context,
 	appID, tenantKey, chatID, userID, eventID string,

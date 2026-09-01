@@ -39,6 +39,10 @@ func TestLoadDefaultsToOfflineMock(t *testing.T) {
 		config.Quota.ReservedBytesPerObservation != config.SLS.MaxProcessedBytes || config.Quota.MaxProcessedBytes <= config.Quota.ReservedBytesPerObservation {
 		t.Fatalf("unexpected tenant quota defaults: %#v", config.Quota)
 	}
+	if config.Web.Address != "127.0.0.1:8080" || config.Web.DatabasePath != "./data/web-pilot.db" ||
+		config.Web.AppID != "local-web" || config.Web.TenantKey != "local-pilot" || config.Web.UserID != "operator" {
+		t.Fatalf("unexpected local Web defaults: %#v", config.Web)
+	}
 }
 
 func TestLoadRequiresVolcengineCredentialsOnlyWhenEnabled(t *testing.T) {
