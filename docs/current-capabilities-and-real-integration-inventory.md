@@ -4,7 +4,7 @@
 | --- | --- |
 | 盘点日期 | 2026-09-01 |
 | 代码基线 | 当前仓库工作树（受治理 SOP 人工核查主体代码已加入） |
-| 当前结论 | 主体业务链、治理、证据、恢复、M4-B 本地可靠性治理、评测、回放、Mock Reviewer 反馈、非行动性灰度演练、LLM 摘要与额度、Mock 指标/Trace 时间线和 Mock SOP 人工核查已经实现；真实方舟独立 Smoke 已通过，但真实样本质量/费用/留存与联合 E2E、真实可观测源、真实 `RunbookSource` 与内容治理、M4-C 生产基础设施和真实试点仍需分别验收 |
+| 当前结论 | 主体业务链、治理、证据、恢复、M4-B 本地可靠性治理、评测、回放、Mock Reviewer 反馈、非行动性灰度演练、LLM 摘要与额度、Mock 指标/Trace 时间线和 Mock SOP 人工核查已经实现；真实方舟独立 Smoke 与 DAM count-only Worker 联合 E2E 已通过，但真实样本质量/费用/留存与真实飞书 E2E、真实可观测源、真实 `RunbookSource` 与内容治理、M4-C 生产基础设施和真实试点仍需分别验收 |
 | 数据边界 | 当前自动化路径使用合成日志、合成飞书身份、合成变更、合成指标/Trace 聚合、确定性 Mock SOP 和合成标签，不代表真实生产效果或企业知识内容 |
 | 验证边界 | 第二轮严格门禁及两个 fail-closed 边界落地后的最终工作树已完成 `gofmt`、全仓测试、`go vet`、重点包乱序 20 轮、仓库链接/diff、`mock-e2e`、`demo`、两类评测与快照/replay/比较/反馈/灰度演练总检；Runbook 为 1 次调用/1 项/3 步，SLS 为 2 次观察/8 次 Provider 调用/0 次外部网络，安全复查未发现 P0–P3。race 因 `CGO_ENABLED=0` 且无 GCC 未执行 |
 
@@ -87,7 +87,7 @@ flowchart LR
 | 跨信号故障时间线 | Mock 已验收 | 从 Evidence 派生资源/时间，一次获取有界指标/Trace 聚合，本地计算异常并与 Change Event 稳定排序 | `internal/domain/incident_timeline.go`、`internal/adapters/eino/incident_timeline.go`、`internal/adapters/signalmock` | Mock 主链生成 1 个变更+2 个信号条目；时间相关不等于因果，真实源待接 |
 | 受治理 SOP 人工核查 | Mock 可验收（安全加固后已实跑） | Worker 首次验证后，严格绑定固定模板、治理身份与可信 Job 请求窗口；baseline=0 零调用；再经 Resource Catalog ACL 和独立 5 秒边界查询 `RunbookSource`，由可信组装层写入来源并以双时钟校验条目 | `internal/application/runbook.go`、`internal/application/runbook_validation.go`、`internal/adapters/runbookmock` | Mock 形成 1 项 3 步 `HUMAN_REVIEW_ONLY/SYNTHETIC_MOCK` 指引；飞书 SOP 区块标题带“（Mock）”，无 URL、命令、按钮或自动处置，真实知识源待接 |
 | 飞书结果卡片 | 代码已具备，待真实联调 | 持久化 Delivery Worker 先 Reply 创建卡片，再 Patch 同一张卡 | `internal/application/delivery.go`、`internal/adapters/feishu/sender.go` | 真实接入后可看到接单、运行、成功、失败、证据和下一步 |
-| 本地 Web 排障台 | Mock 联合链路和真实 SLS 路径已验收 | 单进程复用 Intake、SQLite、Worker、Eino、SLS/LLM 配置、ActionService 和持久化 Delivery Worker | `cmd/logagent/web.go`、`internal/adapters/localweb` | 真实 SLS + Mock LLM 已在同调查通过；真实 SLS + 方舟联合运行和真实飞书仍需分别验收 |
+| 本地 Web 排障台 | Mock 联合链路、真实 SLS 路径和真实 SLS + 方舟同调查已验收 | 单进程复用 Intake、SQLite、Worker、Eino、SLS/LLM 配置、ActionService 和持久化 Delivery Worker | `cmd/logagent/web.go`、`internal/adapters/localweb` | 真实 SLS + 方舟 `error_count_v1` 已在同调查通过；真实飞书和真实样本质量仍需分别验收 |
 | 卡片动作 | 已完成业务逻辑；真实 UI 待联调 | 查看证据、取消、扩大窗口、重新运行、成本确认重跑均做身份和状态校验 | `internal/application/actions.go`、`internal/adapters/feishu/receiver.go` | 按钮不能携带物理资源或绕过请求者权限 |
 | 付费查询 Checkpoint | 已完成 | `sls.current/sls.baseline` 保存治理指纹、输入哈希和规范化结果 | `internal/application/checkpoint_executor.go`、`internal/adapters/sqlite/query_steps.go` | 崩溃恢复时复用已完成窗口，只补缺失窗口 |
 | 外部结果未知保护 | 已完成 | 请求可能已到 Provider 但未落盘时转 `UNKNOWN -> NEEDS_REVIEW`，禁止自动重发 | `internal/application/checkpoint_executor.go`、`internal/adapters/sqlite/query_steps.go` | 避免静默重复付费查询；用户需明确确认成本后重跑 |
@@ -118,7 +118,7 @@ flowchart LR
 | 历史故障与专家标签 | `synthetic-v1.json` | 历史事故、专家期望、成本代理 | 真实 Graph、结果校验、Trace、评测门禁 | 真实脱敏数据集和专家标注流程未实现 |
 | Reviewer 反馈与灰度策略 | `feedback-seed` + 固定策略 | 两名虚拟 Reviewer、Verdict/Reason、quorum 与演练阈值 | 严格快照引用、append-only 纠正、B3 对比和决策状态机 | 真实 Reviewer 身份、UI、团队策略和生产动作未实现 |
 | Agent Trace 后端 | 内存 `BoundedRecorder` + 本地回放文件 | 生产 Trace Collector、检索、保留和告警 | Span 合同、版本指纹、完整性检查 | 真实 OTel/AgentSight/可观测后端未实现 |
-| LLM Provider | `summarymock` 生成确定性引用摘要 | 火山方舟模型响应、Token 和时延 | Worker 前后校验、严格 JSON Schema/引用门禁、fallback、飞书渲染、独立 check/smoke | 方舟独立合成 Smoke 已通过且 Key 不入库；Prompt/留存/成本、真实质量和联合 E2E 仍待验收 |
+| LLM Provider | `summarymock` 生成确定性引用摘要 | 火山方舟模型响应、Token 和时延 | Worker 前后校验、严格 JSON Schema/引用门禁、fallback、飞书渲染、独立 check/smoke | 方舟独立合成 Smoke 与 DAM count-only Worker 联合 E2E 已通过且 Key 不入库；Prompt/留存/成本、真实质量和真实飞书 E2E 仍待验收 |
 
 ### 5.1 不是 Mock，但仍不能直接称为生产能力的部分
 
@@ -446,7 +446,7 @@ flowchart LR
 | 真实发布平台/CMDB | 未实现 | 只有 ChangeSource 接口和静态目录 |
 | 真实 SOP/错误码知识库 | Mock 合同与主体代码已实现，真实系统未接入 | 已有 `RunbookSource`、双重校验和人工展示；缺真实内容、审批/失效、租户授权、审计和检索质量验收 |
 | M5-C 真实试点灰度 | 未实现 | 缺真实历史集、专家标签、团队门槛和试点验收 |
-| 火山方舟真实摘要验收 | 独立合成 Smoke 已通过 | Request ID/Token/时延安全投影已归档；仍须完成 Prompt、价格、数据留存、真实样本质量阈值和 Worker/飞书联合 E2E 审批；摘要始终不能决定权限、查询和事实 |
+| 火山方舟真实摘要验收 | 独立合成 Smoke 与 DAM count-only Worker 联合 E2E 已通过 | Token/时延安全投影已归档；仍须完成 Prompt、价格、数据留存、真实样本质量阈值和真实飞书 E2E 审批；摘要始终不能决定权限、查询和事实 |
 
 ## 10. 可以和不可以对外宣称什么
 

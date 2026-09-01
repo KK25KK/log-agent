@@ -1,6 +1,6 @@
 # Log Agent
 
-这是一个用 Go 开发的“证据驱动”日志调查 Agent。M0～M3、M3-B 跨信号时间线 Mock、受治理 SOP 人工核查 Mock、M4-A/M4-B、M5-A、M5-B/B1～B3、M5-C 的 Mock Reviewer/离线灰度演练，以及证据约束的 LLM 摘要、摘要安全评测和租户请求/Token 额度治理已经完成主体代码。2026-09-01 已用专用最小权限 Key 和 `doubao-seed-2-0-mini-260428` 通过一次独立火山方舟真实 Smoke；这只证明认证、Responses API、结构化输出和单个合成样本合同可用。M4-C、真实可观测平台、真实企业知识源、真实飞书端到端、模型质量/费用/留存审批和 M5-C 真实灰度仍未完成，当前只能称为“具备试点条件”，不能称为日常可用或生产可用。
+这是一个用 Go 开发的“证据驱动”日志调查 Agent。M0～M3、M3-B 跨信号时间线 Mock、受治理 SOP 人工核查 Mock、M4-A/M4-B、M5-A、M5-B/B1～B3、M5-C 的 Mock Reviewer/离线灰度演练，以及证据约束的 LLM 摘要、摘要安全评测和租户请求/Token 额度治理已经完成主体代码。2026-09-01 已用专用最小权限 Key 和 `doubao-seed-2-0-mini-260428` 通过独立方舟 Smoke，并通过本地 Web 完成一次 DAM 真实 SLS + 火山方舟真实 LLM 的同调查联合运行；这证明当前/基线只读计数、Worker/Eino、证据摘要和本地 Mock 投递能在一个真实应用事务中闭环。M4-C、真实可观测平台、真实企业知识源、真实飞书端到端、模型质量/费用/留存审批和 M5-C 真实灰度仍未完成，当前只能称为“具备试点条件”，不能称为日常可用或生产可用。
 
 ```text
 飞书消息
@@ -343,7 +343,7 @@ aliyun configure --mode StsToken --profile default
 
 完整迁移影响、安全边界和逐步接入操作见 [`docs/sls-cli-sts-migration.md`](docs/sls-cli-sts-migration.md)。
 
-DAM 当前采用单主 Logstore 的 `error_count_v1` 轻量试点。2026-09-01 真实 `sls-check` 与 `sls-smoke` 已通过，`env=test + level=error` 固定计数、`data/meta` 响应、显式 Region 与 host-only endpoint 已完成验证；试点不要求新增 `error_type/instance_id`，也不会输出错误类型、实例或根因。本地 Web 同日完成了“页面 -> Worker/Eino -> 真实 SLS -> Mock LLM -> 本地 Delivery”的同调查验收。独立方舟 Smoke 已通过，但当前进程未注入方舟 Key，所以“真实 SLS -> Worker -> 真实 LLM”的联合运行仍待执行；飞书也仍为 Mock。实现和验收范围见 [`docs/error-count-v1-implementation.md`](docs/error-count-v1-implementation.md)、[`docs/dam-single-logstore-pilot.md`](docs/dam-single-logstore-pilot.md) 与 [`docs/local-web-pilot-console.md`](docs/local-web-pilot-console.md)。
+DAM 当前采用单主 Logstore 的 `error_count_v1` 轻量试点。2026-09-01 真实 `sls-check` 与 `sls-smoke` 已通过，`env=test + level=error` 固定计数、`data/meta` 响应、显式 Region 与 host-only endpoint 已完成验证；试点不要求新增 `error_type/instance_id`，也不会输出错误类型、实例或根因。本地 Web 同日先完成“页面 -> Worker/Eino -> 真实 SLS -> Mock LLM -> 本地 Delivery”，随后完成“页面 -> Worker/Eino -> 真实 SLS -> 火山方舟真实 LLM -> 本地 Delivery”的同调查联合验收；飞书仍为 Mock。实现和验收范围见 [`docs/error-count-v1-implementation.md`](docs/error-count-v1-implementation.md)、[`docs/dam-single-logstore-pilot.md`](docs/dam-single-logstore-pilot.md) 与 [`docs/local-web-pilot-console.md`](docs/local-web-pilot-console.md)。
 
 最小只读 RAM 策略模板见 `config/sls-readonly-policy.example.json`。它只包含定向检查和查询需要的 `GetProject`、`GetLogStore`、`GetIndex`、`GetLogStoreLogs`，请替换地域、账号、Project 和 LogStore 占位符；不要给 Agent `AliyunLogFullAccess`。
 
@@ -574,7 +574,7 @@ internal/application/runbook.go       Worker 后处理的 SOP 查询、引用派
 - 受治理 SOP 已有严格 Evidence/请求窗口绑定、Mock Source、可信来源标记、独立 5 秒超时、可信服务时钟、Worker 双重校验、持久化投影和带 Mock 标题的飞书纯文本展示，但没有真实 `RunbookSource`、企业内容、审批/失效、租户授权、审计或检索质量验收。它只供人工核查，不提供 URL、命令、按钮或自动处置。
 - M5-A 数据集没有真实故障和专家标注，只能发现已编码合成场景上的回归；它不测量生产泛化能力，也不能批准灰度。M5-B/B3 已补齐合成 Engine 执行的有界 Trace、版本合同、append-only 历史与兼容运行比较，但真实反馈、真实数据集、团队阈值、试点群和回滚验收仍属于 M5-C。
 - M5-B/B3 不是飞书接单、SQLite Worker、SLS 网络请求到卡片投递的跨进程分布式 Trace，也没有生产 Trace 后端、采样/保留策略或延迟 SLO。内容哈希用于完整性检测，不是加密、签名或身份认证。
-- Eino Graph 和 `evaluate` 仍是确定性、无 LLM 的；Runbook 也是 Worker 校验后的可选后处理，不进入现有评测、Trace 或 Replay 版本合同，因此历史数据集与版本指纹不因该投影自动变化。Worker 后处理还实现了证据约束摘要和 SQLite 请求/Token 额度治理，默认走 Mock；火山方舟协议/认证和单个合成 count-only 摘要已真实联调通过。真实 Prompt/模型质量、Token 价格校准、生产全局额度、留存门禁及真实 Worker 联合 E2E 仍需试点验收。
+- Eino Graph 和 `evaluate` 仍是确定性、无 LLM 的；Runbook 也是 Worker 校验后的可选后处理，不进入现有评测、Trace 或 Replay 版本合同，因此历史数据集与版本指纹不因该投影自动变化。Worker 后处理还实现了证据约束摘要和 SQLite 请求/Token 额度治理，默认走 Mock；火山方舟协议/认证、单个合成 count-only 摘要和 DAM 真实计数 Evidence 的 Worker 联合 E2E 已真实联调通过。真实 Prompt/模型质量门禁、Token 价格校准、生产全局额度、留存门禁及真实飞书联合 E2E 仍需试点验收。
 - 非文本消息、格式错误的命令和永久无效事件目前会被安全确认但不会回复用法提示；这是已知的交互限制。
 - 系统只有只读调查能力，不包含自动处置工具。
 

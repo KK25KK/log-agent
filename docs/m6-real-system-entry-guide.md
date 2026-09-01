@@ -14,7 +14,7 @@
 5. 变更来源（M3）：默认 `disabled`，可配静态 Change Catalog 文件；真实接平台还未建模。
 6. 指标/Trace 时间线：默认不启用；Mock 模式注入 `signalmock`，真实 Operational Signal Adapter 尚未实现。
 7. 受治理 SOP：只有 Mock SLS 模式注入 `runbookmock`；真实 `RunbookSource` Adapter、企业内容治理和审批生命周期尚未接入。
-8. LLM 摘要：默认 `summarymock`，火山方舟 Responses API 适配器、SQLite 请求/Token 额度治理和独立 `llm-check/llm-smoke` 已实现；2026-09-01 独立真实 Smoke 已通过，本地 Web + 真实 SLS + Mock LLM 联合链路也已通过；真实 SLS + 方舟同调查联合调用、Prompt、Token 价格/账单、留存和真实质量仍分别验收。
+8. LLM 摘要：默认 `summarymock`，火山方舟 Responses API 适配器、SQLite 请求/Token 额度治理和独立 `llm-check/llm-smoke` 已实现；2026-09-01 独立真实 Smoke、本地 Web + 真实 SLS + Mock LLM，以及本地 Web + 真实 SLS + 方舟真实 LLM 的同调查联合链路均已通过；Prompt、Token 价格/账单、留存、真实质量和真实飞书仍分别验收。
 
 > 关键约束：不允许把飞书 SDK 或阿里云 CLI 执行引入业务核心层。接口边界由 `internal/ports` 保护；真实/离线实现只切换在适配层和启动组装处。
 
@@ -256,6 +256,6 @@ internal/ports                  接口边界：Store / Query / Executor / Change
 - 实时链路可运行：依赖真实 credential、catalog 与生产数据库后可跑。
 - 生产数据库替换：未完成；属于 M4-C。
 - 真实发布平台/CMDB 关联：本阶段仍 `disabled/change-catalog-file`，不属于此切片的硬性前提。
-- 火山方舟：适配器、离线协议测试和独立真实 Smoke 已完成；凭据不入库，协议/认证/单合成样本合同已通过，Prompt/费用/留存、真实样本质量和联合 E2E 按试点记录继续收口。
+- 火山方舟：适配器、离线协议测试、独立真实 Smoke 和 DAM count-only Worker 联合 E2E 已完成；凭据不入库，协议/认证/结构化输出与受治理计数 Evidence 合同已通过，Prompt/费用/留存、真实样本质量和真实飞书 E2E 按试点记录继续收口。
 - 指标/Trace：`OperationalSignalSource`、Mock、验证和展示已完成；真实平台 Adapter、调用治理和阈值校准未完成。
 - 受治理 SOP：领域合同、应用编排、Mock Source、校验与纯文本展示已实现；真实 `RunbookSource`、企业内容治理、审批与回滚未完成。

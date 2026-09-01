@@ -111,7 +111,7 @@
 - 超时、限流、非法结构、虚构引用或安全校验失败时保留原确定性报告，不让调查失败。
 - 真实模型启用后记录模型、Prompt 版本与指纹、Token、耗时和完成状态，但不在 Trace 中记录 Prompt 正文或证据内容。
 
-当前已经完成 provider-neutral 端口、确定性 Mock、Worker 后处理、严格输出/引用门禁、确定性回退、飞书有界展示、隔离的火山方舟 Responses API 适配器，以及零网络 `llm-check` 和单调用 `llm-smoke`。2026-09-01 已用专用模型级 Key 对 `doubao-seed-2-0-mini-260428` 完成一次真实合成 Smoke；认证、结构化输出和应用合同通过。默认主链仍为 Mock，Prompt 审批、费用/留存策略、真实样本模型质量门禁和联合 E2E 仍待真实输入。
+当前已经完成 provider-neutral 端口、确定性 Mock、Worker 后处理、严格输出/引用门禁、确定性回退、飞书有界展示、隔离的火山方舟 Responses API 适配器，以及零网络 `llm-check` 和单调用 `llm-smoke`。2026-09-01 已用专用模型级 Key 对 `doubao-seed-2-0-mini-260428` 完成一次真实合成 Smoke，并用本地 Web 完成一次 DAM 真实 SLS + 方舟真实 LLM 的同调查联合运行；认证、结构化输出、受治理真实计数 Evidence 和 Worker 应用合同通过。默认主链仍为 Mock，Prompt 审批、费用/留存策略、真实样本模型质量门禁和真实飞书 E2E 仍待真实输入。
 
 #### 摘要安全评测切片（代码与离线验收完成，Mock-first）
 
@@ -265,7 +265,7 @@ M5-A 的指标只说明代码对受控合成样例没有回归，不是历史真
 - [x] 单进程复用正式 Intake、SQLite、Worker、Eino、SLS、LLM、ActionService 和 Delivery Worker。
 - [x] 完成固定服务端身份、CSRF/Host/Origin、严格 JSON、幂等和安全报告投影。
 - [x] 完成 Mock SLS + Mock LLM 的完整 Web 应用链路自动化验收。
-- [ ] 执行并归档一次 DAM 真实 SLS + 火山方舟真实 LLM 的同调查联合运行。
+- [x] 执行并归档一次 DAM 真实 SLS + 火山方舟真实 LLM 的同调查联合运行。
 - [ ] 获得飞书权限后回到真实 WebSocket、OpenID、Reply/Patch、卡片视觉和回调验收。
 
 该入口只减少飞书权限阻塞，不改变 C3 对真实身份、真实样本、阈值审批、持久化和灰度治理的要求。

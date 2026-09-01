@@ -69,4 +69,4 @@ go run ./cmd/logagent sls-smoke dam-server test 10m
 
 同日新增的 `web` 命令允许在不修改飞书代码的前提下，把本地页面、正式 Worker、DAM 真实 SLS 和火山方舟真实摘要连接到同一次调查。资源目录 Binding 使用服务端固定的 `local-web/local-pilot/operator`，页面仍只能提交 `dam-server/test/10m/error_count_v1` 这类逻辑范围。
 
-本地 Web 的 Mock 联合链路已有自动化测试；真实 SLS + 真实方舟的同调查联合运行仍需执行并单独记录。在它完成前，本节不能把前文的独立 SLS Smoke 和独立方舟 Smoke 合并描述为联合验收。飞书 WebSocket、OpenID、Reply/Patch 和卡片回调继续保持未验收。操作见 [`local-web-pilot-console.md`](local-web-pilot-console.md)。
+本地 Web 的 Mock 联合链路已有自动化测试；2026-09-01 又完成一次真实 SLS + 真实方舟的同调查联合运行：两份 `error_count_v1` Evidence 均完整，火山摘要为 `GENERATED/MODEL`，本地 Delivery 成功。它证明单主 Logstore 的真实只读计数可以进入正式 Worker 摘要链，但不证明错误类型、实例、根因、模型质量或生产可用性。飞书 WebSocket、OpenID、Reply/Patch 和卡片回调继续保持未验收。详细记录与操作见 [`local-web-pilot-console.md`](local-web-pilot-console.md)。

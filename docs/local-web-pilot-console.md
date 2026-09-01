@@ -157,5 +157,7 @@ HTTP submit
 - Playwright 实际打开页面，无脚本/资源控制台错误；提交按钮完成调查，“扩大窗口”通过现有 ActionService 创建派生调查并把 30 分钟窗口扩大为 60 分钟。浏览器 QA 发现并修复了 favicon 404 和隐藏空状态仍显示的问题。
 - 使用本地固定身份目录复验真实 `sls-check` 与 `sls-smoke dam-server test 10m`，Schema、ACL 和两次固定 count 完整通过。
 - 实际启动 `127.0.0.1:18081`，完成 `本地 Web -> SQLite -> Worker/Eino -> 真实阿里云 SLS -> Mock LLM -> 本地 Delivery`；最终 `SUCCEEDED/data_insufficient`，current/baseline Evidence 均完整、Delivery 为 `SUCCEEDED`。当次 current=0、baseline=4 只是易变连接样本，不归档为故障事实。
-- 当前执行进程没有 `ARK_API_KEY`，因此没有执行“真实 SLS + 真实方舟”的同调查联合调用，也没有产生额外模型费用。真实方舟仍只有此前独立 Smoke 证据，不能与本次真实 SLS Web 运行合并描述。
+- 随后使用仅允许 `Doubao-Seed-2.0-mini` 的临时 Key，实际启动 `127.0.0.1:18082`，完成 `本地 Web -> SQLite -> Worker/Eino -> 真实阿里云 SLS -> 火山方舟真实 LLM -> 本地 Delivery` 的同调查联合调用。调查 `inv_2cc5dbaa35cf387a5cb8ef82ba79b18c` 最终为 `SUCCEEDED/no_significant_spike`，current/baseline 两份 Evidence 均 `Complete`，模型摘要为 `GENERATED/MODEL`，Provider 为 `volcengine_ark`，模型为 `doubao-seed-2-0-mini-260428`，Token 为 `725 + 182 = 907`，模型耗时 `1771 ms`，本地 Delivery 为 `SUCCEEDED`。
+- 该实时 10 分钟样本的 current=19、baseline=38 只用于证明联合链路，不归档为故障事实、模型质量结论或生产基线；`error_count_v1` 仍不能输出错误类型、实例或根因。
+- 临时 Key 未进入仓库、配置、SQLite、日志或文档；仅经一次性本机传递注入验收进程，传递文件随即删除，进程停止后从方舟控制台删除 Key。此次验收仍未覆盖飞书真实链路、Prompt/费用/留存审批和真实样本模型质量门禁。
 - `CGO_ENABLED=0`，且本机没有 `gcc`、`clang` 或 `cl`，所以本轮无法执行 `go test -race ./...`。

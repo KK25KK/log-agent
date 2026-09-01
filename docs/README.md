@@ -41,7 +41,7 @@
 | M5-B/B2 / 第八期首个切片 | [`m5-agent-observability-replay.md`](m5-agent-observability-replay.md) | append-only 快照与当前二进制离线回放已完成 |
 | M5-B/B3 / 第九期首个切片 | [`m5-agent-observability-replay.md`](m5-agent-observability-replay.md) | 兼容快照比较、回归/恢复识别和 `INCOMPARABLE` 门禁已完成；仍为全合成 Mock |
 | M5-C/C1-C2 / 第十期离线切片 | [`offline-feedback-and-rollout-rehearsal.md`](offline-feedback-and-rollout-rehearsal.md) | 两名虚拟 Reviewer、append-only 反馈和非行动性灰度演练已完成；不代表真实灰度批准 |
-| 必需 LLM 摘要切片 | [`llm-evidence-summary.md`](llm-evidence-summary.md) | 默认 Mock 主链、严格引用门禁、火山方舟适配器与独立真实 Smoke 已完成；真实样本质量、成本/留存审批和联合 E2E 单独记录 |
+| 必需 LLM 摘要切片 | [`llm-evidence-summary.md`](llm-evidence-summary.md) | 默认 Mock 主链、严格引用门禁、火山方舟适配器、独立真实 Smoke 与 DAM count-only Worker 联合 E2E 已完成；真实样本质量、成本/留存审批和真实飞书 E2E 单独记录 |
 | LLM 摘要安全评测切片 | [`llm-summary-evaluation-gate.md`](llm-summary-evaluation-gate.md) | 9 类全合成安全场景、生产摘要链和独立门禁已完成；不代表真实模型质量 |
 | LLM 摘要额度治理切片 | [`llm-summary-quota.md`](llm-summary-quota.md) | 每租户请求/Token 账本与成本熔断已完成离线验收；SQLite 不是生产全局配额 |
 

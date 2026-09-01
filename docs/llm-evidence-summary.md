@@ -5,7 +5,7 @@
 | 阶段 | 必需 LLM 摘要独立切片 |
 | 代码状态 | provider-neutral 端口、Mock、Worker 接线、飞书展示与火山方舟适配器已完成 |
 | 离线状态 | 单元测试与 `mock-e2e` 已覆盖；默认 0 网络、0 凭据 |
-| 真实状态 | 2026-09-01 已用专用模型级 Key 完成一次独立真实 `llm-smoke`；协议/认证/结构化合同通过，Prompt/费用/留存审批、真实样本质量和联合 E2E 仍待验收 |
+| 真实状态 | 2026-09-01 已完成独立真实 `llm-smoke`，并完成 DAM 真实 SLS + 方舟真实 LLM 的同调查 Worker 联合 E2E；协议/认证/结构化合同与受治理 count-only Evidence 摘要通过，Prompt/费用/留存审批、真实样本质量和真实飞书 E2E 仍待验收 |
 
 ## 1. 目标与边界
 
@@ -157,7 +157,7 @@ go run ./cmd/logagent llm-smoke
 
 2026-08-24 在加入受治理 SOP 的当前工作树上实跑 `summary-evaluate`，结果仍为 `PASSED`，数据集指纹保持 `82e813aed0721f15b89a19b053da6b1d47509ab07f45122af4ed0c075e60a0b1`；同轮 `mock-e2e` 也通过。该结果验证 SOP 没有进入 `SummaryInput` 或改变现有摘要评测数据集，但仍不代表真实方舟模型质量。
 
-尚不能宣称：真实 DAM 样本质量已达标、真实 Token 单价/账单已校准、Prompt 已获组织批准、方舟数据留存已满足要求、生产 Worker/飞书联合 E2E 已通过、模型可判断根因或执行处置。
+尚不能宣称：真实 DAM 样本质量已达标、真实 Token 单价/账单已校准、Prompt 已获组织批准、方舟数据留存已满足要求、真实飞书联合 E2E 已通过、模型可判断根因或执行处置。当前已通过的 Worker 联合 E2E 仅使用本地 Web 入口和 `error_count_v1` 受治理计数 Evidence。
 
 结构化门禁能阻止未知 Evidence、原因候选、Recommendation 和危险动作，但不能从形式规则证明任意自然语言改写在语义上完全无幻觉。真实启用前必须补充脱敏历史故障、专家忠实度标签和团队批准阈值；用户界面仍应把确定性 Findings/Evidence 作为事实来源。
 
