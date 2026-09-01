@@ -3,7 +3,7 @@
 > 生成时间：2026-09-02
 > 基于规格：[_spec.md](./_spec.md)
 > 源码基线：`e115d4dcd7993b1c25e0001be951dad2c2cc1f1c`
-> 状态：v0.1 已完成；v0.2 实施计划待用户批准
+> 状态：v0.1 已完成；v0.2 已完成
 
 **目标：** 在 `interview-kit/` 中交付架构、亮点难点、项目介绍、简历条目和逐条面试脚本，并在 v0.2 增加 Agent 八股映射、调用链解析和 0→1 架构演进故事，面向校招 Agent 开发岗位，内容可直接用于学习、简历选择和口述。
 
@@ -221,16 +221,16 @@
 
 **范围：** `interview-kit/*.md`
 
-- [ ] 读取 `self-review-grep.md` 和 `cross-review-checklist.md`，逐条执行自查。
-- [ ] 用脚本或 grep 统计 17 个主题、34 个延伸追问、8 个架构决策、8 个困难复盘、知识框、💡、Mermaid 和源码链接。
-- [ ] 抽查至少 10 个 `file:///` 行号，检查源码 commit 基准下仍能定位到对应语义。
-- [ ] 打开并抽查至少 12 个外部资料链接，确认标题、来源和正文结论匹配。
-- [ ] 交叉检查 `01`～`07` 对 Eino、飞书、SLS、方舟、Mock、真实试点和生产边界的口径一致。
-- [ ] 检查通用答案与项目答案不互相冒充，未采用技术均明确标成比较项或未来选项。
-- [ ] 检查 60～90 秒、3 分钟和原有 5 分钟项目稿能够互相衔接，且事实没有漂移。
-- [ ] 更新 `_plan.md` 的 v0.2 checkbox 和顶部状态为已完成。
-- [ ] 运行 `git diff --check`；本阶段不改 Go 代码，不以 `go test` 代替文档验收。
-- [ ] Finalize commit：`docs(interview): finalize agent interview extension (v0.2.0)`
+- [x] 读取 `self-review-grep.md` 和 `cross-review-checklist.md`，逐条执行自查。
+- [x] 用脚本或 grep 统计 17 个主题、34 个延伸追问、8 个架构决策、8 个困难复盘、知识框、💡、Mermaid 和源码链接。
+- [x] 抽查至少 10 个 `file:///` 行号，检查源码 commit 基准下仍能定位到对应语义。
+- [x] 打开并抽查至少 12 个外部资料链接，确认标题、来源和正文结论匹配。
+- [x] 交叉检查 `01`～`07` 对 Eino、飞书、SLS、方舟、Mock、真实试点和生产边界的口径一致。
+- [x] 检查通用答案与项目答案不互相冒充，未采用技术均明确标成比较项或未来选项。
+- [x] 检查 60～90 秒、3 分钟和原有 5 分钟项目稿能够互相衔接，且事实没有漂移。
+- [x] 更新 `_plan.md` 的 v0.2 checkbox 和顶部状态为已完成。
+- [x] 运行 `git diff --check`；本阶段不改 Go 代码，不以 `go test` 代替文档验收。
+- [x] Finalize commit：`docs(interview): finalize agent interview extension (v0.2.0)`
 
 ---
 
