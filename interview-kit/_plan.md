@@ -3,7 +3,7 @@
 > 生成时间：2026-09-02
 > 基于规格：[_spec.md](./_spec.md)
 > 源码基线：`e115d4dcd7993b1c25e0001be951dad2c2cc1f1c`
-> 状态：待用户批准
+> 状态：已批准，执行中
 
 **目标：** 在 `interview-kit/` 中交付架构、亮点难点、项目介绍、简历条目和逐条面试脚本，面向校招 Agent 开发岗位，内容可直接用于学习、简历选择和口述。
 
@@ -24,7 +24,7 @@
 7. 不虚构用户规模、准确率、节省成本、线上故障恢复次数、生产 QPS 或个人独立贡献。
 8. 每个 Task 完成“写作 → 自查 → 独立 commit”后再进入下一个 Task。
 9. commit 统一使用 `docs(interview): <内容>`。
-10. 不自动推送远端；完成后由用户决定是否推送。
+10. 用户已要求整体验收完成后推送当前分支到远端。
 
 ## 2. 已锁定的证据范围
 
@@ -48,14 +48,14 @@
 
 **文件：** 创建 `interview-kit/01-project-architecture.md`（300～500 行）
 
-- [ ] 读取 `rhythm-checklist.md`、`audience-guide.md`、`source-linking.md`。
-- [ ] 写一句话业务目标、技术栈、分层职责和依赖方向。
-- [ ] 绘制整体分层图、调查序列图、状态/恢复图，单图不超过 15 个节点。
-- [ ] 解释 Intake → Store → Worker/Eino → Gateway → SLS → Evidence → Summary → Delivery。
-- [ ] 标出 Mock、真实和待接入模块，并给出推荐源码阅读顺序。
-- [ ] 提供至少 12 个有效 `file:///` 源码链接和 4 个 📦 知识框。
-- [ ] 自查：行数 300～500、Mermaid ≥3、源码链接 ≥12、文末恰好一个“一句话记住”。
-- [ ] Commit：`docs(interview): add log agent architecture guide`
+- [x] 读取 `rhythm-checklist.md`、`audience-guide.md`、`source-linking.md`。
+- [x] 写一句话业务目标、技术栈、分层职责和依赖方向。
+- [x] 绘制整体分层图、调查序列图、状态/恢复图，单图不超过 15 个节点。
+- [x] 解释 Intake → Store → Worker/Eino → Gateway → SLS → Evidence → Summary → Delivery。
+- [x] 标出 Mock、真实和待接入模块，并给出推荐源码阅读顺序。
+- [x] 提供至少 12 个有效 `file:///` 源码链接和 4 个 📦 知识框。
+- [x] 自查：行数 300～500、Mermaid ≥3、源码链接 ≥12、文末恰好一个“一句话记住”。
+- [x] Commit：`docs(interview): add log agent architecture guide`
 
 ## Task 2：项目亮点与难点
 
