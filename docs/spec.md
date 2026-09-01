@@ -2,9 +2,9 @@
 
 | Metadata | Value |
 | --- | --- |
-| Version | 1.7 |
-| Status | Governed Mock-first SOP guidance and security hardening implemented; latest Mock E2E/demo/full-test/vet/shuffle/repository-link/replay/evaluation checks passed; real knowledge connectors, metric/Trace connectors, Ark smoke, M4-C infrastructure, and real gray rollout remain pending |
-| Date | 2026-08-24 |
+| Version | 1.8 |
+| Status | Governed Mock-first SOP guidance and security hardening implemented; one bounded real Ark smoke passed on synthetic count-only input; real knowledge connectors, metric/Trace connectors, production LLM approvals/quality, M4-C infrastructure, and real gray rollout remain pending |
+| Date | 2026-09-01 |
 
 ## 1. Overview
 
@@ -579,7 +579,10 @@ M5-C feedback uses a store separate from both the production investigation Store
 - [x] A trusted tenant is atomically charged one summary request and a conservative Token reservation before any provider call; over-budget, duplicate, or ledger-failure paths make zero provider calls and fall back deterministically.
 - [x] Success settles actual input/output/total Tokens, while timeout, cancellation, transport failure, or uncertain outcome retains the reservation as unknown cost without automatic retry.
 - [x] The full Mock E2E traverses the LLM quota ledger with one request, zero actual Tokens, zero credentials, and zero external-network calls.
-- [ ] A real opt-in Ark smoke, approved model/Prompt, calibrated Token/cost policy, retention policy, production-global quota service, and model-quality evaluation are deployment inputs rather than offline claims.
+- [x] `llm-check` performs a local-only, zero-network validation of the explicit Volcengine mode, API-key presence, model ID, fixed Ark endpoint, timeout, Prompt version, and quota policy without printing the key.
+- [x] `llm-smoke` is the only standalone opt-in live-model probe. It uses one synthetic count-only deterministic report, the production SummaryService and an ephemeral quota ledger; it performs no SLS or Feishu calls, prints only bounded metadata, and exits non-zero on fallback or invalid model output.
+- [x] A bounded real Ark smoke passed on 2026-09-01 with the approved public endpoint, dedicated model-scoped key, `store=false`, strict JSON Schema, one synthetic count-only input, one provider call, and zero SLS/Feishu calls.
+- [ ] Approved production Prompt, calibrated Token/cost policy, retention policy, production-global quota service, real-sample quality evaluation, and Worker/Feishu joint E2E remain deployment inputs rather than smoke-test claims.
 
 ### Synthetic LLM-summary safety evaluation
 

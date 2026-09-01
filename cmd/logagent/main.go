@@ -32,7 +32,7 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: logagent <evaluate|summary-evaluate|replay|replay-compare|feedback-seed|rollout-rehearse|delivery-dlq-list|delivery-dlq-replay|mock-e2e|demo|worker|feishu|sls-check|sls-smoke>")
+		return errors.New("usage: logagent <evaluate|summary-evaluate|replay|replay-compare|feedback-seed|rollout-rehearse|delivery-dlq-list|delivery-dlq-replay|mock-e2e|demo|worker|feishu|sls-check|sls-smoke|llm-check|llm-smoke>")
 	}
 	switch args[0] {
 	case "evaluate":
@@ -101,8 +101,26 @@ func run(args []string) error {
 			return err
 		}
 		return runSLSSmoke(loaded, args[1], args[2], args[3])
+	case "llm-check":
+		if len(args) != 1 {
+			return errors.New("usage: logagent llm-check")
+		}
+		loaded, err := config.Load()
+		if err != nil {
+			return err
+		}
+		return runLLMCheck(loaded)
+	case "llm-smoke":
+		if len(args) != 1 {
+			return errors.New("usage: logagent llm-smoke")
+		}
+		loaded, err := config.Load()
+		if err != nil {
+			return err
+		}
+		return runLLMSmoke(loaded)
 	default:
-		return fmt.Errorf("unknown command %q; use evaluate, summary-evaluate, replay, replay-compare, feedback-seed, rollout-rehearse, delivery-dlq-list, delivery-dlq-replay, mock-e2e, demo, worker, feishu, sls-check, or sls-smoke", args[0])
+		return fmt.Errorf("unknown command %q; use evaluate, summary-evaluate, replay, replay-compare, feedback-seed, rollout-rehearse, delivery-dlq-list, delivery-dlq-replay, mock-e2e, demo, worker, feishu, sls-check, sls-smoke, llm-check, or llm-smoke", args[0])
 	}
 }
 

@@ -5,7 +5,7 @@
 | 阶段 | 必需 LLM 摘要独立切片 |
 | 代码状态 | provider-neutral 端口、Mock、Worker 接线、飞书展示与火山方舟适配器已完成 |
 | 离线状态 | 单元测试与 `mock-e2e` 已覆盖；默认 0 网络、0 凭据 |
-| 真实状态 | 火山方舟 Key、批准模型、Prompt/费用/留存审批和真实 smoke 尚未提供 |
+| 真实状态 | 2026-09-01 已用专用模型级 Key 完成一次独立真实 `llm-smoke`；协议/认证/结构化合同通过，Prompt/费用/留存审批、真实样本质量和联合 E2E 仍待验收 |
 
 ## 1. 目标与边界
 
@@ -91,7 +91,46 @@ $env:LOG_AGENT_LLM_TIMEOUT = "12s"
 go run ./cmd/logagent worker
 ```
 
-适配器 POST 到 `${LOG_AGENT_ARK_BASE_URL}/responses`，设置 `store=false`、固定输出 Token 上限、客户端总超时、禁止重定向和应用层重试。错误不会包含响应正文或 API Key。当前使用标准库 HTTP，是为了让 SDK 依赖和模型 Provider 都停留在小适配层；若将来改用官方 Go SDK，`ReportSummarizer` 和上层合同不变。
+启用 Worker 前先独立验收：
+
+```powershell
+go run ./cmd/logagent llm-check
+go run ./cmd/logagent llm-smoke
+```
+
+`llm-check` 只在本机检查模式、凭据是否存在、模型 ID、固定方舟地址、超时、Prompt 版本和额度配置，网络调用为 0，也不会输出 Key。`llm-smoke` 使用一份仓库内构造的 count-only 合成确定性报告，经过正式 `SummaryService`、输入安全校验和临时 SQLite 额度账本，对方舟发起且只发起一次请求；它不会访问 SLS 或飞书，也不会持久化 Prompt、模型正文或凭据。输出只包含 Provider/模型、请求 ID、Prompt 指纹、Token、耗时、引用数量和下一步 Code，不打印自然语言模型正文。
+
+模型输出、Token usage 或引用合同不合法时，正式摘要逻辑仍生成确定性 fallback；但 `llm-smoke` 会以非零状态退出，不能把 fallback 误记为真实模型验收通过。Smoke 通过也只证明协议、认证和单个合成样本满足结构合同，不代表真实故障摘要质量达标。
+
+### 当前 DAM 试点选择
+
+| 配置 | 当前选择 |
+| --- | --- |
+| Region | `cn-beijing` |
+| Responses API | `https://ark.cn-beijing.volces.com/api/v3/responses` |
+| Model ID | `doubao-seed-2-0-mini-260428` |
+| 选择原因 | 当前账号已开通；支持 Responses API 与结构化输出；轻量、低成本，适合只改写受治理计数报告 |
+| Key 权限 | 使用独立 Key，并只授权 `Doubao-Seed-2.0-mini`，不使用“后续模型自动全选” |
+
+该选择不把模型升级权交给运行时。切换 Model ID、Prompt 或 Provider 必须重新运行 `summary-evaluate`、`llm-check` 和 `llm-smoke`，并重新评估费用与输出忠实度。
+
+适配器 POST 到 `${LOG_AGENT_ARK_BASE_URL}/responses`，设置 `store=false`、关闭深度思考、固定输出 Token 上限、客户端总超时、禁止重定向和应用层重试。请求通过 `text.format` 提交严格 JSON Schema，把五字段合同前移到模型生成层；返回后仍由 Go 执行 JSON、Evidence 引用、候选原因和建议 Code 的第二层业务校验。错误只映射为有界状态/诊断码，不包含响应正文或 API Key。当前使用标准库 HTTP，是为了让 SDK 依赖和模型 Provider 都停留在小适配层；若将来改用官方 Go SDK，`ReportSummarizer` 和上层合同不变。
+
+### 2026-09-01 独立真实 Smoke 结果
+
+| 项目 | 结果 |
+| --- | --- |
+| 状态 | `PASSED` |
+| Provider / 模型 | `volcengine_ark` / `doubao-seed-2-0-mini-260428` |
+| 输入 | `SYNTHETIC_COUNT_ONLY`，只包含仓库内构造的确定性聚合证据 |
+| 调用范围 | 方舟 1 次；SLS 0 次；飞书 0 次 |
+| 输出合同 | `GENERATED / MODEL`，Evidence 引用 2 个，建议 Code 1 个 |
+| Token | input 796，output 175，total 971 |
+| 延迟 | 1939 ms |
+| Request ID | `resp_021788257778514f1aca4493aa6c7087a6ccfbfdb4be6158938f8` |
+| 数据与秘密 | `store=false`；模型正文未打印；Key 未写入文件/Git，运行后清空剪贴板和进程环境 |
+
+这个结果证明专用 Key、公开 Responses API、模型权限、结构化输出和生产 `SummaryService` 契约在一个合成样本上闭环。它不证明真实 DAM 日志摘要质量、Token 单价/账单、组织留存合规、生产配额或飞书联合链路已验收。控制台操作时必须从“API Key”列显示并复制密钥；“资源 ID”列的复制值不是鉴权凭据。
 
 ## 5. 真实接入前必须完成
 
@@ -118,7 +157,7 @@ go run ./cmd/logagent worker
 
 2026-08-24 在加入受治理 SOP 的当前工作树上实跑 `summary-evaluate`，结果仍为 `PASSED`，数据集指纹保持 `82e813aed0721f15b89a19b053da6b1d47509ab07f45122af4ed0c075e60a0b1`；同轮 `mock-e2e` 也通过。该结果验证 SOP 没有进入 `SummaryInput` 或改变现有摘要评测数据集，但仍不代表真实方舟模型质量。
 
-尚不能宣称：真实模型质量已达标、真实 Token 费用已测量、Prompt 已获组织批准、方舟数据留存已满足要求、模型可判断根因或执行处置。
+尚不能宣称：真实 DAM 样本质量已达标、真实 Token 单价/账单已校准、Prompt 已获组织批准、方舟数据留存已满足要求、生产 Worker/飞书联合 E2E 已通过、模型可判断根因或执行处置。
 
 结构化门禁能阻止未知 Evidence、原因候选、Recommendation 和危险动作，但不能从形式规则证明任意自然语言改写在语义上完全无幻觉。真实启用前必须补充脱敏历史故障、专家忠实度标签和团队批准阈值；用户界面仍应把确定性 Findings/Evidence 作为事实来源。
 

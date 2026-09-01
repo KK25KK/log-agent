@@ -14,7 +14,7 @@
 5. 变更来源（M3）：默认 `disabled`，可配静态 Change Catalog 文件；真实接平台还未建模。
 6. 指标/Trace 时间线：默认不启用；Mock 模式注入 `signalmock`，真实 Operational Signal Adapter 尚未实现。
 7. 受治理 SOP：只有 Mock SLS 模式注入 `runbookmock`；真实 `RunbookSource` Adapter、企业内容治理和审批生命周期尚未接入。
-8. LLM 摘要：默认 `summarymock`，火山方舟 Responses API 适配器与 SQLite 请求/Token 额度治理已实现；真实模型、Prompt、Token 价格校准与留存策略尚未联调。
+8. LLM 摘要：默认 `summarymock`，火山方舟 Responses API 适配器、SQLite 请求/Token 额度治理和独立 `llm-check/llm-smoke` 已实现；2026-09-01 独立真实 Smoke 已通过，Prompt、Token 价格/账单、留存、真实质量和联合 E2E 仍分别验收。
 
 > 关键约束：不允许把飞书 SDK 或阿里云 CLI 执行引入业务核心层。接口边界由 `internal/ports` 保护；真实/离线实现只切换在适配层和启动组装处。
 
@@ -144,8 +144,8 @@
 - `internal/ports/ports.go`：`ReportSummarizer` 是唯一 Provider 接口。
 - `internal/application/summary.go`：构造不含身份/物理资源/查询/原始日志的输入投影，验证 Evidence/候选/建议引用，并在任何模型失败时生成确定性 fallback。
 - `internal/adapters/summarymock/summarizer.go`：默认离线实现；不访问网络。
-- `internal/adapters/volcark/summarizer.go`：火山方舟 Responses API 适配器；固定 `store=false`、超时、响应上限、禁止重定向与错误正文泄漏。
-- `cmd/logagent/summary.go`：按 `LOG_AGENT_LLM_MODE=disabled|mock|volcengine` 组装；只有 `volcengine` 读取 `ARK_API_KEY` 和模型 ID。
+- `internal/adapters/volcark/summarizer.go`：火山方舟 Responses API 适配器；固定 `store=false`、严格 JSON Schema、关闭深度思考、超时、响应上限、方舟公共域名、禁止重定向与错误正文泄漏。
+- `cmd/logagent/summary.go`、`cmd/logagent/llm.go`：按 `LOG_AGENT_LLM_MODE=disabled|mock|volcengine` 组装；只有 `volcengine` 读取 `ARK_API_KEY` 和模型 ID。`llm-check` 不联网，`llm-smoke` 使用合成 count-only 报告和临时额度账本只调用一次模型。
 - `internal/application/worker.go`：先校验确定性报告，在租约心跳仍活跃时生成摘要，再连同摘要二次校验并持久化。
 - `internal/ports/reliability.go`、`internal/adapters/sqlite/summary_quota.go`：在 Provider 前按可信租户预留请求/Token，成功结算实际 Token，结果不确定时保留预留额度。
 
@@ -177,9 +177,9 @@
 
 1. 先保持 `LOG_AGENT_LLM_MODE=mock` 完成飞书/SLS 主链试点。
 2. 完成模型、Prompt、数据留存、Token/费用与密钥托管审批，并依据真实样本校准 `LOG_AGENT_LLM_QUOTA_*`。
-3. 仅向 Worker 注入 `ARK_API_KEY`，设置 `LOG_AGENT_LLM_MODE=volcengine` 与 `LOG_AGENT_ARK_MODEL`。
-4. 用脱敏样本做 opt-in smoke，确认 Token、时延、Request ID 和错误 fallback；真实错误正文不得进入报告、卡片或 Trace。
-5. 方舟失败不会改变调查成功；如发生异常，查看报告 `summary.status=FALLBACK`，确定性 Evidence/Findings 仍是事实来源。
+3. 仅向执行进程注入 `ARK_API_KEY`，设置 `LOG_AGENT_LLM_MODE=volcengine` 与 `LOG_AGENT_ARK_MODEL`；先运行零网络 `llm-check`。
+4. 运行 `llm-smoke`，用合成 count-only 报告确认单次调用、Token、时延、Request ID、引用合同和错误 fallback；真实错误正文不得进入输出、报告、卡片或 Trace。
+5. Smoke 通过后才允许 Worker 使用相同配置；方舟失败不会改变调查成功，`summary.status=FALLBACK` 时确定性 Evidence/Findings 仍是事实来源。
 
 ### 4.5 接入真实指标/Trace 聚合
 
@@ -246,6 +246,6 @@ internal/ports                  接口边界：Store / Query / Executor / Change
 - 实时链路可运行：依赖真实 credential、catalog 与生产数据库后可跑。
 - 生产数据库替换：未完成；属于 M4-C。
 - 真实发布平台/CMDB 关联：本阶段仍 `disabled/change-catalog-file`，不属于此切片的硬性前提。
-- 火山方舟：适配器与离线协议测试已完成；真实凭据/模型/Prompt/费用/留存验收未完成。
+- 火山方舟：适配器、离线协议测试和独立真实 Smoke 已完成；凭据不入库，协议/认证/单合成样本合同已通过，Prompt/费用/留存、真实样本质量和联合 E2E 按试点记录继续收口。
 - 指标/Trace：`OperationalSignalSource`、Mock、验证和展示已完成；真实平台 Adapter、调用治理和阈值校准未完成。
 - 受治理 SOP：领域合同、应用编排、Mock Source、校验与纯文本展示已实现；真实 `RunbookSource`、企业内容治理、审批与回滚未完成。

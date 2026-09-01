@@ -13,16 +13,19 @@ import (
 )
 
 func buildSummaryService(loaded config.Config, quotaStore ports.SummaryQuotaStore, now func() time.Time) (*application.SummaryService, error) {
-	if loaded.LLM.Mode == "disabled" {
-		return nil, nil
+	provider, err := buildSummaryProvider(loaded)
+	if err != nil || provider == nil {
+		return nil, err
 	}
-	if quotaStore == nil {
-		return nil, fmt.Errorf("summary quota store is required when LLM summaries are enabled")
-	}
-	var provider ports.ReportSummarizer
+	return buildSummaryServiceWithProvider(loaded, quotaStore, now, provider)
+}
+
+func buildSummaryProvider(loaded config.Config) (ports.ReportSummarizer, error) {
 	switch loaded.LLM.Mode {
+	case "disabled":
+		return nil, nil
 	case "mock":
-		provider = summarymock.New()
+		return summarymock.New(), nil
 	case "volcengine":
 		adapter, err := volcark.New(volcark.Config{
 			APIKey: loaded.LLM.APIKey, Model: loaded.LLM.Model,
@@ -31,9 +34,15 @@ func buildSummaryService(loaded config.Config, quotaStore ports.SummaryQuotaStor
 		if err != nil {
 			return nil, fmt.Errorf("configure Volcengine Ark summary adapter: %w", err)
 		}
-		provider = adapter
+		return adapter, nil
 	default:
 		return nil, fmt.Errorf("unsupported LLM mode %q", loaded.LLM.Mode)
+	}
+}
+
+func buildSummaryServiceWithProvider(loaded config.Config, quotaStore ports.SummaryQuotaStore, now func() time.Time, provider ports.ReportSummarizer) (*application.SummaryService, error) {
+	if quotaStore == nil {
+		return nil, fmt.Errorf("summary quota store is required when LLM summaries are enabled")
 	}
 	policy := domain.SummaryQuotaPolicy{
 		Version: application.SummaryQuotaPolicyVersion,

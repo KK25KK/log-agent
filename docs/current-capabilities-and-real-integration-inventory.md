@@ -2,9 +2,9 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 盘点日期 | 2026-08-24 |
+| 盘点日期 | 2026-09-01 |
 | 代码基线 | 当前仓库工作树（受治理 SOP 人工核查主体代码已加入） |
-| 当前结论 | 主体业务链、治理、证据、恢复、M4-B 本地可靠性治理、评测、回放、Mock Reviewer 反馈、非行动性灰度演练、LLM 摘要与额度、Mock 指标/Trace 时间线和 Mock SOP 人工核查已经实现；SOP Mock E2E 与全仓测试已各实跑通过一次，真实可观测源、真实 `RunbookSource` 与内容治理、真实方舟联调、M4-C 生产基础设施和真实试点仍未完成 |
+| 当前结论 | 主体业务链、治理、证据、恢复、M4-B 本地可靠性治理、评测、回放、Mock Reviewer 反馈、非行动性灰度演练、LLM 摘要与额度、Mock 指标/Trace 时间线和 Mock SOP 人工核查已经实现；真实方舟独立 Smoke 已通过，但真实样本质量/费用/留存与联合 E2E、真实可观测源、真实 `RunbookSource` 与内容治理、M4-C 生产基础设施和真实试点仍需分别验收 |
 | 数据边界 | 当前自动化路径使用合成日志、合成飞书身份、合成变更、合成指标/Trace 聚合、确定性 Mock SOP 和合成标签，不代表真实生产效果或企业知识内容 |
 | 验证边界 | 第二轮严格门禁及两个 fail-closed 边界落地后的最终工作树已完成 `gofmt`、全仓测试、`go vet`、重点包乱序 20 轮、仓库链接/diff、`mock-e2e`、`demo`、两类评测与快照/replay/比较/反馈/灰度演练总检；Runbook 为 1 次调用/1 项/3 步，SLS 为 2 次观察/8 次 Provider 调用/0 次外部网络，安全复查未发现 P0–P3。race 因 `CGO_ENABLED=0` 且无 GCC 未执行 |
 
@@ -98,7 +98,7 @@ flowchart LR
 | 兼容快照比较 | 已完成 | 只读比较版本、Gate、Case、质量、成本代理、工具和 Trace；不兼容时 delta-free | `internal/evaluation/replay/compare.go`、`cmd/logagent/evaluate.go` | 可识别新增失败、恢复和固定方向回归；不执行 Graph 或网络 |
 | Mock Reviewer 反馈账本 | 已完成 | 严格记录绑定快照/Case/Reviewer，内容哈希、append-only 纠正链和活动投影 | `internal/evaluation/feedback`、`internal/adapters/feedbackfs` | 两名虚拟 Reviewer 覆盖五个 Case；篡改、分叉、循环和跨边界纠正 fail closed |
 | 离线灰度决策演练 | 已完成 | 组合 B3 比较、活动反馈、quorum 和版本化策略，输出关闭状态/原因码 | `internal/evaluation/rollout`、`cmd/logagent/rollout.go` | 只产生 `SYNTHETIC_MOCK` 演练结论，永远禁止生产动作 |
-| LLM 证据摘要 | Mock 已验收；方舟代码待真实联调 | Worker 校验后构造隐私安全投影，模型只能引用已有 Evidence/候选/建议，失败走确定性 fallback | `internal/application/summary.go`、`internal/adapters/summarymock`、`internal/adapters/volcark` | Mock 主链 0 网络；真实启用后可生成更易读摘要，但不能改变事实、权限和处置 |
+| LLM 证据摘要 | Mock 已验收；方舟独立真实 Smoke 已通过 | Worker 校验后构造隐私安全投影，模型只能引用已有 Evidence/候选/建议，失败走确定性 fallback；`llm-check` 零网络检查配置，`llm-smoke` 用单个合成 count-only 报告调用一次真实模型 | `internal/application/summary.go`、`internal/adapters/summarymock`、`internal/adapters/volcark`、`cmd/logagent/llm.go` | 2026-09-01 实测 1 次方舟调用、971 Token、1939 ms、SLS/飞书 0 调用；仍不能改变事实、权限和处置 |
 | LLM 摘要安全评测 | 已完成离线切片 | 9 类严格场景实际运行 Eino Graph 与生产 SummaryService，覆盖异常、恶意引用、危险动作和敏感出站阻断 | `internal/evaluation/summaryeval`、`internal/adapters/summaryevalmock`、`cmd/logagent/summary_evaluate.go` | 当前 9/9 通过、8 次 Mock Provider 调用、敏感 Case 0 调用、Token/凭据/网络为 0；不代表真实模型质量 |
 | LLM 请求/Token 额度 | 已完成 SQLite 技术预览 | 可信租户固定窗预留请求/Token，成功结算实际用量，不确定结果保留预留成本 | `internal/application/summary.go`、`internal/adapters/sqlite/summary_quota.go` | Mock 主链 1 请求/0 Token；真实 Token、价格与生产全局额度待校准 |
 
@@ -116,7 +116,7 @@ flowchart LR
 | 历史故障与专家标签 | `synthetic-v1.json` | 历史事故、专家期望、成本代理 | 真实 Graph、结果校验、Trace、评测门禁 | 真实脱敏数据集和专家标注流程未实现 |
 | Reviewer 反馈与灰度策略 | `feedback-seed` + 固定策略 | 两名虚拟 Reviewer、Verdict/Reason、quorum 与演练阈值 | 严格快照引用、append-only 纠正、B3 对比和决策状态机 | 真实 Reviewer 身份、UI、团队策略和生产动作未实现 |
 | Agent Trace 后端 | 内存 `BoundedRecorder` + 本地回放文件 | 生产 Trace Collector、检索、保留和告警 | Span 合同、版本指纹、完整性检查 | 真实 OTel/AgentSight/可观测后端未实现 |
-| LLM Provider | `summarymock` 生成确定性引用摘要 | 火山方舟模型响应、Token 和时延 | Worker 前后校验、严格 JSON/引用门禁、fallback、飞书渲染 | 方舟 Responses API 适配器已实现；真实 Key/模型/Prompt/留存/成本待验收 |
+| LLM Provider | `summarymock` 生成确定性引用摘要 | 火山方舟模型响应、Token 和时延 | Worker 前后校验、严格 JSON Schema/引用门禁、fallback、飞书渲染、独立 check/smoke | 方舟独立合成 Smoke 已通过且 Key 不入库；Prompt/留存/成本、真实质量和联合 E2E 仍待验收 |
 
 ### 5.1 不是 Mock，但仍不能直接称为生产能力的部分
 
@@ -444,7 +444,7 @@ flowchart LR
 | 真实发布平台/CMDB | 未实现 | 只有 ChangeSource 接口和静态目录 |
 | 真实 SOP/错误码知识库 | Mock 合同与主体代码已实现，真实系统未接入 | 已有 `RunbookSource`、双重校验和人工展示；缺真实内容、审批/失效、租户授权、审计和检索质量验收 |
 | M5-C 真实试点灰度 | 未实现 | 缺真实历史集、专家标签、团队门槛和试点验收 |
-| 火山方舟真实摘要验收 | 适配器与本地额度代码已具备，未真实联调 | 缺真实 Key、批准模型/Prompt、真实 Token/价格校准、数据留存策略和 opt-in smoke；摘要仍不能决定权限、查询和事实 |
+| 火山方舟真实摘要验收 | 独立合成 Smoke 已通过 | Request ID/Token/时延安全投影已归档；仍须完成 Prompt、价格、数据留存、真实样本质量阈值和 Worker/飞书联合 E2E 审批；摘要始终不能决定权限、查询和事实 |
 
 ## 10. 可以和不可以对外宣称什么
 
@@ -498,6 +498,10 @@ go run ./cmd/logagent evaluate
 
 # 完全离线的 LLM 摘要安全门禁
 go run ./cmd/logagent summary-evaluate
+
+# 显式真实模式：先零网络检查，再执行一次真实模型 Smoke
+go run ./cmd/logagent llm-check
+go run ./cmd/logagent llm-smoke
 
 # 保存与回放离线评测快照
 go run ./cmd/logagent evaluate --snapshot-dir .\data\evaluation-runs

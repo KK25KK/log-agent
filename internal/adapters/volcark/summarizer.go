@@ -19,11 +19,14 @@ import (
 )
 
 const (
-	DefaultBaseURL     = "https://ark.cn-beijing.volces.com/api/v3"
-	maxRequestBytes    = 32 * 1024
-	maxResponseBytes   = 128 * 1024
-	maxOutputTokens    = 1200
-	evidencePromptText = `你是内部日志调查报告摘要器。只允许改写输入 JSON 中已经存在的事实，不得生成新事实、查询、权限、置信度、原因结论或处置动作。输出必须是单个 JSON 对象，且只能有 phenomenon、phenomenon_evidence_ids、cause_hypothesis_id、evidence_notes、recommendation_codes 五个字段。phenomenon 必须引用已有 evidence ID；cause_hypothesis_id 只能从 SUPPORTED_CANDIDATE 中选择或留空；evidence_notes 每项只能有 statement、evidence_ids；recommendation_codes 只能从输入中选择。不得输出 Markdown、URL、命令、原始日志或 JSON 之外的文本。`
+	DefaultBaseURL        = "https://ark.cn-beijing.volces.com/api/v3"
+	arkAPIHost            = "ark.cn-beijing.volces.com"
+	arkAPIPath            = "/api/v3"
+	maxRequestBytes       = 32 * 1024
+	maxResponseBytes      = 128 * 1024
+	maxOutputTokens       = 1200
+	maxSummaryFormatItems = 4
+	evidencePromptText    = `你是内部日志调查报告摘要器。只允许改写输入 JSON 中已经存在的事实，不得生成新事实、查询、权限、置信度、原因结论或处置动作。输出必须是单个 JSON 对象，且只能有 phenomenon、phenomenon_evidence_ids、cause_hypothesis_id、evidence_notes、recommendation_codes 五个字段。phenomenon 必须引用已有 evidence ID；cause_hypothesis_id 只能从 SUPPORTED_CANDIDATE 中选择或留空；evidence_notes 每项只能有 statement、evidence_ids；recommendation_codes 只能从输入中选择。不得输出 Markdown、URL、命令、原始日志或 JSON 之外的文本。`
 )
 
 type Config struct {
@@ -46,6 +49,19 @@ type responsesRequest struct {
 	Input           string `json:"input"`
 	Store           bool   `json:"store"`
 	MaxOutputTokens int    `json:"max_output_tokens"`
+	Thinking        struct {
+		Type string `json:"type"`
+	} `json:"thinking"`
+	Text struct {
+		Format responsesFormat `json:"format"`
+	} `json:"text"`
+}
+
+type responsesFormat struct {
+	Type   string         `json:"type"`
+	Name   string         `json:"name"`
+	Strict bool           `json:"strict"`
+	Schema map[string]any `json:"schema"`
 }
 
 type responsesEnvelope struct {
@@ -73,9 +89,9 @@ func New(config Config) (*Summarizer, error) {
 	if config.Timeout <= 0 {
 		config.Timeout = 12 * time.Second
 	}
-	parsed, err := url.Parse(config.BaseURL)
-	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.User != nil {
-		return nil, errors.New("Volcengine Ark base URL must be an HTTPS origin")
+	baseURL, err := validatedBaseURL(config.BaseURL)
+	if err != nil {
+		return nil, err
 	}
 	client := &http.Client{
 		Timeout: config.Timeout,
@@ -83,7 +99,17 @@ func New(config Config) (*Summarizer, error) {
 			return errors.New("Volcengine Ark redirects are disabled")
 		},
 	}
-	return newSummarizer(config.APIKey, config.Model, strings.TrimRight(config.BaseURL, "/")+"/responses", client, false)
+	return newSummarizer(config.APIKey, config.Model, baseURL+"/responses", client, false)
+}
+
+func validatedBaseURL(raw string) (string, error) {
+	baseURL := strings.TrimRight(raw, "/")
+	parsed, err := url.Parse(baseURL)
+	if err != nil || parsed.Scheme != "https" || parsed.Hostname() != arkAPIHost || parsed.Port() != "" ||
+		parsed.Path != arkAPIPath || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.User != nil {
+		return "", errors.New("Volcengine Ark base URL must be the approved public Responses API origin")
+	}
+	return baseURL, nil
 }
 
 func newSummarizer(apiKey, model, endpoint string, client *http.Client, allowHTTP bool) (*Summarizer, error) {
@@ -92,7 +118,7 @@ func newSummarizer(apiKey, model, endpoint string, client *http.Client, allowHTT
 		(parsed.Scheme != "https" && !(allowHTTP && parsed.Scheme == "http")) {
 		return nil, errors.New("Volcengine Ark endpoint is invalid")
 	}
-	if apiKey == "" || !safeIdentifier(model, 1, 160) || client == nil {
+	if apiKey == "" || apiKey != strings.TrimSpace(apiKey) || !safeIdentifier(model, 1, 160) || client == nil {
 		return nil, errors.New("Volcengine Ark API key, model, and HTTP client are required")
 	}
 	digest := sha256.Sum256([]byte(evidencePromptText))
@@ -107,11 +133,14 @@ func (summarizer *Summarizer) Summarize(ctx context.Context, input domain.Summar
 	if err != nil {
 		return domain.SummaryProviderResult{}, errors.New("encode governed summary input")
 	}
-	requestBody, err := json.Marshal(responsesRequest{
+	request := responsesRequest{
 		Model: summarizer.model,
 		Input: evidencePromptText + "\n\n受治理输入 JSON：\n" + string(inputJSON),
 		Store: false, MaxOutputTokens: maxOutputTokens,
-	})
+	}
+	request.Thinking.Type = "disabled"
+	request.Text.Format = governedSummaryFormat()
+	requestBody, err := json.Marshal(request)
 	if err != nil || len(requestBody) > maxRequestBytes {
 		return domain.SummaryProviderResult{}, errors.New("governed summary request exceeds limit")
 	}
@@ -159,6 +188,44 @@ func (summarizer *Summarizer) Summarize(ctx context.Context, input domain.Summar
 		InputTokens: envelope.Usage.InputTokens, OutputTokens: envelope.Usage.OutputTokens,
 		TotalTokens: envelope.Usage.TotalTokens, LatencyMillis: latency,
 	}, nil
+}
+
+func governedSummaryFormat() responsesFormat {
+	stringArray := func() map[string]any {
+		return map[string]any{
+			"type":     "array",
+			"items":    map[string]any{"type": "string"},
+			"maxItems": maxSummaryFormatItems,
+		}
+	}
+	return responsesFormat{
+		Type: "json_schema", Name: "governed_log_summary", Strict: true,
+		Schema: map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"phenomenon":              map[string]any{"type": "string"},
+				"phenomenon_evidence_ids": stringArray(),
+				"cause_hypothesis_id":     map[string]any{"type": []string{"string", "null"}},
+				"evidence_notes": map[string]any{
+					"type": "array", "maxItems": maxSummaryFormatItems,
+					"items": map[string]any{
+						"type": "object", "additionalProperties": false,
+						"properties": map[string]any{
+							"statement":    map[string]any{"type": "string"},
+							"evidence_ids": stringArray(),
+						},
+						"required": []string{"statement", "evidence_ids"},
+					},
+				},
+				"recommendation_codes": stringArray(),
+			},
+			"required": []string{
+				"phenomenon", "phenomenon_evidence_ids", "cause_hypothesis_id",
+				"evidence_notes", "recommendation_codes",
+			},
+		},
+	}
 }
 
 func responseText(envelope responsesEnvelope) string {

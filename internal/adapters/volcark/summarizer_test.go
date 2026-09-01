@@ -44,6 +44,14 @@ func TestSummarizerCallsResponsesAPIWithGovernedInput(t *testing.T) {
 	if received.Store || received.Model != "endpoint-model" || received.MaxOutputTokens != maxOutputTokens {
 		t.Fatalf("unsafe request options: %#v", received)
 	}
+	if received.Thinking.Type != "disabled" || received.Text.Format.Type != "json_schema" ||
+		received.Text.Format.Name != "governed_log_summary" || !received.Text.Format.Strict {
+		t.Fatalf("structured output contract is missing: %#v", received)
+	}
+	properties, ok := received.Text.Format.Schema["properties"].(map[string]any)
+	if !ok || len(properties) != 5 || properties["evidence_notes"] == nil {
+		t.Fatalf("unexpected structured output schema: %#v", received.Text.Format.Schema)
+	}
 	for _, forbidden := range []string{"project/logstore", "query-secret", "raw log", "test-key"} {
 		if strings.Contains(received.Input, forbidden) {
 			t.Fatalf("request leaked %q", forbidden)
@@ -81,5 +89,23 @@ func TestSummarizerDoesNotLeakProviderBodyOrAPIKey(t *testing.T) {
 	_, err = summarizer.Summarize(context.Background(), domain.SummaryInput{})
 	if err == nil || strings.Contains(err.Error(), "secret provider diagnostic") || strings.Contains(err.Error(), "super-secret-key") {
 		t.Fatalf("unsafe error: %v", err)
+	}
+}
+
+func TestNewRestrictsCredentialDestination(t *testing.T) {
+	for _, baseURL := range []string{
+		"https://example.com/api/v3",
+		"https://ark.cn-beijing.volces.com/other",
+		"https://ark.cn-beijing.volces.com:443/api/v3",
+	} {
+		if _, err := New(Config{APIKey: "test-key", Model: "model", BaseURL: baseURL, Timeout: time.Second}); err == nil {
+			t.Fatalf("want unsafe destination %q to be rejected", baseURL)
+		}
+	}
+	if _, err := New(Config{APIKey: " test-key ", Model: "model", BaseURL: DefaultBaseURL, Timeout: time.Second}); err == nil {
+		t.Fatal("want padded API key to be rejected")
+	}
+	if _, err := New(Config{APIKey: "test-key", Model: "doubao-seed-2-0-mini-260428", BaseURL: DefaultBaseURL + "/", Timeout: time.Second}); err != nil {
+		t.Fatalf("want approved endpoint to be accepted: %v", err)
 	}
 }

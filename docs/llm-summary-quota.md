@@ -3,8 +3,8 @@
 ## 状态
 
 - 阶段：证据摘要上线前治理切片
-- 当前状态：代码与离线验收完成
-- 数据边界：默认只使用 `summarymock`；不读取火山方舟凭据，不访问网络
+- 当前状态：代码与离线验收完成；2026-09-01 独立真实 Smoke 的临时账本预留/结算通过
+- 数据边界：默认仍使用 `summarymock`；只有显式 `llm-smoke` 或真实 Worker 模式才读取进程内方舟凭据并访问网络
 - 生产边界：SQLite 是单库技术预览，不是跨地域、跨数据库实例的全局额度服务
 
 ## 目标
@@ -86,6 +86,17 @@ go run ./cmd/logagent evaluate
 ```
 
 以上离线验收已通过。`go test -race ./...` 未执行，因为当前 Windows 环境 `CGO_ENABLED=0` 且没有 GCC；不能把这一项写成已通过。
+
+真实 Provider 必须先使用临时 SQLite 额度账本运行独立 Smoke，不复用生产调查数据库：
+
+```powershell
+go run ./cmd/logagent llm-check
+go run ./cmd/logagent llm-smoke
+```
+
+`llm-smoke` 在调用前仍执行一次请求和保守 Token 预留，成功后按真实 usage 结算；超时、Provider 错误、Token 缺失/超预留或非法摘要都会以非零状态结束。该账本随进程退出销毁，只用于验证额度状态机接线，不代表生产全局额度。
+
+2026-09-01 独立真实 Smoke 实际结算 input 796、output 175、total 971 Token，未超过 4096 Token 的单请求预留；这只是一个合成样本的用量证据，不等于价格/账单校准或生产容量结论。
 
 ## 仍待真实系统输入
 
