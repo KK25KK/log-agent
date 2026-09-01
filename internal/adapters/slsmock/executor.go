@@ -3,6 +3,7 @@ package slsmock
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"logagent/internal/domain"
@@ -43,14 +44,15 @@ func (e *Executor) ResolveQueryGovernance(ctx context.Context, spec domain.Query
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	if spec.Service == "" || spec.Environment == "" || spec.TemplateID != domain.ErrorAnalysisTemplateID {
+	contract, ok := domain.QueryTemplateByID(spec.TemplateID)
+	if spec.Service == "" || spec.Environment == "" || !ok {
 		return "", fmt.Errorf("invalid mock query governance scope")
 	}
 	identity := mockGovernanceIdentity{
 		Resource: domain.LogResource{
 			ID: "mock/" + spec.Service + "/" + spec.Environment, CatalogVersion: "mock-catalog-v2",
 			Service: spec.Service, Environment: spec.Environment, Endpoint: "mock://sls",
-			Project: "mock-project", LogStore: "mock-logstore", TemplateVersion: "mock-v2",
+			Project: "mock-project", LogStore: "mock-logstore", TemplateVersion: contract.Version,
 			Selectors: []domain.LogSelector{
 				{Field: "service", Value: spec.Service},
 				{Field: "environment", Value: spec.Environment},
@@ -63,15 +65,15 @@ func (e *Executor) ResolveQueryGovernance(ctx context.Context, spec domain.Query
 	identity.Budget.MaxWindowNanoseconds = int64(2 * time.Hour)
 	identity.Budget.IngestionGraceNanoseconds = int64(domain.DefaultIngestionGrace)
 	identity.Budget.TimeoutNanoseconds = int64(30 * time.Second)
-	identity.Budget.MaxRows = domain.ErrorAnalysisResultRows
-	identity.Budget.MaxAPICalls = domain.ErrorAnalysisAPICalls
+	identity.Budget.MaxRows = contract.ResultRows
+	identity.Budget.MaxAPICalls = contract.APICalls
 	identity.Budget.MaxProcessedBytes = 16 * 1024 * 1024
 	identity.Budget.MaxConcurrent = 1
 	identity.Budget.SchemaTTLNanoseconds = int64(time.Minute)
-	identity.Budget.PatternLimit = domain.ErrorAnalysisPatternLimit
-	identity.Budget.InstanceLimit = domain.ErrorAnalysisInstanceLimit
-	identity.Budget.ExpectedAPICalls = domain.ErrorAnalysisAPICalls
-	identity.Budget.ExpectedResultRows = domain.ErrorAnalysisResultRows
+	identity.Budget.PatternLimit = contract.PatternLimit
+	identity.Budget.InstanceLimit = contract.InstanceLimit
+	identity.Budget.ExpectedAPICalls = contract.APICalls
+	identity.Budget.ExpectedResultRows = int(contract.ResultRows)
 	return fingerprint.JSON(identity)
 }
 
@@ -117,6 +119,10 @@ func (e *Executor) Execute(ctx context.Context, spec domain.QuerySpec) (domain.Q
 }
 
 func (e *Executor) result(spec domain.QuerySpec, queryID string, errorCount int64, patterns, instances []domain.CountBucket) (domain.QueryResult, error) {
+	contract, ok := domain.QueryTemplateByID(spec.TemplateID)
+	if !ok {
+		return domain.QueryResult{}, fmt.Errorf("unsupported mock template %q", spec.TemplateID)
+	}
 	hash, err := fingerprint.JSON(spec)
 	if err != nil {
 		return domain.QueryResult{}, err
@@ -137,12 +143,19 @@ func (e *Executor) result(spec domain.QuerySpec, queryID string, errorCount int6
 		topError = patterns[0].Label
 		topErrorCount = patterns[0].Count
 	}
+	if !contract.Dimensional {
+		queryID = strings.Split(queryID, ",")[0] + ",mock-count-after"
+		patterns = nil
+		instances = nil
+		topError = ""
+		topErrorCount = 0
+	}
 	return domain.QueryResult{
 		QueryID:                 queryID,
 		QuerySpecHash:           hash,
 		ResourceID:              "mock/" + spec.Service + "/" + spec.Environment,
 		TemplateID:              spec.TemplateID,
-		TemplateVersion:         "mock-v2",
+		TemplateVersion:         contract.Version,
 		SchemaFingerprint:       "mock-schema-v2",
 		PolicyVersion:           "mock-policy-v2",
 		GovernanceFingerprint:   governanceFingerprint,
@@ -152,19 +165,19 @@ func (e *Executor) result(spec domain.QuerySpec, queryID string, errorCount int6
 		NanosecondOrderedKnown:  true,
 		NanosecondOrdered:       true,
 		UsageKnown:              true,
-		ProcessedRows:           errorCount * domain.ErrorAnalysisAPICalls,
+		ProcessedRows:           errorCount * int64(contract.APICalls),
 		ProcessedBytes:          errorCount * 128,
 		ElapsedMillisecond:      15,
-		APICalls:                domain.ErrorAnalysisAPICalls,
+		APICalls:                contract.APICalls,
 		ErrorCount:              errorCount,
 		TopError:                topError,
 		TopErrorCount:           topErrorCount,
 		ErrorPatterns:           append([]domain.CountBucket(nil), patterns...),
 		Instances:               append([]domain.CountBucket(nil), instances...),
-		ErrorPatternsExhaustive: bucketTotal(patterns) == errorCount,
-		InstancesExhaustive:     bucketTotal(instances) == errorCount,
-		PatternLimit:            domain.ErrorAnalysisPatternLimit,
-		InstanceLimit:           domain.ErrorAnalysisInstanceLimit,
+		ErrorPatternsExhaustive: contract.Dimensional && bucketTotal(patterns) == errorCount,
+		InstancesExhaustive:     contract.Dimensional && bucketTotal(instances) == errorCount,
+		PatternLimit:            contract.PatternLimit,
+		InstanceLimit:           contract.InstanceLimit,
 	}, nil
 }
 

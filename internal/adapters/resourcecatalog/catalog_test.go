@@ -316,6 +316,43 @@ func TestExampleCatalogIsValid(t *testing.T) {
 	}
 }
 
+func TestDAMPilotExampleCatalogIsValid(t *testing.T) {
+	path := filepath.Join("..", "..", "..", "config", "sls-resources.dam-pilot.example.json")
+	catalog, err := Load(path)
+	if err != nil {
+		t.Fatalf("load DAM pilot example catalog: %v", err)
+	}
+	resources := catalog.Resources()
+	if len(resources) != 1 || resources[0].ID != "dam-server-test-count" || resources[0].LogStore != "2016-hyper-dam-file" || resources[0].TemplateVersion != domain.ErrorCountTemplateVersion {
+		t.Fatalf("unexpected DAM pilot resources: %#v", resources)
+	}
+}
+
+func TestCatalogAcceptsCountOnlyTemplateWithoutDimensions(t *testing.T) {
+	config := validCatalog()
+	config.Resources[0].TemplateVersion = domain.ErrorCountTemplateVersion
+	config.Resources[0].ErrorField = ""
+	config.Resources[0].InstanceField = ""
+	catalog := loadTestCatalog(t, config)
+	resource, err := catalog.Resolve(context.Background(), "order-service", "prod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resource.ErrorField != "" || resource.InstanceField != "" {
+		t.Fatalf("unexpected dimensions: %#v", resource)
+	}
+}
+
+func TestCatalogRejectsDimensionsForCountOnlyTemplate(t *testing.T) {
+	config := validCatalog()
+	config.Resources[0].TemplateVersion = domain.ErrorCountTemplateVersion
+	config.Resources[0].InstanceField = ""
+	_, err := Load(writeCatalog(t, config))
+	if err == nil || !strings.Contains(err.Error(), "must not configure") {
+		t.Fatalf("expected count-only dimension rejection, got %v", err)
+	}
+}
+
 func validCatalog() catalogFile {
 	return catalogFile{
 		Version: "2026-08-18.1",

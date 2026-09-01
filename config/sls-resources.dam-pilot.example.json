@@ -1,0 +1,36 @@
+{
+  "version": "2026-09-01.dam-pilot.1",
+  "resources": [
+    {
+      "id": "dam-server-test-count",
+      "service": "dam-server",
+      "environment": "test",
+      "endpoint": "https://cn-shanghai.log.aliyuncs.com",
+      "project": "tech-center-sha",
+      "logstore": "2016-hyper-dam-file",
+      "template_version": "error-count-v1",
+      "selectors": [
+        {
+          "field": "env",
+          "value": "test"
+        }
+      ],
+      "error_selector": {
+        "field": "level",
+        "value": "error"
+      }
+    }
+  ],
+  "bindings": [
+    {
+      "principal": {
+        "app_id": "replace_with_feishu_app_id",
+        "tenant_key": "replace_with_feishu_tenant_key",
+        "user_id": "replace_with_feishu_open_id"
+      },
+      "resource_ids": [
+        "dam-server-test-count"
+      ]
+    }
+  ]
+}

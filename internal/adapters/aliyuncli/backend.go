@@ -90,6 +90,7 @@ func (b *Backend) Execute(ctx context.Context, query domain.ApprovedQuery) (doma
 	if err := validateApprovedQuery(query); err != nil {
 		return domain.QueryResult{}, err
 	}
+	contract, _ := domain.QueryTemplateByID(query.TemplateID)
 	countQuery, patternQuery, instanceQuery, err := compileQueries(query.Resource)
 	if err != nil {
 		return domain.QueryResult{}, err
@@ -103,6 +104,13 @@ func (b *Backend) Execute(ctx context.Context, query domain.ApprovedQuery) (doma
 		{operation: "error-instances", expression: instanceQuery},
 		{operation: "error-count-after", expression: countQuery},
 	}
+	if !contract.Dimensional {
+		expressions = expressions[:1]
+		expressions = append(expressions, struct {
+			operation  string
+			expression string
+		}{operation: "error-count-after", expression: countQuery})
+	}
 	responses := make([]queryResponse, 0, len(expressions))
 	for _, item := range expressions {
 		response, callErr := b.getLogs(ctx, query, item.operation, item.expression)
@@ -114,6 +122,9 @@ func (b *Backend) Execute(ctx context.Context, query domain.ApprovedQuery) (doma
 		if combineErr != nil {
 			return partial, combineErr
 		}
+	}
+	if !contract.Dimensional {
+		return mapCount(responses[0], responses[1])
 	}
 	return mapAnalysis(responses[0], responses[1], responses[2], responses[3])
 }
@@ -133,10 +144,14 @@ func (b *Backend) CheckResources(ctx context.Context, resources []domain.LogReso
 		if err := validateResourceLocation(resource); err != nil {
 			return nil, err
 		}
+		endpoint, region, err := cliLocation(resource.Endpoint)
+		if err != nil {
+			return nil, err
+		}
 		var project map[string]json.RawMessage
 		if err := b.runJSON(ctx, "get-project", []string{
 			"sls", "get-project", "--project", resource.Project,
-			"--endpoint", resource.Endpoint, "--log-level", "ERROR",
+			"--region", region, "--endpoint", endpoint, "--log-level", "ERROR",
 		}, &project); err != nil {
 			return nil, fmt.Errorf("check project for resource %q: %w", resource.ID, err)
 		}
@@ -168,10 +183,14 @@ type logStoreInfo struct {
 }
 
 func (b *Backend) getLogStore(ctx context.Context, resource domain.LogResource) (logStoreInfo, error) {
+	endpoint, region, err := cliLocation(resource.Endpoint)
+	if err != nil {
+		return logStoreInfo{}, err
+	}
 	var payload map[string]json.RawMessage
-	err := b.runJSON(ctx, "get-log-store", []string{
+	err = b.runJSON(ctx, "get-log-store", []string{
 		"sls", "get-log-store", "--project", resource.Project, "--logstore", resource.LogStore,
-		"--endpoint", resource.Endpoint, "--log-level", "ERROR",
+		"--region", region, "--endpoint", endpoint, "--log-level", "ERROR",
 	}, &payload)
 	if err != nil {
 		return logStoreInfo{}, fmt.Errorf("get LogStore for resource %q: %w", resource.ID, err)
@@ -191,12 +210,16 @@ func (b *Backend) getLogStore(ctx context.Context, resource domain.LogResource) 
 }
 
 func (b *Backend) getIndex(ctx context.Context, resource domain.LogResource) (domain.IndexSchema, error) {
+	endpoint, region, err := cliLocation(resource.Endpoint)
+	if err != nil {
+		return domain.IndexSchema{}, err
+	}
 	var payload struct {
 		Keys map[string]map[string]json.RawMessage `json:"keys"`
 	}
-	err := b.runJSON(ctx, "get-index", []string{
+	err = b.runJSON(ctx, "get-index", []string{
 		"sls", "get-index", "--project", resource.Project, "--logstore", resource.LogStore,
-		"--endpoint", resource.Endpoint, "--log-level", "ERROR",
+		"--region", region, "--endpoint", endpoint, "--log-level", "ERROR",
 	}, &payload)
 	if err != nil {
 		return domain.IndexSchema{}, fmt.Errorf("get index for resource %q: %w", resource.ID, err)
@@ -238,9 +261,14 @@ func (b *Backend) getLogs(ctx context.Context, query domain.ApprovedQuery, opera
 	response := queryResponse{ExecutionID: executionID}
 	var payload struct {
 		Logs              []map[string]json.RawMessage `json:"logs"`
+		Data              []map[string]json.RawMessage `json:"data"`
 		Meta              map[string]json.RawMessage   `json:"meta"`
 		RequestID         string                       `json:"requestId"`
 		ProviderRequestID string                       `json:"request_id"`
+	}
+	endpoint, region, err := cliLocation(query.Resource.Endpoint)
+	if err != nil {
+		return response, err
 	}
 	err = b.runJSON(ctx, operation, []string{
 		"sls", "get-logs-v2",
@@ -251,7 +279,8 @@ func (b *Backend) getLogs(ctx context.Context, query domain.ApprovedQuery, opera
 		"--query", expression,
 		"--line", "0",
 		"--is-accurate", "true",
-		"--endpoint", query.Resource.Endpoint,
+		"--region", region,
+		"--endpoint", endpoint,
 		"--log-level", "ERROR",
 	}, &payload)
 	if err != nil {
@@ -268,8 +297,15 @@ func (b *Backend) getLogs(ctx context.Context, query domain.ApprovedQuery, opera
 	response.ElapsedMillisecond, elapsedOK = firstInt64(payload.Meta, "elapsedMillisecond", "elapsed_millisecond")
 	response.UsageKnown = rowsOK && bytesOK && elapsedOK
 	response.NanosecondOrdered, response.NanosecondOrderKnown = firstBool(payload.Meta, "isAccurate", "is_accurate")
-	response.Logs = make([]map[string]string, 0, len(payload.Logs))
-	for rowIndex, rawRow := range payload.Logs {
+	if len(payload.Logs) > 0 && len(payload.Data) > 0 {
+		return response, errors.New("SLS CLI returned both logs and data rows")
+	}
+	rows := payload.Data
+	if len(rows) == 0 {
+		rows = payload.Logs
+	}
+	response.Logs = make([]map[string]string, 0, len(rows))
+	for rowIndex, rawRow := range rows {
 		row := make(map[string]string, len(rawRow))
 		for key, rawValue := range rawRow {
 			value, err := scalarString(rawValue)
@@ -398,35 +434,30 @@ var safeFieldName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 var (
 	safeProjectName  = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$`)
-	safeLogStoreName = regexp.MustCompile(`^[a-z][a-z0-9_-]{1,61}[a-z0-9]$`)
+	safeLogStoreName = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{1,61}[a-z0-9]$`)
 )
 
 func validateApprovedQuery(query domain.ApprovedQuery) error {
-	if query.TemplateID != domain.ErrorAnalysisTemplateID {
+	contract, ok := domain.QueryTemplateByID(query.TemplateID)
+	if !ok {
 		return fmt.Errorf("unsupported approved template %q", query.TemplateID)
 	}
-	if query.Resource.TemplateVersion != domain.ErrorAnalysisTemplateVersion {
+	if query.Resource.TemplateVersion != contract.Version {
 		return fmt.Errorf("unsupported resource template version %q", query.Resource.TemplateVersion)
 	}
 	if err := validateResourceLocation(query.Resource); err != nil {
 		return err
 	}
-	if !query.EndTime.After(query.StartTime) || query.MaxRows < int64(domain.ErrorAnalysisResultRows) || query.MaxAPICalls < domain.ErrorAnalysisAPICalls {
+	if !query.EndTime.After(query.StartTime) || query.MaxRows < contract.ResultRows || query.MaxAPICalls < contract.APICalls {
 		return errors.New("approved query has invalid time or limit values")
 	}
-	if query.PatternLimit != domain.ErrorAnalysisPatternLimit || query.InstanceLimit != domain.ErrorAnalysisInstanceLimit || query.ExpectedAPICalls != domain.ErrorAnalysisAPICalls {
-		return errors.New("approved query does not match the fixed analysis template")
+	if query.PatternLimit != contract.PatternLimit || query.InstanceLimit != contract.InstanceLimit || query.ExpectedAPICalls != contract.APICalls {
+		return errors.New("approved query does not match the fixed template")
 	}
 	return nil
 }
 
 func compileQueries(resource domain.LogResource) (string, string, string, error) {
-	if !safeFieldName.MatchString(resource.ErrorField) {
-		return "", "", "", fmt.Errorf("unsafe error field %q", resource.ErrorField)
-	}
-	if !safeFieldName.MatchString(resource.InstanceField) {
-		return "", "", "", fmt.Errorf("unsafe instance field %q", resource.InstanceField)
-	}
 	selectors := append(append([]domain.LogSelector(nil), resource.Selectors...), resource.ErrorSelector)
 	sort.Slice(selectors, func(i, j int) bool { return selectors[i].Field < selectors[j].Field })
 	filters := make([]string, 0, len(selectors))
@@ -441,6 +472,15 @@ func compileQueries(resource domain.LogResource) (string, string, string, error)
 		filter = strings.Join(filters, " AND ")
 	}
 	countQuery := filter + " | SELECT count(*) AS error_count LIMIT 1"
+	if resource.TemplateVersion == domain.ErrorCountTemplateVersion {
+		return countQuery, "", "", nil
+	}
+	if !safeFieldName.MatchString(resource.ErrorField) {
+		return "", "", "", fmt.Errorf("unsafe error field %q", resource.ErrorField)
+	}
+	if !safeFieldName.MatchString(resource.InstanceField) {
+		return "", "", "", fmt.Errorf("unsafe instance field %q", resource.InstanceField)
+	}
 	patternExpression := bucketExpression(resource.ErrorField)
 	patternQuery := fmt.Sprintf("%s | SELECT %s AS bucket_key, count(*) AS bucket_count GROUP BY %s ORDER BY bucket_count DESC, bucket_key ASC LIMIT %d", filter, patternExpression, patternExpression, domain.ErrorAnalysisPatternLimit)
 	instanceExpression := bucketExpression(resource.InstanceField)
@@ -500,6 +540,32 @@ func mapAnalysis(countBefore, patterns, instances, countAfter queryResponse) (do
 		result.TopErrorCount = errorPatterns[0].Count
 	}
 	if !stable {
+		result.Progress = "Incomplete"
+		result.IncompleteReason = "visible error count changed during aggregate queries"
+	}
+	return result, nil
+}
+
+func mapCount(countBefore, countAfter queryResponse) (domain.QueryResult, error) {
+	result, err := combineResponses(countBefore, countAfter)
+	if err != nil {
+		return result, err
+	}
+	if len(countBefore.Logs) != 1 || len(countAfter.Logs) != 1 {
+		return result, errors.New("error-count query must return exactly one row")
+	}
+	before, err := parseCount(countBefore.Logs[0], "error_count")
+	if err != nil {
+		return result, fmt.Errorf("parse initial error-count response: %w", err)
+	}
+	after, err := parseCount(countAfter.Logs[0], "error_count")
+	if err != nil {
+		return result, fmt.Errorf("parse verification error-count response: %w", err)
+	}
+	result.ErrorCount = max(before, after)
+	result.PatternLimit = 0
+	result.InstanceLimit = 0
+	if before != after {
 		result.Progress = "Incomplete"
 		result.IncompleteReason = "visible error count changed during aggregate queries"
 	}
@@ -604,14 +670,33 @@ func validateResourceLocation(resource domain.LogResource) error {
 	if !safeProjectName.MatchString(resource.Project) || !safeLogStoreName.MatchString(resource.LogStore) {
 		return errors.New("SLS Project or LogStore name is invalid")
 	}
-	parsed, err := url.Parse(resource.Endpoint)
+	_, _, err := cliLocation(resource.Endpoint)
+	return err
+}
+
+var safeRegionName = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)+$`)
+
+// cliLocation keeps the catalog contract as an absolute HTTPS URL while
+// passing a region and host to aliyun-cli-sls. The plugin prepends the Project
+// subdomain itself and treats a value containing https:// as part of the host.
+func cliLocation(raw string) (string, string, error) {
+	parsed, err := url.Parse(raw)
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
-		return errors.New("SLS endpoint must be an absolute HTTPS URL")
+		return "", "", errors.New("SLS endpoint must be an absolute HTTPS URL")
 	}
 	if parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
-		return errors.New("SLS endpoint must contain only an HTTPS scheme and host")
+		return "", "", errors.New("SLS endpoint must contain only an HTTPS scheme and host")
 	}
-	return nil
+	const suffix = ".log.aliyuncs.com"
+	region := strings.TrimSuffix(parsed.Hostname(), suffix)
+	if region == parsed.Hostname() {
+		return "", "", errors.New("SLS endpoint must use an Alibaba Cloud Log Service host")
+	}
+	region = strings.TrimSuffix(strings.TrimSuffix(region, "-internal"), "-intranet")
+	if !safeRegionName.MatchString(region) {
+		return "", "", errors.New("SLS endpoint does not contain a safe region")
+	}
+	return parsed.Host, region, nil
 }
 
 func validateResourceSchema(resource domain.LogResource, schema domain.IndexSchema) error {
@@ -620,6 +705,13 @@ func validateResourceSchema(resource domain.LogResource, schema domain.IndexSche
 		if _, exists := schema.Fields[selector.Field]; !exists {
 			return fmt.Errorf("resource %q selector field %q is not indexed", resource.ID, selector.Field)
 		}
+	}
+	contract, ok := domain.QueryTemplateByVersion(resource.TemplateVersion)
+	if !ok {
+		return fmt.Errorf("resource %q uses unsupported template version", resource.ID)
+	}
+	if !contract.Dimensional {
+		return nil
 	}
 	for name, label := range map[string]string{resource.ErrorField: "error", resource.InstanceField: "instance"} {
 		field, exists := schema.Fields[name]

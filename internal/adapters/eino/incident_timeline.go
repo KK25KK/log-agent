@@ -23,6 +23,10 @@ const (
 )
 
 func enrichIncidentTimeline(ctx context.Context, output graphOutput, source ports.OperationalSignalSource) (graphOutput, error) {
+	if len(output.Evidence) > 0 && output.Evidence[0].TemplateID == domain.ErrorCountTemplateID {
+		output.Report.IncidentTimeline = newIncidentTimeline(domain.TimelineInconclusive, []string{"dimensional_event_evidence"})
+		return output, nil
+	}
 	if source == nil {
 		return output, nil
 	}

@@ -216,6 +216,12 @@ func ValidateEngineOutput(investigationID string, evidence []domain.Evidence, re
 			if err := validateAnalysisEvidence(item); err != nil {
 				return fmt.Errorf("engine returned invalid analysis evidence %q: %w", item.ID, err)
 			}
+		} else if item.TemplateID == domain.ErrorCountTemplateID {
+			if err := validateCountEvidence(item); err != nil {
+				return fmt.Errorf("engine returned invalid count-only evidence %q: %w", item.ID, err)
+			}
+		} else if item.TemplateID != "" {
+			return fmt.Errorf("engine returned unknown evidence template %q", item.TemplateID)
 		}
 		if _, duplicate := knownEvidence[item.ID]; duplicate {
 			return fmt.Errorf("engine returned duplicate evidence ID %q", item.ID)
@@ -732,6 +738,16 @@ func validateAnalysisEvidence(item domain.Evidence) error {
 	}
 	if item.Complete && !item.Truncated && (item.ErrorPatternsExhaustive != (patternTotal == item.ErrorCount) || item.InstancesExhaustive != (instanceTotal == item.ErrorCount)) {
 		return errors.New("complete aggregate exhaustiveness is inconsistent")
+	}
+	return nil
+}
+
+func validateCountEvidence(item domain.Evidence) error {
+	if item.APICalls != domain.ErrorCountAPICalls || item.PatternLimit != 0 || item.InstanceLimit != 0 {
+		return errors.New("count-only call or bucket limits do not match")
+	}
+	if item.TopError != "" || item.TopErrorCount != 0 || len(item.ErrorPatterns) != 0 || len(item.Instances) != 0 || item.ErrorPatternsExhaustive || item.InstancesExhaustive {
+		return errors.New("count-only evidence contains dimensional claims")
 	}
 	return nil
 }

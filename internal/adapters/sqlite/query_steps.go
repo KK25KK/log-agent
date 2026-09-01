@@ -342,7 +342,7 @@ func decodeStoredQueryResult(payload []byte, outputHash string) (domain.QueryRes
 
 func validateCheckpointResult(result domain.QueryResult) error {
 	if !boundedString(result.QueryID, 1, 4096) || !validHash(result.QuerySpecHash) ||
-		!boundedString(result.ResourceID, 1, 256) || result.TemplateID != domain.ErrorAnalysisTemplateID ||
+		!boundedString(result.ResourceID, 1, 256) ||
 		!boundedString(result.TemplateVersion, 1, 256) || !boundedString(result.SchemaFingerprint, 1, 256) ||
 		!boundedString(result.PolicyVersion, 1, 256) || !validHash(result.GovernanceFingerprint) ||
 		!boundedString(result.Progress, 1, 128) || !boundedString(result.IncompleteReason, 0, 2048) {
@@ -352,10 +352,17 @@ func validateCheckpointResult(result domain.QueryResult) error {
 		result.ErrorCount < 0 || result.TopErrorCount < 0 || result.TopErrorCount > result.ErrorCount {
 		return errors.New("query result counters are invalid")
 	}
-	if result.APICalls != domain.ErrorAnalysisAPICalls ||
-		result.PatternLimit != domain.ErrorAnalysisPatternLimit ||
-		result.InstanceLimit != domain.ErrorAnalysisInstanceLimit {
+	contract, ok := domain.QueryTemplateByID(result.TemplateID)
+	if !ok || result.APICalls != contract.APICalls ||
+		result.PatternLimit != contract.PatternLimit ||
+		result.InstanceLimit != contract.InstanceLimit {
 		return errors.New("query result fixed limits are invalid")
+	}
+	if !contract.Dimensional {
+		if result.TopError != "" || result.TopErrorCount != 0 || len(result.ErrorPatterns) != 0 || len(result.Instances) != 0 || result.ErrorPatternsExhaustive || result.InstancesExhaustive {
+			return errors.New("count-only query result contains dimensional evidence")
+		}
+		return validateStoredCheckpointCompletion(result)
 	}
 	patternTotal, err := validateCheckpointBuckets(result.ErrorPatterns, result.PatternLimit, result.ErrorCount)
 	if err != nil {
@@ -384,6 +391,10 @@ func validateCheckpointResult(result domain.QueryResult) error {
 	} else if result.TopError != result.ErrorPatterns[0].Label || result.TopErrorCount != result.ErrorPatterns[0].Count {
 		return errors.New("top error does not match the first bucket")
 	}
+	return validateStoredCheckpointCompletion(result)
+}
+
+func validateStoredCheckpointCompletion(result domain.QueryResult) error {
 	if result.Complete {
 		if result.Truncated || !result.UsageKnown || !strings.EqualFold(result.Progress, "complete") || result.IncompleteReason != "" {
 			return errors.New("complete result markers are inconsistent")

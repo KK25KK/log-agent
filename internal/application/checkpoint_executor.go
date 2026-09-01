@@ -143,8 +143,11 @@ func validateCheckpointScope(job domain.Job, spec domain.QuerySpec) (string, err
 	if spec.Service != job.Request.Service || spec.Environment != job.Request.Environment || spec.Requester != job.Request.Requester {
 		return "", errors.New("query checkpoint scope does not match the claimed job request")
 	}
-	if spec.TemplateID != domain.ErrorAnalysisTemplateID {
-		return "", errors.New("query checkpoint template is not the fixed error-analysis template")
+	if spec.TemplateID != domain.EffectiveQueryTemplateID(job.Request.TemplateID) {
+		return "", errors.New("query checkpoint template does not match the job request")
+	}
+	if _, ok := domain.QueryTemplateByID(spec.TemplateID); !ok {
+		return "", errors.New("query checkpoint template is not registered")
 	}
 	duration := job.Request.EndTime.Sub(job.Request.StartTime)
 	if duration <= 0 {
@@ -198,8 +201,15 @@ func validateCheckpointResult(spec domain.QuerySpec, governanceFingerprint strin
 		result.ErrorCount < 0 || result.TopErrorCount < 0 || result.TopErrorCount > result.ErrorCount {
 		return errors.New("cached query counts are inconsistent")
 	}
-	if result.APICalls != domain.ErrorAnalysisAPICalls || result.PatternLimit != domain.ErrorAnalysisPatternLimit || result.InstanceLimit != domain.ErrorAnalysisInstanceLimit {
+	contract, ok := domain.QueryTemplateByID(result.TemplateID)
+	if !ok || result.APICalls != contract.APICalls || result.PatternLimit != contract.PatternLimit || result.InstanceLimit != contract.InstanceLimit {
 		return errors.New("cached query fixed-template limits are inconsistent")
+	}
+	if !contract.Dimensional {
+		if result.TopError != "" || result.TopErrorCount != 0 || len(result.ErrorPatterns) != 0 || len(result.Instances) != 0 || result.ErrorPatternsExhaustive || result.InstancesExhaustive {
+			return errors.New("cached count-only query contains dimensional evidence")
+		}
+		return validateCheckpointCompletion(result)
 	}
 	patternTotal, err := validateCheckpointBuckets(result.ErrorPatterns, result.PatternLimit, result.ErrorCount)
 	if err != nil {
@@ -225,6 +235,10 @@ func validateCheckpointResult(spec domain.QuerySpec, governanceFingerprint strin
 	} else if result.TopError != result.ErrorPatterns[0].Label || result.TopErrorCount != result.ErrorPatterns[0].Count {
 		return errors.New("cached top error does not match the first pattern")
 	}
+	return validateCheckpointCompletion(result)
+}
+
+func validateCheckpointCompletion(result domain.QueryResult) error {
 	if result.Complete {
 		if result.Truncated || !result.UsageKnown || !strings.EqualFold(result.Progress, "complete") || result.IncompleteReason != "" {
 			return errors.New("cached complete result markers are inconsistent")

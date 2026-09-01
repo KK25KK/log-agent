@@ -77,6 +77,33 @@ func TestEvidenceViewHasBackAndFollowUpActions(t *testing.T) {
 	}
 }
 
+func TestEvidenceCardRendersCountOnlyScopeWithoutFakeDimensions(t *testing.T) {
+	item := cardInvestigation(domain.StatusSucceeded)
+	for index := range item.Report.Evidence {
+		item.Report.Evidence[index].TemplateID = domain.ErrorCountTemplateID
+		item.Report.Evidence[index].TopError = ""
+		item.Report.Evidence[index].TopErrorCount = 0
+		item.Report.Evidence[index].ErrorPatterns = nil
+		item.Report.Evidence[index].Instances = nil
+	}
+	card, err := renderActionCard(domain.ActionResult{View: domain.ActionViewEvidenceCard, Investigation: item})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := marshalCard(card)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"分析范围：仅错误计数", "错误类型：本模板不适用", "实例分布：本模板不适用"} {
+		if !strings.Contains(payload, expected) {
+			t.Fatalf("count-only card lacks %q: %s", expected, payload)
+		}
+	}
+	if strings.Contains(payload, "Top 错误") || strings.Contains(payload, `payment\_timeout`) || strings.Contains(payload, "pod-1") {
+		t.Fatalf("count-only card leaked dimensions: %s", payload)
+	}
+}
+
 func TestReportCardRendersGovernedAISummaryAndEscapesText(t *testing.T) {
 	item := cardInvestigation(domain.StatusSucceeded)
 	item.Report.Summary = &domain.ReportSummary{

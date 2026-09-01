@@ -124,8 +124,8 @@ func (executor *gatedMockExecutor) Execute(ctx context.Context, spec domain.Quer
 	}
 }
 
-func runMockE2E() error {
-	result, err := executeMockE2E(context.Background())
+func runMockE2E(templateID string) error {
+	result, err := executeMockE2EWithTemplate(context.Background(), templateID)
 	if err != nil {
 		return err
 	}
@@ -138,6 +138,14 @@ func runMockE2E() error {
 }
 
 func executeMockE2E(ctx context.Context) (mockE2EResult, error) {
+	return executeMockE2EWithTemplate(ctx, domain.ErrorAnalysisTemplateID)
+}
+
+func executeMockE2EWithTemplate(ctx context.Context, templateID string) (mockE2EResult, error) {
+	contract, ok := domain.QueryTemplateByID(templateID)
+	if !ok {
+		return mockE2EResult{}, fmt.Errorf("unsupported mock E2E template %q", templateID)
+	}
 	store, err := sqlite.Open(":memory:")
 	if err != nil {
 		return mockE2EResult{}, err
@@ -156,7 +164,7 @@ func executeMockE2E(ctx context.Context) (mockE2EResult, error) {
 		MessageID: "mock-feishu-message-001",
 		ChatID:    "mock-feishu-chat",
 		UserID:    "mock-feishu-user",
-		Text:      "/investigate order-service prod 30m",
+		Text:      "/investigate order-service prod 30m " + templateID,
 		CreatedAt: messageAt,
 	}
 	investigationID, firstCreated, err := receiver.Receive(ctx, message)
@@ -187,11 +195,11 @@ func executeMockE2E(ctx context.Context) (mockE2EResult, error) {
 		return mockE2EResult{}, errors.New("deliver mock Feishu receipt: no runnable delivery")
 	}
 
-	mockBackend, err := slsmock.NewBackend(requestEnd.Add(-30*time.Minute), requestEnd)
+	mockBackend, err := slsmock.NewBackendForTemplate(requestEnd.Add(-30*time.Minute), requestEnd, templateID)
 	if err != nil {
 		return mockE2EResult{}, err
 	}
-	mockCatalog := slsmock.NewCatalog(mockPrincipal)
+	mockCatalog := slsmock.NewCatalogForTemplate(mockPrincipal, templateID)
 	queryGateway, err := queryapp.NewGateway(
 		mockCatalog,
 		mockBackend,
@@ -200,8 +208,8 @@ func executeMockE2E(ctx context.Context) (mockE2EResult, error) {
 			MaxWindow:         2 * time.Hour,
 			IngestionGrace:    domain.DefaultIngestionGrace,
 			Timeout:           5 * time.Second,
-			MaxRows:           domain.ErrorAnalysisResultRows,
-			MaxAPICalls:       domain.ErrorAnalysisAPICalls,
+			MaxRows:           contract.ResultRows,
+			MaxAPICalls:       contract.APICalls,
 			MaxProcessedBytes: 1 << 20,
 			MaxConcurrent:     1,
 			SchemaTTL:         time.Minute,
@@ -352,18 +360,26 @@ func executeMockE2E(ctx context.Context) (mockE2EResult, error) {
 	if investigation.Report.Summary == nil || investigation.Report.Summary.Mode != domain.SummaryModeMock || investigation.Report.Summary.Status != domain.SummaryGenerated {
 		return mockE2EResult{}, fmt.Errorf("mock investigation is missing its governed summary: %#v", investigation.Report.Summary)
 	}
-	if investigation.Report.IncidentTimeline == nil || investigation.Report.IncidentTimeline.Status != domain.TimelineComplete {
+	wantTimelineStatus := domain.TimelineComplete
+	wantRunbookStatus := domain.RunbookGuidanceComplete
+	wantSourceCalls := 1
+	if templateID == domain.ErrorCountTemplateID {
+		wantTimelineStatus = domain.TimelineInconclusive
+		wantRunbookStatus = domain.RunbookGuidanceInconclusive
+		wantSourceCalls = 0
+	}
+	if investigation.Report.IncidentTimeline == nil || investigation.Report.IncidentTimeline.Status != wantTimelineStatus {
 		return mockE2EResult{}, fmt.Errorf("mock investigation is missing its incident timeline: %#v", investigation.Report.IncidentTimeline)
 	}
-	if investigation.Report.RunbookGuidance == nil || investigation.Report.RunbookGuidance.Status != domain.RunbookGuidanceComplete {
+	if investigation.Report.RunbookGuidance == nil || investigation.Report.RunbookGuidance.Status != wantRunbookStatus {
 		return mockE2EResult{}, fmt.Errorf("mock investigation is missing governed runbook guidance: %#v", investigation.Report.RunbookGuidance)
 	}
 	runbookStats := runbookSource.Stats()
-	if runbookStats.LookupCalls != 1 {
+	if runbookStats.LookupCalls != wantSourceCalls {
 		return mockE2EResult{}, fmt.Errorf("unexpected mock runbook activity %#v", runbookStats)
 	}
 	operationalStats := operationalSource.Stats()
-	if operationalStats.ListCalls != 1 {
+	if operationalStats.ListCalls != wantSourceCalls {
 		return mockE2EResult{}, fmt.Errorf("unexpected mock operational signal activity %#v", operationalStats)
 	}
 
@@ -384,7 +400,7 @@ func executeMockE2E(ctx context.Context) (mockE2EResult, error) {
 		return mockE2EResult{}, fmt.Errorf("unexpected mock Feishu lifecycle: %#v", deliveries)
 	}
 	backendStats := mockBackend.Stats()
-	if backendStats.SchemaCalls != 1 || backendStats.ExecuteCalls != 2 || backendStats.ProviderAPICalls != 2*domain.ErrorAnalysisAPICalls {
+	if backendStats.SchemaCalls != 1 || backendStats.ExecuteCalls != 2 || backendStats.ProviderAPICalls != 2*contract.APICalls {
 		return mockE2EResult{}, fmt.Errorf("unexpected mock SLS backend activity %#v", backendStats)
 	}
 	if providerCalls != backendStats.ProviderAPICalls {
@@ -425,7 +441,7 @@ func executeMockE2E(ctx context.Context) (mockE2EResult, error) {
 	}
 
 	return mockE2EResult{
-		Scenario: "feishu_to_sls_investigation_full_mock",
+		Scenario: "feishu_to_sls_investigation_full_mock_" + templateID,
 		Safety: mockSafetySummary{
 			ExternalNetworkCalls: 0,
 			CredentialsRequired:  false,

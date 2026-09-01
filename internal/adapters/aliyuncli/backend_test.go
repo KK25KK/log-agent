@@ -79,7 +79,7 @@ func TestBackendExecutesOnlyFixedAggregateCLIQueries(t *testing.T) {
 		if args[0] != "sls" || args[1] != "get-logs-v2" || argument(args, "--project") != "project" || argument(args, "--logstore") != "logstore" {
 			t.Fatalf("unexpected CLI arguments: %#v", args)
 		}
-		if argument(args, "--endpoint") != "https://cn-hangzhou.log.aliyuncs.com" || argument(args, "--is-accurate") != "true" || argument(args, "--line") != "0" {
+		if argument(args, "--endpoint") != "cn-hangzhou.log.aliyuncs.com" || argument(args, "--region") != "cn-hangzhou" || argument(args, "--is-accurate") != "true" || argument(args, "--line") != "0" {
 			t.Fatalf("missing fixed CLI guardrails: %#v", args)
 		}
 	}
@@ -89,6 +89,52 @@ func TestBackendExecutesOnlyFixedAggregateCLIQueries(t *testing.T) {
 	}
 	if argument(runner.args[3], "--query") != argument(runner.args[0], "--query") {
 		t.Fatal("verification query did not repeat initial count")
+	}
+}
+
+func TestBackendExecutesCountOnlyTemplateWithoutDimensionQueries(t *testing.T) {
+	runner := &fakeRunner{outputs: [][]byte{
+		queryOutput(`[{"error_count":"120"}]`),
+		queryOutput(`[{"error_count":"120"}]`),
+	}}
+	query := testApprovedQuery()
+	query.TemplateID = domain.ErrorCountTemplateID
+	query.Resource.TemplateVersion = domain.ErrorCountTemplateVersion
+	query.Resource.ErrorField = ""
+	query.Resource.InstanceField = ""
+	query.MaxRows = domain.ErrorCountResultRows
+	query.MaxAPICalls = domain.ErrorCountAPICalls
+	query.PatternLimit = 0
+	query.InstanceLimit = 0
+	query.ExpectedAPICalls = domain.ErrorCountAPICalls
+	result, err := testBackend(runner).Execute(context.Background(), query)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runner.args) != 2 || result.APICalls != 2 || result.ErrorCount != 120 {
+		t.Fatalf("unexpected count-only execution: calls=%d result=%#v", len(runner.args), result)
+	}
+	if result.TopError != "" || len(result.ErrorPatterns) != 0 || len(result.Instances) != 0 || result.PatternLimit != 0 || result.InstanceLimit != 0 {
+		t.Fatalf("count-only result leaked dimensions: %#v", result)
+	}
+	for _, args := range runner.args {
+		queryText := argument(args, "--query")
+		if strings.Contains(queryText, "GROUP BY") || strings.Contains(queryText, "msg") {
+			t.Fatalf("count-only template compiled unsafe query: %s", queryText)
+		}
+	}
+}
+
+func TestMapCountMarksChangingBoundaryIncomplete(t *testing.T) {
+	result, err := mapCount(
+		queryResponse{ExecutionID: "count-before", Logs: []map[string]string{{"error_count": "10"}}, Progress: "Complete", UsageKnown: true},
+		queryResponse{ExecutionID: "count-after", Logs: []map[string]string{{"error_count": "11"}}, Progress: "Complete", UsageKnown: true},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Progress != "Incomplete" || result.ErrorCount != 11 || result.IncompleteReason == "" {
+		t.Fatalf("changing count was not failed closed: %#v", result)
 	}
 }
 
@@ -121,6 +167,32 @@ func TestBackendPreservesProviderIDOnlyWhenCLIExposesIt(t *testing.T) {
 	}
 }
 
+func TestBackendAcceptsRealCLIDataRows(t *testing.T) {
+	runner := &fakeRunner{outputs: [][]byte{
+		queryDataOutput(`[{"__source__":"","__time__":"1788247742","error_count":"1"}]`),
+		queryDataOutput(`[{"bucket_key":"timeout","bucket_count":"1"}]`),
+		queryDataOutput(`[{"bucket_key":"pod-a","bucket_count":"1"}]`),
+		queryDataOutput(`[{"error_count":"1"}]`),
+	}}
+	result, err := testBackend(runner).Execute(context.Background(), testApprovedQuery())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ErrorCount != 1 || result.TopError != "timeout" || result.ProcessedRows != 400 {
+		t.Fatalf("real CLI data rows were not normalized: %#v", result)
+	}
+}
+
+func TestBackendRejectsAmbiguousCLIResultRows(t *testing.T) {
+	runner := &fakeRunner{outputs: [][]byte{
+		[]byte(`{"logs":[{"error_count":"1"}],"data":[{"error_count":"1"}],"meta":{"progress":"Complete","processedRows":1,"processedBytes":0,"elapsedMillisecond":1,"isAccurate":true}}`),
+	}}
+	result, err := testBackend(runner).Execute(context.Background(), testApprovedQuery())
+	if err == nil || !strings.Contains(err.Error(), "both logs and data") {
+		t.Fatalf("want ambiguous row container error, got result=%#v err=%v", result, err)
+	}
+}
+
 func TestBackendDowngradesWhenVisibleCountChanges(t *testing.T) {
 	runner := &fakeRunner{outputs: [][]byte{
 		queryOutput(`[{"error_count":"1"}]`),
@@ -146,6 +218,28 @@ func TestBackendRejectsUnsafeEndpointBeforeCLICall(t *testing.T) {
 	}
 	if len(runner.args) != 0 {
 		t.Fatalf("CLI called with unsafe endpoint: %#v", runner.args)
+	}
+}
+
+func TestBackendAcceptsNumericLogStoreNameAndRejectsUnsafeName(t *testing.T) {
+	resource := testApprovedQuery().Resource
+	resource.LogStore = "2016-hyper-dam-file"
+	if err := validateResourceLocation(resource); err != nil {
+		t.Fatalf("numeric LogStore should be valid: %v", err)
+	}
+	resource.LogStore = "2016-hyper/dam"
+	if err := validateResourceLocation(resource); err == nil {
+		t.Fatal("unsafe LogStore name should be rejected")
+	}
+}
+
+func TestCLILocationSupportsInternalEndpoint(t *testing.T) {
+	host, region, err := cliLocation("https://cn-shanghai-internal.log.aliyuncs.com")
+	if err != nil || host != "cn-shanghai-internal.log.aliyuncs.com" || region != "cn-shanghai" {
+		t.Fatalf("unexpected CLI location: host=%q region=%q err=%v", host, region, err)
+	}
+	if _, _, err := cliLocation("https://logs.example.com"); err == nil {
+		t.Fatal("non-SLS endpoint should be rejected")
 	}
 }
 
@@ -237,6 +331,10 @@ func queryOutput(logs string) []byte {
 
 func queryOutputWithRequestID(logs, requestID string) []byte {
 	return []byte(`{"logs":` + logs + `,"meta":{"progress":"Complete","processed_rows":"100","processed_bytes":"1024","elapsed_millisecond":"5","is_accurate":1},"requestId":"` + requestID + `"}`)
+}
+
+func queryDataOutput(data string) []byte {
+	return []byte(`{"data":` + data + `,"meta":{"progress":"Complete","processedRows":100,"processedBytes":1024,"elapsedMillisecond":5,"isAccurate":true}}`)
 }
 
 func argument(args []string, name string) string {

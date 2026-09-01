@@ -4,6 +4,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"logagent/internal/domain"
 )
 
 func TestParseInvestigation(t *testing.T) {
@@ -15,9 +17,25 @@ func TestParseInvestigation(t *testing.T) {
 	if request.Service != "order-service" || request.Environment != "prod" {
 		t.Fatalf("unexpected scope: %#v", request)
 	}
+	if request.TemplateID != domain.ErrorAnalysisTemplateID {
+		t.Fatalf("unexpected default template: %q", request.TemplateID)
+	}
 	wantEnd := time.Date(2026, 8, 18, 10, 30, 35, 0, time.UTC)
 	if !request.EndTime.Equal(wantEnd) || !request.StartTime.Equal(wantEnd.Add(-30*time.Minute)) {
 		t.Fatalf("unexpected time range: %#v", request)
+	}
+}
+
+func TestParseInvestigationAcceptsCountTemplate(t *testing.T) {
+	request, err := ParseInvestigation("/investigate dam-server test 10m error_count_v1", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.TemplateID != domain.ErrorCountTemplateID {
+		t.Fatalf("unexpected template: %q", request.TemplateID)
+	}
+	if _, err := ParseInvestigation("/investigate dam-server test 10m arbitrary", time.Now()); !errors.Is(err, ErrUsage) {
+		t.Fatalf("unknown template should fail with usage, got %v", err)
 	}
 }
 

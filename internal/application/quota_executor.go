@@ -46,6 +46,10 @@ func (e *QuotaExecutor) ResolveQueryGovernance(ctx context.Context, spec domain.
 }
 
 func (e *QuotaExecutor) Execute(ctx context.Context, spec domain.QuerySpec) (domain.QueryResult, error) {
+	contract, ok := domain.QueryTemplateByID(spec.TemplateID)
+	if !ok {
+		return domain.QueryResult{}, ports.ErrQueryDenied
+	}
 	governance, err := e.delegate.ResolveQueryGovernance(ctx, spec)
 	if err != nil {
 		return domain.QueryResult{}, err
@@ -62,7 +66,7 @@ func (e *QuotaExecutor) Execute(ctx context.Context, spec domain.QuerySpec) (dom
 		UsageKey: usageKey, TenantID: TenantQuotaID(spec.Requester),
 		InvestigationID: spec.InvestigationID, QueryName: spec.Name,
 		WindowStart: windowStart, WindowEnd: windowStart.Add(e.policy.Window),
-		ReservedAPICalls: int64(domain.ErrorAnalysisAPICalls),
+		ReservedAPICalls: int64(contract.APICalls),
 		ReservedBytes:    e.policy.ReservedBytesPerObservation,
 		Status:           domain.QuotaReserved, CreatedAt: now, UpdatedAt: now,
 	}

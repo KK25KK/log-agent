@@ -35,7 +35,10 @@ Mock 飞书消息
 ```powershell
 Set-Location "D:\日志agent"
 go run ./cmd/logagent mock-e2e
+go run ./cmd/logagent mock-e2e error_count_v1
 ```
+
+第二条命令验证计数型轻量链路：current/baseline 共四次 Provider 调用代理，Mock LLM 与 Mock 飞书照常工作；错误维度、实例维度、变更源、指标/Trace 源和 Runbook 源均不参与，不能据此声明根因能力。
 
 不需要设置 `.env`，也不要填写真实 `FEISHU_APP_SECRET`、AccessKey 或 STS Token。
 

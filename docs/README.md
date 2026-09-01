@@ -18,6 +18,9 @@
 | [`llm-summary-evaluation-gate.md`](llm-summary-evaluation-gate.md) | LLM 摘要的合成安全场景、独立门禁与原评测/回放兼容边界 | 摘要评测数据集、指标、门禁或 CLI 变化时同步更新 |
 | [`llm-summary-quota.md`](llm-summary-quota.md) | LLM 摘要调用前的租户请求/Token 预留、结算、熔断与 Mock 验收 | 摘要额度状态机、配置、SQLite Schema 或生产边界变化时同步更新 |
 | [`m6-real-system-entry-guide.md`](m6-real-system-entry-guide.md) | 真实系统接入地图：SLS/飞书/存储/变更源/指标 Trace/企业 SOP 各真实入口与组装点 | 生产化接入前保持与启动组装、接口边界和内容治理一致 |
+| [`sls-cli-sts-migration.md`](sls-cli-sts-migration.md) | 阿里云 SLS 从 Go SDK 迁移到本机 CLI + STS Profile 的影响、安全合同和操作步骤 | CLI/Profile/查询协议或真实接入方式变化时同步更新 |
+| [`dam-single-logstore-pilot.md`](dam-single-logstore-pilot.md) | DAM 主 Logstore `error_count_v1` 轻量试点、真实连接证据、Mock 下游边界和验收步骤 | DAM 试点字段、模板、配置、实测结果或范围变化时同步更新 |
+| [`error-count-v1-implementation.md`](error-count-v1-implementation.md) | 计数型模板的逐层实现合同、兼容边界、Mock/真实验收命令与开发记录 | 模板合同、调用预算、下游降级或验收结果变化时同步更新 |
 | [`current-capabilities-and-real-integration-inventory.md`](current-capabilities-and-real-integration-inventory.md) | 当前功能、Mock 边界、真实系统职责、接入步骤和预期效果的统一盘点 | 阶段完成状态、外部适配器或生产接入方式变化时同步更新 |
 | [`oss-sre-agent-study-and-lightweight-adoption.md`](oss-sre-agent-study-and-lightweight-adoption.md) | OpenSRE、HolmesGPT、rca-agent、K8sGPT、RunLore 对比，以及本项目轻量借鉴决策 | 外部项目结论、当前能力边界或轻量演进决策变化时同步更新 |
 | [`../README.md`](../README.md) | 运行、配置和项目入口 | 必须与当前代码一致 |

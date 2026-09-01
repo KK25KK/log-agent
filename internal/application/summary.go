@@ -183,7 +183,7 @@ func attachFallbackSummary(report domain.Report, generatedAt time.Time) domain.R
 }
 
 func validateSummaryInput(input domain.SummaryInput) error {
-	if !safeSummaryIdentifier(input.Outcome, 1, 96) || len(input.Findings) == 0 || len(input.Findings) > maxSummaryFindings ||
+	if !safeSummaryIdentifier(input.Outcome, 1, 96) || !validSummaryScope(input.AnalysisScope) || len(input.Findings) == 0 || len(input.Findings) > maxSummaryFindings ||
 		len(input.Evidence) == 0 || len(input.Evidence) > maxSummaryEvidence || len(input.Recommendations) > maxSummaryRecommendations {
 		return errors.New("summary input envelope is invalid")
 	}
@@ -236,7 +236,15 @@ func validateSummaryInput(input domain.SummaryInput) error {
 }
 
 func BuildSummaryInput(report domain.Report) domain.SummaryInput {
-	input := domain.SummaryInput{Outcome: report.Outcome}
+	templateID := ""
+	if len(report.Evidence) > 0 {
+		templateID = domain.EffectiveQueryTemplateID(report.Evidence[0].TemplateID)
+	}
+	scope := "dimensional"
+	if templateID == domain.ErrorCountTemplateID {
+		scope = "count_only"
+	}
+	input := domain.SummaryInput{Outcome: report.Outcome, AnalysisScope: scope}
 	for index, finding := range report.Findings {
 		if index >= maxSummaryFindings {
 			break
@@ -278,6 +286,10 @@ func BuildSummaryInput(report domain.Report) domain.SummaryInput {
 		input.CauseAnalysis = cause
 	}
 	return input
+}
+
+func validSummaryScope(scope string) bool {
+	return scope == "dimensional" || scope == "count_only"
 }
 
 func resolveProviderSummary(report domain.Report, result domain.SummaryProviderResult, generatedAt time.Time) (domain.ReportSummary, error) {

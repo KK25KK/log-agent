@@ -8,6 +8,7 @@ import (
 )
 
 var allowedTimelineMissingInputs = map[string]struct{}{
+	"dimensional_event_evidence":          {},
 	"conclusive_error_spike":              {},
 	"complete_current_baseline_evidence":  {},
 	"governed_resource_identity":          {},
@@ -67,6 +68,13 @@ func validateIncidentTimeline(timeline *domain.IncidentTimeline, evidence map[st
 		}
 		return nil
 	}
+	if countOnlyEvidence(evidence) {
+		if timeline.Status != domain.TimelineInconclusive || !sameIDSet(timeline.MissingInputs, []string{"dimensional_event_evidence"}) ||
+			timeline.SourceVersion != "" || timeline.SourceComplete || timeline.SourceTruncated || len(timeline.Signals) != 0 || len(timeline.Items) != 0 {
+			return errors.New("count-only incident timeline must remain source-free and inconclusive")
+		}
+		return nil
+	}
 
 	current, baseline, err := causeObservationPair(evidence)
 	if err != nil {
@@ -117,6 +125,18 @@ func validateIncidentTimeline(timeline *domain.IncidentTimeline, evidence map[st
 		return errors.New("incident timeline item coverage is incomplete")
 	}
 	return validateTimelineItems(timeline.Items, signals, changes, []string{current.ID, baseline.ID})
+}
+
+func countOnlyEvidence(evidence map[string]domain.Evidence) bool {
+	if len(evidence) == 0 {
+		return false
+	}
+	for _, item := range evidence {
+		if item.TemplateID != domain.ErrorCountTemplateID {
+			return false
+		}
+	}
+	return true
 }
 
 func validateTimelineStatus(timeline *domain.IncidentTimeline) error {

@@ -477,7 +477,7 @@ func TestGatewayTreatsIsAccurateAsNanosecondOrderingMetadata(t *testing.T) {
 	}
 }
 
-func TestGatewayRequiresFixedAnalysisBudget(t *testing.T) {
+func TestGatewayEnforcesTemplateBudgetAtPreflight(t *testing.T) {
 	tests := []struct {
 		name   string
 		mutate func(*Budget)
@@ -489,10 +489,46 @@ func TestGatewayRequiresFixedAnalysisBudget(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			budget := testBudget()
 			test.mutate(&budget)
-			if _, err := NewGateway(fakeCatalog{}, validBackend(), &fakeAuditor{}, budget); err == nil {
-				t.Fatal("want fixed-template budget error")
+			gateway, err := NewGateway(fakeCatalog{resource: testResource(), allowed: true}, validBackend(), &fakeAuditor{}, budget)
+			if err != nil {
+				t.Fatalf("positive global budget should construct gateway: %v", err)
+			}
+			if _, err := gateway.Execute(context.Background(), testSpec()); !errors.Is(err, ports.ErrQueryBudgetExceeded) {
+				t.Fatalf("want template preflight budget error, got %v", err)
 			}
 		})
+	}
+}
+
+func TestGatewayApprovesCountOnlyTemplateWithSelectorSchema(t *testing.T) {
+	resource := testResource()
+	resource.TemplateVersion = domain.ErrorCountTemplateVersion
+	resource.ErrorField = ""
+	resource.InstanceField = ""
+	backend := validBackend()
+	backend.result.TemplateID = domain.ErrorCountTemplateID
+	backend.result.TemplateVersion = domain.ErrorCountTemplateVersion
+	backend.result.APICalls = domain.ErrorCountAPICalls
+	backend.result.ErrorPatterns = nil
+	backend.result.Instances = nil
+	backend.result.TopError = ""
+	backend.result.TopErrorCount = 0
+	backend.result.ErrorPatternsExhaustive = false
+	backend.result.InstancesExhaustive = false
+	backend.result.PatternLimit = 0
+	backend.result.InstanceLimit = 0
+	budget := testBudget()
+	budget.MaxRows = domain.ErrorCountResultRows
+	budget.MaxAPICalls = domain.ErrorCountAPICalls
+	gateway := newTestGateway(t, fakeCatalog{resource: resource, allowed: true}, backend, &fakeAuditor{}, budget)
+	spec := testSpec()
+	spec.TemplateID = domain.ErrorCountTemplateID
+	result, err := gateway.Execute(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.TemplateID != domain.ErrorCountTemplateID || result.APICalls != 2 || result.PatternLimit != 0 || result.InstanceLimit != 0 || len(result.ErrorPatterns) != 0 || len(result.Instances) != 0 {
+		t.Fatalf("unexpected count-only result: %#v", result)
 	}
 }
 

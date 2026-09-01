@@ -5,6 +5,8 @@ import "time"
 const (
 	ErrorAnalysisTemplateID      = "error_analysis_v2"
 	ErrorAnalysisTemplateVersion = "error-analysis-v2"
+	ErrorCountTemplateID         = "error_count_v1"
+	ErrorCountTemplateVersion    = "error-count-v1"
 
 	// ErrorSummaryTemplateID remains as a source-compatible alias while callers
 	// migrate to the M2 name. Both constants select the same fixed template; no
@@ -18,12 +20,71 @@ const (
 	// spanning multiple GetLogsV2 calls.
 	ErrorAnalysisAPICalls   = 4
 	ErrorAnalysisResultRows = 2 + ErrorAnalysisPatternLimit + ErrorAnalysisInstanceLimit
+	ErrorCountAPICalls      = 2
+	ErrorCountResultRows    = 2
 
 	// The real-time SLS index is typically queryable after about three seconds.
 	// M2 uses a larger configurable watermark and fails closed below this floor.
 	MinimumIngestionGrace = 3 * time.Second
 	DefaultIngestionGrace = 10 * time.Second
 )
+
+// QueryTemplateContract is the closed, versioned capability and budget contract
+// shared by the Catalog, Gateway, executors, and checkpoint validation.
+type QueryTemplateContract struct {
+	ID            string
+	Version       string
+	APICalls      int
+	ResultRows    int64
+	PatternLimit  int
+	InstanceLimit int
+	Dimensional   bool
+}
+
+var queryTemplateContracts = []QueryTemplateContract{
+	{
+		ID:            ErrorAnalysisTemplateID,
+		Version:       ErrorAnalysisTemplateVersion,
+		APICalls:      ErrorAnalysisAPICalls,
+		ResultRows:    ErrorAnalysisResultRows,
+		PatternLimit:  ErrorAnalysisPatternLimit,
+		InstanceLimit: ErrorAnalysisInstanceLimit,
+		Dimensional:   true,
+	},
+	{
+		ID:         ErrorCountTemplateID,
+		Version:    ErrorCountTemplateVersion,
+		APICalls:   ErrorCountAPICalls,
+		ResultRows: ErrorCountResultRows,
+	},
+}
+
+func QueryTemplateByID(id string) (QueryTemplateContract, bool) {
+	for _, contract := range queryTemplateContracts {
+		if contract.ID == id {
+			return contract, true
+		}
+	}
+	return QueryTemplateContract{}, false
+}
+
+func QueryTemplateByVersion(version string) (QueryTemplateContract, bool) {
+	for _, contract := range queryTemplateContracts {
+		if contract.Version == version {
+			return contract, true
+		}
+	}
+	return QueryTemplateContract{}, false
+}
+
+// EffectiveQueryTemplateID keeps persisted requests created before template
+// selection backward compatible.
+func EffectiveQueryTemplateID(id string) string {
+	if id == "" {
+		return ErrorAnalysisTemplateID
+	}
+	return id
+}
 
 type LogSelector struct {
 	Field string `json:"field"`

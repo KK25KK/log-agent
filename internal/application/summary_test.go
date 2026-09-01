@@ -136,6 +136,28 @@ func TestSummaryInputExcludesIdentityPhysicalQueriesAndRawLogs(t *testing.T) {
 	}
 }
 
+func TestCountOnlySummaryInputExposesScopeButNoDimensionOrCause(t *testing.T) {
+	_, report := summaryFixture()
+	for index := range report.Evidence {
+		report.Evidence[index].TemplateID = domain.ErrorCountTemplateID
+		report.Evidence[index].TopError = ""
+		report.Evidence[index].TopErrorCount = 0
+	}
+	report.CauseAnalysis = &domain.CauseAnalysis{Status: domain.CauseAnalysisInconclusive, MissingInputs: []string{"dimensional_error_and_instance_evidence"}}
+	input := BuildSummaryInput(report)
+	if input.AnalysisScope != "count_only" {
+		t.Fatalf("unexpected summary scope: %#v", input)
+	}
+	for _, item := range input.Evidence {
+		if item.TopError != "" || item.TopErrorCount != 0 {
+			t.Fatalf("count-only summary input leaked dimensions: %#v", item)
+		}
+	}
+	if input.CauseAnalysis == nil || len(input.CauseAnalysis.Hypotheses) != 0 {
+		t.Fatalf("count-only summary input invented cause: %#v", input.CauseAnalysis)
+	}
+}
+
 func summaryFixture() ([]domain.Evidence, domain.Report) {
 	now := time.Date(2026, 8, 20, 8, 0, 0, 0, time.UTC)
 	evidence := []domain.Evidence{

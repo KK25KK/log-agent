@@ -24,6 +24,7 @@ const (
 	runbookMissingCompleteSet         = "complete_runbook_set"
 	runbookMissingUntruncatedSet      = "untruncated_runbook_set"
 	runbookMissingMatch               = "runbook_match"
+	runbookMissingDimensionalEvidence = "dimensional_error_evidence"
 
 	// A small clock-skew allowance keeps independently maintained knowledge
 	// catalogs usable without allowing a source to claim an arbitrarily fresh
@@ -98,6 +99,13 @@ func NewRunbookService(
 func (service *RunbookService) Enrich(ctx context.Context, evidence []domain.Evidence, report domain.Report) (domain.Report, error) {
 	if err := ctx.Err(); err != nil {
 		return report, err
+	}
+	if len(evidence) > 0 && evidence[0].TemplateID == domain.ErrorCountTemplateID {
+		report.RunbookGuidance = &domain.RunbookGuidance{
+			Status: domain.RunbookGuidanceInconclusive, DataSource: service.dataSource,
+			MethodVersion: domain.RunbookGuidanceVersion, MissingInputs: []string{runbookMissingDimensionalEvidence},
+		}
+		return report, nil
 	}
 	if !reportHasConclusiveErrorSpike(report) {
 		report.RunbookGuidance = &domain.RunbookGuidance{

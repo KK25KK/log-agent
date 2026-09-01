@@ -337,12 +337,20 @@ func renderEvidenceCard(investigation domain.Investigation) (cardDocument, error
 			safeMarkdown(valueOrDash(item.TopError), maxAggregateRunes),
 			item.TopErrorCount,
 		)
-		elements = append(elements, markdown(content))
-		if buckets := formatBuckets("新增/主要错误模式", item.ErrorPatterns); buckets != "" {
-			elements = append(elements, markdown(buckets))
+		if item.TemplateID == domain.ErrorCountTemplateID {
+			content = fmt.Sprintf(
+				"**证据 %d · %s**\n\n窗口：%s\n\n质量：%s｜错误数：%d｜处理量：%s\n\n分析范围：仅错误计数\n\n错误类型：本模板不适用\n\n实例分布：本模板不适用",
+				index+1, safeMarkdown(item.Name, maxAggregateRunes), formatRange(item.StartTime, item.EndTime), quality, item.ErrorCount, formatBytes(item.ProcessedBytes),
+			)
 		}
-		if buckets := formatBuckets("实例分布", item.Instances); buckets != "" {
-			elements = append(elements, markdown(buckets))
+		elements = append(elements, markdown(content))
+		if item.TemplateID != domain.ErrorCountTemplateID {
+			if buckets := formatBuckets("新增/主要错误模式", item.ErrorPatterns); buckets != "" {
+				elements = append(elements, markdown(buckets))
+			}
+			if buckets := formatBuckets("实例分布", item.Instances); buckets != "" {
+				elements = append(elements, markdown(buckets))
+			}
 		}
 	}
 	elements = appendCauseEvidence(elements, investigation.Report.CauseAnalysis)

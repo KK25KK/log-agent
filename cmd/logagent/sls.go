@@ -142,6 +142,14 @@ func runSLSSmoke(config config.Config, service, environment, rawWindow string) e
 	if err != nil {
 		return err
 	}
+	resource, err := catalog.Resolve(ctx, service, environment)
+	if err != nil {
+		return err
+	}
+	contract, ok := domain.QueryTemplateByVersion(resource.TemplateVersion)
+	if !ok {
+		return errors.New("sls-smoke resource uses an unsupported template version")
+	}
 	gateway, err := queryapp.NewGateway(catalog, backend, store, queryBudget(config.SLS))
 	if err != nil {
 		return err
@@ -154,7 +162,7 @@ func runSLSSmoke(config config.Config, service, environment, rawWindow string) e
 	result, err := gateway.Execute(ctx, domain.QuerySpec{
 		InvestigationID: investigationID,
 		Name:            "smoke",
-		TemplateID:      domain.ErrorSummaryTemplateID,
+		TemplateID:      contract.ID,
 		Service:         service,
 		Environment:     environment,
 		StartTime:       end.Add(-window),

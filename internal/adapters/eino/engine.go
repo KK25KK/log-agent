@@ -433,13 +433,17 @@ func planQueries(_ context.Context, input graphInput) (queryPlan, error) {
 	if !request.EndTime.After(request.StartTime) {
 		return queryPlan{}, errors.New("end time must be after start time")
 	}
+	templateID := domain.EffectiveQueryTemplateID(request.TemplateID)
+	if _, ok := domain.QueryTemplateByID(templateID); !ok {
+		return queryPlan{}, fmt.Errorf("unsupported investigation template %q", templateID)
+	}
 	duration := request.EndTime.Sub(request.StartTime)
 	return queryPlan{
 		InvestigationID: input.InvestigationID,
 		Current: domain.QuerySpec{
 			InvestigationID: input.InvestigationID,
 			Name:            "current",
-			TemplateID:      domain.ErrorAnalysisTemplateID,
+			TemplateID:      templateID,
 			Service:         request.Service,
 			Environment:     request.Environment,
 			StartTime:       request.StartTime,
@@ -449,7 +453,7 @@ func planQueries(_ context.Context, input graphInput) (queryPlan, error) {
 		Baseline: domain.QuerySpec{
 			InvestigationID: input.InvestigationID,
 			Name:            "baseline",
-			TemplateID:      domain.ErrorAnalysisTemplateID,
+			TemplateID:      templateID,
 			Service:         request.Service,
 			Environment:     request.Environment,
 			StartTime:       request.StartTime.Add(-duration),
@@ -631,11 +635,19 @@ func buildReport(observations queryObservations, generatedAt time.Time) graphOut
 			Conclusive:  true,
 			EvidenceIDs: evidenceIDs,
 		}}
-		report.Recommendations = append(report.Recommendations, domain.Recommendation{
-			Code:        "inspect_top_error_pattern",
-			Statement:   "优先检查主要错误模式对应的近期发布、配置变更和下游依赖。",
-			EvidenceIDs: evidenceIDs,
-		})
+		if current.TemplateID == domain.ErrorCountTemplateID {
+			report.Recommendations = append(report.Recommendations, domain.Recommendation{
+				Code:        "narrow_window_and_observe",
+				Statement:   "计数已显著增长；建议缩小时间窗口复查，并由人工结合发布、指标和 Trace 继续定位。",
+				EvidenceIDs: evidenceIDs,
+			})
+		} else {
+			report.Recommendations = append(report.Recommendations, domain.Recommendation{
+				Code:        "inspect_top_error_pattern",
+				Statement:   "优先检查主要错误模式对应的近期发布、配置变更和下游依赖。",
+				EvidenceIDs: evidenceIDs,
+			})
+		}
 	} else {
 		report.Outcome = "no_significant_spike"
 		report.Findings = []domain.Finding{{
@@ -646,12 +658,21 @@ func buildReport(observations queryObservations, generatedAt time.Time) graphOut
 			EvidenceIDs: evidenceIDs,
 		}}
 	}
-	appendPatternFindings(&report, current, baseline)
-	appendInstanceFinding(&report, current)
+	if current.TemplateID != domain.ErrorCountTemplateID {
+		appendPatternFindings(&report, current, baseline)
+		appendInstanceFinding(&report, current)
+	}
 	return graphOutput{Evidence: evidence, Report: report}
 }
 
 func correlateChanges(ctx context.Context, output graphOutput, source ports.ChangeSource) (graphOutput, error) {
+	if len(output.Evidence) > 0 && output.Evidence[0].TemplateID == domain.ErrorCountTemplateID {
+		output.Report.CauseAnalysis = &domain.CauseAnalysis{
+			Status:        domain.CauseAnalysisInconclusive,
+			MissingInputs: []string{"dimensional_error_and_instance_evidence"},
+		}
+		return output, nil
+	}
 	if !hasConclusiveSpike(output.Report) {
 		status := domain.CauseAnalysisSkippedNoSpike
 		missing := []string(nil)
@@ -1110,11 +1131,21 @@ func validateQueryResult(result domain.QueryResult) error {
 	if result.ErrorCount < 0 || result.TopErrorCount < 0 || result.TopErrorCount > result.ErrorCount {
 		return errors.New("error counts are inconsistent")
 	}
-	if result.APICalls != domain.ErrorAnalysisAPICalls {
-		return fmt.Errorf("analysis result used %d API calls, want %d", result.APICalls, domain.ErrorAnalysisAPICalls)
+	contract, ok := domain.QueryTemplateByID(result.TemplateID)
+	if !ok || result.TemplateVersion == "" {
+		return errors.New("query result template contract is invalid")
 	}
-	if result.PatternLimit != domain.ErrorAnalysisPatternLimit || result.InstanceLimit != domain.ErrorAnalysisInstanceLimit {
-		return errors.New("analysis result limits do not match the fixed template")
+	if result.APICalls != contract.APICalls {
+		return fmt.Errorf("query result used %d API calls, want %d", result.APICalls, contract.APICalls)
+	}
+	if result.PatternLimit != contract.PatternLimit || result.InstanceLimit != contract.InstanceLimit {
+		return errors.New("query result limits do not match the fixed template")
+	}
+	if !contract.Dimensional {
+		if result.TopError != "" || result.TopErrorCount != 0 || len(result.ErrorPatterns) != 0 || len(result.Instances) != 0 || result.ErrorPatternsExhaustive || result.InstancesExhaustive {
+			return errors.New("count-only result contains dimensional evidence")
+		}
+		return nil
 	}
 	patternTotal, err := validateBuckets("error patterns", result.ErrorPatterns, result.PatternLimit, result.ErrorCount)
 	if err != nil {

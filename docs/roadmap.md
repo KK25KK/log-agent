@@ -33,6 +33,8 @@
 
 当前真实适配器已从 Go SDK 迁移为本机阿里云 CLI + SLS 插件，认证合同为 `SSO -> STS -> StsToken Profile`。这只是传输层替换，M1 的 Catalog、ACL、Schema、预算、审计和固定聚合范围不变；迁移影响与操作步骤见 [`sls-cli-sts-migration.md`](sls-cli-sts-migration.md)。
 
+2026-09-01 已真实验证 DAM 主库 `tech-center-sha / 2016-hyper-dam-file` 的 Project、Logstore、索引和受限错误计数，并完成 CLI `data/meta` 与 host-only endpoint 协议适配。新增的 `error_count_v1` 只依赖现有 `env + level`，每窗口执行两次一致性计数，不要求开启统计的错误/实例维度，也不读取 `msg`。真实 `sls-check` 与 `sls-smoke` 已通过；Mock LLM 与 Mock 飞书纵向链路也已通过专项测试。验收记录与范围见 [`error-count-v1-implementation.md`](error-count-v1-implementation.md) 和 [`dam-single-logstore-pilot.md`](dam-single-logstore-pilot.md)。
+
 验收：指定试点服务可以通过固定模板查询真实数据；越权和可预判的超预算查询在执行前被拒绝，实际扫描量超限时结果被降级为证据不足。
 
 ## M2：错误突增调查闭环（代码完成，真实飞书/SLS 试点待联调）

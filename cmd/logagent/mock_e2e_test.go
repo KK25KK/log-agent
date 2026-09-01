@@ -77,3 +77,27 @@ func TestExecuteMockE2ECoversInboundAnalysisAndCardLifecycle(t *testing.T) {
 		t.Fatalf("mock governed runbook guidance missing: %#v", result.Investigation.Report.RunbookGuidance)
 	}
 }
+
+func TestExecuteMockE2ECountOnlyUsesMockLLMAndFeishuWithoutDimensionSources(t *testing.T) {
+	result, err := executeMockE2EWithTemplate(context.Background(), domain.ErrorCountTemplateID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Safety.ExternalNetworkCalls != 0 || result.Safety.CredentialsRequired || result.Feishu.Mode != "mock" || result.LLMSummary.Mode != domain.SummaryModeMock || result.LLMSummary.ExternalAPICalls != 0 {
+		t.Fatalf("count-only E2E crossed a real downstream boundary: %#v", result)
+	}
+	if result.AlibabaSLS.ProviderAPICalls != 4 || result.TenantQuota.APICalls != 4 || result.AlibabaSLS.RawLogRowsReturned != 0 {
+		t.Fatalf("unexpected count-only query budget: sls=%#v quota=%#v", result.AlibabaSLS, result.TenantQuota)
+	}
+	if result.OperationalSignals.SourceCalls != 0 || result.OperationalSignals.TimelineStatus != domain.TimelineInconclusive || result.RunbookKnowledge.SourceCalls != 0 || result.RunbookKnowledge.Status != domain.RunbookGuidanceInconclusive {
+		t.Fatalf("count-only E2E called dimensional sources: signals=%#v runbook=%#v", result.OperationalSignals, result.RunbookKnowledge)
+	}
+	if result.Investigation.Request.TemplateID != domain.ErrorCountTemplateID || result.Investigation.Report == nil || result.Investigation.Report.Summary == nil || result.Investigation.Report.Summary.PossibleCause != "" {
+		t.Fatalf("unexpected count-only investigation: %#v", result.Investigation)
+	}
+	for _, evidence := range result.Investigation.Report.Evidence {
+		if evidence.APICalls != 2 || evidence.TopError != "" || len(evidence.ErrorPatterns) != 0 || len(evidence.Instances) != 0 {
+			t.Fatalf("count-only evidence leaked dimensions: %#v", evidence)
+		}
+	}
+}

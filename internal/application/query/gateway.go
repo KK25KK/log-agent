@@ -81,12 +81,6 @@ func NewGateway(catalog ports.ResourceCatalog, backend ports.SLSBackend, auditor
 	if budget.IngestionGrace < domain.MinimumIngestionGrace {
 		return nil, fmt.Errorf("ingestion grace must be at least %s", domain.MinimumIngestionGrace)
 	}
-	if budget.MaxAPICalls < domain.ErrorAnalysisAPICalls {
-		return nil, fmt.Errorf("max API calls must allow the %d fixed analysis requests", domain.ErrorAnalysisAPICalls)
-	}
-	if budget.MaxRows < int64(domain.ErrorAnalysisResultRows) {
-		return nil, fmt.Errorf("max rows must allow the %d fixed analysis rows", domain.ErrorAnalysisResultRows)
-	}
 	return &Gateway{
 		catalog: catalog,
 		backend: backend,
@@ -169,7 +163,11 @@ func (g *Gateway) resolveApproved(ctx context.Context, spec domain.QuerySpec) (d
 	if !g.catalog.Allowed(ctx, spec.Requester, resource.ID) {
 		return domain.ApprovedQuery{}, nil, nil, g.deny(ctx, spec, resource, "acl_denied", ports.ErrQueryDenied)
 	}
-	if err := g.preflight(spec); err != nil {
+	contract, ok := domain.QueryTemplateByID(spec.TemplateID)
+	if !ok || contract.Version != resource.TemplateVersion {
+		return domain.ApprovedQuery{}, nil, nil, g.deny(ctx, spec, resource, "template_mismatch", fmt.Errorf("%w: template %q is not bound to resource version %q", ports.ErrQueryDenied, spec.TemplateID, resource.TemplateVersion))
+	}
+	if err := g.preflight(spec, contract); err != nil {
 		return domain.ApprovedQuery{}, nil, nil, g.deny(ctx, spec, resource, "preflight_budget", err)
 	}
 
@@ -188,7 +186,7 @@ func (g *Gateway) resolveApproved(ctx context.Context, spec domain.QuerySpec) (d
 		cleanup()
 		return domain.ApprovedQuery{}, nil, nil, g.deny(ctx, spec, resource, "schema_unavailable", fmt.Errorf("%w: %v", ports.ErrInvalidQuerySchema, err))
 	}
-	if err := validateSchema(resource, schema); err != nil {
+	if err := validateSchema(resource, schema, contract); err != nil {
 		cleanup()
 		return domain.ApprovedQuery{}, nil, nil, g.deny(ctx, spec, resource, "schema_invalid", err)
 	}
@@ -208,7 +206,7 @@ func validateSpec(spec domain.QuerySpec) error {
 	if !spec.Requester.Complete() {
 		return errors.New("trusted requester identity is required")
 	}
-	if spec.TemplateID != domain.ErrorAnalysisTemplateID {
+	if _, allowed := domain.QueryTemplateByID(spec.TemplateID); !allowed {
 		return fmt.Errorf("%w: template %q is not allowed", ports.ErrQueryDenied, spec.TemplateID)
 	}
 	if !spec.EndTime.After(spec.StartTime) {
@@ -217,7 +215,7 @@ func validateSpec(spec domain.QuerySpec) error {
 	return nil
 }
 
-func (g *Gateway) preflight(spec domain.QuerySpec) error {
+func (g *Gateway) preflight(spec domain.QuerySpec, contract domain.QueryTemplateContract) error {
 	if spec.EndTime.Sub(spec.StartTime) > g.budget.MaxWindow {
 		return fmt.Errorf("%w: window exceeds %s", ports.ErrQueryBudgetExceeded, g.budget.MaxWindow)
 	}
@@ -225,11 +223,11 @@ func (g *Gateway) preflight(spec domain.QuerySpec) error {
 	if spec.EndTime.After(watermark) {
 		return fmt.Errorf("%w: window end has not crossed the configured ingestion watermark", ports.ErrQueryBudgetExceeded)
 	}
-	if g.budget.MaxRows < int64(domain.ErrorAnalysisResultRows) {
-		return fmt.Errorf("%w: fixed template requires %d aggregate rows", ports.ErrQueryBudgetExceeded, domain.ErrorAnalysisResultRows)
+	if g.budget.MaxRows < contract.ResultRows {
+		return fmt.Errorf("%w: fixed template requires %d aggregate rows", ports.ErrQueryBudgetExceeded, contract.ResultRows)
 	}
-	if g.budget.MaxAPICalls < domain.ErrorAnalysisAPICalls {
-		return fmt.Errorf("%w: fixed template requires %d calls", ports.ErrQueryBudgetExceeded, domain.ErrorAnalysisAPICalls)
+	if g.budget.MaxAPICalls < contract.APICalls {
+		return fmt.Errorf("%w: fixed template requires %d calls", ports.ErrQueryBudgetExceeded, contract.APICalls)
 	}
 	return nil
 }
@@ -269,12 +267,15 @@ func (g *Gateway) schema(ctx context.Context, resource domain.LogResource) (doma
 	return schema, nil
 }
 
-func validateSchema(resource domain.LogResource, schema domain.IndexSchema) error {
+func validateSchema(resource domain.LogResource, schema domain.IndexSchema, contract domain.QueryTemplateContract) error {
 	selectors := append(append([]domain.LogSelector(nil), resource.Selectors...), resource.ErrorSelector)
 	for _, selector := range selectors {
 		if _, exists := schema.Fields[selector.Field]; !exists {
 			return fmt.Errorf("%w: selector field %q is not indexed", ports.ErrInvalidQuerySchema, selector.Field)
 		}
+	}
+	if !contract.Dimensional {
+		return nil
 	}
 	errorField, exists := schema.Fields[resource.ErrorField]
 	if !exists {
@@ -294,6 +295,10 @@ func validateSchema(resource domain.LogResource, schema domain.IndexSchema) erro
 }
 
 func (g *Gateway) approve(spec domain.QuerySpec, resource domain.LogResource, schema domain.IndexSchema) (domain.ApprovedQuery, error) {
+	contract, ok := domain.QueryTemplateByID(spec.TemplateID)
+	if !ok || contract.Version != resource.TemplateVersion {
+		return domain.ApprovedQuery{}, errors.New("template contract does not match resource")
+	}
 	approved := domain.ApprovedQuery{
 		Resource:          resource,
 		TemplateID:        spec.TemplateID,
@@ -303,9 +308,9 @@ func (g *Gateway) approve(spec domain.QuerySpec, resource domain.LogResource, sc
 		EndTime:           spec.EndTime.UTC(),
 		MaxRows:           g.budget.MaxRows,
 		MaxAPICalls:       g.budget.MaxAPICalls,
-		PatternLimit:      domain.ErrorAnalysisPatternLimit,
-		InstanceLimit:     domain.ErrorAnalysisInstanceLimit,
-		ExpectedAPICalls:  domain.ErrorAnalysisAPICalls,
+		PatternLimit:      contract.PatternLimit,
+		InstanceLimit:     contract.InstanceLimit,
+		ExpectedAPICalls:  contract.APICalls,
 	}
 	governanceFingerprint, err := queryGovernanceFingerprint(resource, spec.TemplateID, PolicyVersion, schema.Fingerprint, g.budget)
 	if err != nil {
@@ -321,6 +326,7 @@ func (g *Gateway) approve(spec domain.QuerySpec, resource domain.LogResource, sc
 }
 
 func (g *Gateway) normalize(approved domain.ApprovedQuery, result domain.QueryResult) domain.QueryResult {
+	contract, _ := domain.QueryTemplateByID(approved.TemplateID)
 	result.QuerySpecHash = approved.SpecHash
 	result.ResourceID = approved.Resource.ID
 	result.TemplateID = approved.TemplateID
@@ -329,11 +335,22 @@ func (g *Gateway) normalize(approved domain.ApprovedQuery, result domain.QueryRe
 	result.PolicyVersion = approved.PolicyVersion
 	result.GovernanceFingerprint = approved.GovernanceFingerprint
 
-	result.ErrorPatterns = append([]domain.CountBucket(nil), result.ErrorPatterns...)
-	result.Instances = append([]domain.CountBucket(nil), result.Instances...)
-	result.ErrorPatterns, result.Redacted = redactBuckets(result.ErrorPatterns, result.Redacted)
-	result.Instances, result.Redacted = redactBuckets(result.Instances, result.Redacted)
-	if len(result.ErrorPatterns) > 0 {
+	if !contract.Dimensional {
+		result.ErrorPatterns = nil
+		result.Instances = nil
+		result.TopError = ""
+		result.TopErrorCount = 0
+		result.ErrorPatternsExhaustive = false
+		result.InstancesExhaustive = false
+		result.PatternLimit = 0
+		result.InstanceLimit = 0
+	} else {
+		result.ErrorPatterns = append([]domain.CountBucket(nil), result.ErrorPatterns...)
+		result.Instances = append([]domain.CountBucket(nil), result.Instances...)
+		result.ErrorPatterns, result.Redacted = redactBuckets(result.ErrorPatterns, result.Redacted)
+		result.Instances, result.Redacted = redactBuckets(result.Instances, result.Redacted)
+	}
+	if contract.Dimensional && len(result.ErrorPatterns) > 0 {
 		result.TopError = result.ErrorPatterns[0].Label
 		result.TopErrorCount = result.ErrorPatterns[0].Count
 	} else {
@@ -369,6 +386,10 @@ func (g *Gateway) normalize(approved domain.ApprovedQuery, result domain.QueryRe
 }
 
 func queryGovernanceFingerprint(resource domain.LogResource, templateID, policyVersion, schemaFingerprint string, budget Budget) (string, error) {
+	contract, ok := domain.QueryTemplateByID(templateID)
+	if !ok || contract.Version != resource.TemplateVersion {
+		return "", errors.New("template contract does not match resource")
+	}
 	identity := queryGovernanceIdentity{
 		Resource:          resource,
 		TemplateID:        templateID,
@@ -383,10 +404,10 @@ func queryGovernanceFingerprint(resource domain.LogResource, templateID, policyV
 			MaxProcessedBytes:         budget.MaxProcessedBytes,
 			MaxConcurrent:             budget.MaxConcurrent,
 			SchemaTTLNanoseconds:      int64(budget.SchemaTTL),
-			PatternLimit:              domain.ErrorAnalysisPatternLimit,
-			InstanceLimit:             domain.ErrorAnalysisInstanceLimit,
-			ExpectedAPICalls:          domain.ErrorAnalysisAPICalls,
-			ExpectedResultRows:        domain.ErrorAnalysisResultRows,
+			PatternLimit:              contract.PatternLimit,
+			InstanceLimit:             contract.InstanceLimit,
+			ExpectedAPICalls:          contract.APICalls,
+			ExpectedResultRows:        int(contract.ResultRows),
 		},
 	}
 	return fingerprint.JSON(identity)

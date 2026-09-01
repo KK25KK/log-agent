@@ -23,6 +23,7 @@ const (
 // excludes identities, physical resources, queries, credentials and raw logs.
 type SummaryInput struct {
 	Outcome         string                       `json:"outcome"`
+	AnalysisScope   string                       `json:"analysis_scope"`
 	Findings        []SummaryInputFinding        `json:"findings"`
 	Evidence        []SummaryInputEvidence       `json:"evidence"`
 	CauseAnalysis   *SummaryInputCauseAnalysis   `json:"cause_analysis,omitempty"`

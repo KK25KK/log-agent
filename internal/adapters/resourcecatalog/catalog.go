@@ -20,7 +20,7 @@ import (
 var (
 	fieldNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 	projectPattern   = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$`)
-	logStorePattern  = regexp.MustCompile(`^[a-z][a-z0-9_-]{1,61}[a-z0-9]$`)
+	logStorePattern  = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{1,61}[a-z0-9]$`)
 )
 
 type catalogFile struct {
@@ -159,8 +159,9 @@ func validateResource(version string, item resourceConfig) (domain.LogResource, 
 	if err := domain.ValidateResourceID(item.ID); err != nil {
 		return domain.LogResource{}, err
 	}
-	if item.TemplateVersion != domain.ErrorAnalysisTemplateVersion {
-		return domain.LogResource{}, fmt.Errorf("template_version must be %q", domain.ErrorAnalysisTemplateVersion)
+	contract, knownTemplate := domain.QueryTemplateByVersion(item.TemplateVersion)
+	if !knownTemplate {
+		return domain.LogResource{}, fmt.Errorf("unsupported template_version %q", item.TemplateVersion)
 	}
 	if err := validateEndpoint(item.Endpoint); err != nil {
 		return domain.LogResource{}, err
@@ -171,14 +172,18 @@ func validateResource(version string, item resourceConfig) (domain.LogResource, 
 	if !logStorePattern.MatchString(item.LogStore) {
 		return domain.LogResource{}, errors.New("logstore does not match the SLS naming rules")
 	}
-	if err := validateFieldName("error_field", item.ErrorField); err != nil {
-		return domain.LogResource{}, err
-	}
-	if err := validateFieldName("instance_field", item.InstanceField); err != nil {
-		return domain.LogResource{}, err
-	}
-	if item.InstanceField == item.ErrorField {
-		return domain.LogResource{}, errors.New("instance_field must differ from error_field")
+	if contract.Dimensional {
+		if err := validateFieldName("error_field", item.ErrorField); err != nil {
+			return domain.LogResource{}, err
+		}
+		if err := validateFieldName("instance_field", item.InstanceField); err != nil {
+			return domain.LogResource{}, err
+		}
+		if item.InstanceField == item.ErrorField {
+			return domain.LogResource{}, errors.New("instance_field must differ from error_field")
+		}
+	} else if item.ErrorField != "" || item.InstanceField != "" {
+		return domain.LogResource{}, errors.New("count-only template must not configure error_field or instance_field")
 	}
 	if len(item.Selectors) == 0 {
 		return domain.LogResource{}, errors.New("at least one fixed selector is required")
@@ -202,17 +207,19 @@ func validateResource(version string, item resourceConfig) (domain.LogResource, 
 	if _, duplicate := seenFields[item.ErrorSelector.Field]; duplicate {
 		return domain.LogResource{}, fmt.Errorf("error_selector duplicates selector field %q", item.ErrorSelector.Field)
 	}
-	if _, duplicate := seenFields[item.ErrorField]; duplicate {
-		return domain.LogResource{}, fmt.Errorf("error_field duplicates selector field %q", item.ErrorField)
-	}
-	if item.ErrorField == item.ErrorSelector.Field {
-		return domain.LogResource{}, fmt.Errorf("error_field duplicates error_selector field %q", item.ErrorField)
-	}
-	if _, duplicate := seenFields[item.InstanceField]; duplicate {
-		return domain.LogResource{}, fmt.Errorf("instance_field duplicates selector field %q", item.InstanceField)
-	}
-	if item.InstanceField == item.ErrorSelector.Field {
-		return domain.LogResource{}, fmt.Errorf("instance_field duplicates error_selector field %q", item.InstanceField)
+	if contract.Dimensional {
+		if _, duplicate := seenFields[item.ErrorField]; duplicate {
+			return domain.LogResource{}, fmt.Errorf("error_field duplicates selector field %q", item.ErrorField)
+		}
+		if item.ErrorField == item.ErrorSelector.Field {
+			return domain.LogResource{}, fmt.Errorf("error_field duplicates error_selector field %q", item.ErrorField)
+		}
+		if _, duplicate := seenFields[item.InstanceField]; duplicate {
+			return domain.LogResource{}, fmt.Errorf("instance_field duplicates selector field %q", item.InstanceField)
+		}
+		if item.InstanceField == item.ErrorSelector.Field {
+			return domain.LogResource{}, fmt.Errorf("instance_field duplicates error_selector field %q", item.InstanceField)
+		}
 	}
 
 	return domain.LogResource{

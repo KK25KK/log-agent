@@ -49,10 +49,10 @@ Eino 只负责流程编排，不负责业务状态、权限、幂等、审计和
 - 从飞书入站信封派生可信 `Principal`，调用方无法在请求里伪造用户身份。
 - 版本化 JSON 资源目录，将 `service/environment` 映射到受控 Endpoint、Project、LogStore、字段和模板版本。
 - 完整 Principal 到资源的静态 ACL，默认拒绝。
-- 唯一生产查询模板 `error_analysis_v2`；用户和模型不能提交 Project、LogStore、SQL 或 SPL。
+- 两个注册查询模板：维度分析 `error_analysis_v2` 与仅计数 `error_count_v1`；用户和模型不能提交 Project、LogStore、字段、SQL 或 SPL。
 - 执行前校验时间窗、固定调用数、返回行数、超时和单进程并发。
-- 通过 `GetIndex` 校验字段索引；错误维度和实例维度都必须是开启统计的 text 字段。
-- 通过本机阿里云 CLI + SLS 插件执行四条只读聚合查询：前置错误总数、Top 5 错误模式、Top 5 实例和后置错误总数。
+- 通过 `GetIndex` 校验模板所需字段；分析模板要求错误维度和实例维度为开启统计的 text 字段，计数模板只要求固定环境与错误选择器存在。
+- 通过本机阿里云 CLI + SLS 插件执行固定只读聚合：分析模板每窗口四条，计数模板每窗口仅执行前后两次 `count(*)`，均不读取原始 `msg`。
 - 保存四次本地执行 ID，以及 CLI 暴露的 Progress、纳秒有序元数据、处理行数、处理字节数和耗时；CLI 未提供 Provider Request ID 时保持为空，不伪造；前后总数变化时按证据不足处理。
 - `Incomplete`、结构不一致、截断、元数据缺失或扫描字节超预算时禁止生成确定性结论。
 - 查询标签做长度限制，并脱敏邮箱、IPv4、Bearer/JWT 和常见 AccessKey 形态。
@@ -162,9 +162,12 @@ Eino 只负责流程编排，不负责业务状态、权限、幂等、审计和
 
 ```powershell
 go run ./cmd/logagent mock-e2e
+go run ./cmd/logagent mock-e2e error_count_v1
 ```
 
-它会依次完成：
+第一个命令保持原 `error_analysis_v2` 回归；第二个命令验证 DAM 轻量模板。计数型 Mock E2E 仍经过飞书 Mock、Catalog/ACL、Gateway、Checkpoint、租户配额、Eino、Worker、SQLite、Mock LLM 和飞书 Mock 卡片，但只产生 4 次 Provider 调用代理，并对变更、跨信号和 Runbook Source 保持零调用。
+
+分析模板的 Mock E2E 会依次完成：
 
 1. 模拟飞书用户发送 `/investigate order-service prod 30m`；
 2. 将同一消息重放一次，验证 Inbox 幂等去重；
@@ -337,6 +340,8 @@ aliyun configure --mode StsToken --profile default
 凭据只由 CLI Profile 读取；STS 到期后由用户重新获取并覆盖该 Profile。log-agent 的 Go 代码不会自动续签、切换账号或读取 Profile 文件。
 
 完整迁移影响、安全边界和逐步接入操作见 [`docs/sls-cli-sts-migration.md`](docs/sls-cli-sts-migration.md)。
+
+DAM 当前采用单主 Logstore 的 `error_count_v1` 轻量试点。2026-09-01 真实 `sls-check` 与 `sls-smoke` 已通过，`env=test + level=error` 固定计数、`data/meta` 响应、显式 Region 与 host-only endpoint 已完成验证；试点不要求新增 `error_type/instance_id`，也不会输出错误类型、实例或根因。LLM 与飞书仍为 Mock。实现和验收范围见 [`docs/error-count-v1-implementation.md`](docs/error-count-v1-implementation.md) 与 [`docs/dam-single-logstore-pilot.md`](docs/dam-single-logstore-pilot.md)。
 
 最小只读 RAM 策略模板见 `config/sls-readonly-policy.example.json`。它只包含定向检查和查询需要的 `GetProject`、`GetLogStore`、`GetIndex`、`GetLogStoreLogs`，请替换地域、账号、Project 和 LogStore 占位符；不要给 Agent `AliyunLogFullAccess`。
 

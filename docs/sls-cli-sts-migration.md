@@ -77,6 +77,12 @@ Go SDK 和 CLI 都只是 SLS 的外部传输适配器。应用核心只依赖 `p
 
 ## 操作步骤
 
+### DAM 轻量试点实测状态（2026-09-01）
+
+DAM 主 Logstore `tech-center-sha / 2016-hyper-dam-file` 已通过真实只读的 Project、Logstore、索引、总量聚合和 `env=test + level=error` 计数检查。实测同时确认三个插件协议细节：SQL 行位于 `data`；`--endpoint` 必须传 Host 而不是带 `https://` 的完整 URL；显式选择 Profile 时还需显式传 Region。代码已从受信 Endpoint 提取 Region 并兼容这些合同。
+
+当前真实 Schema 没有开启统计的错误维度和实例维度，因此这里证明的是连接与受限计数，不是完整 `sls-check`、`sls-smoke` 或飞书 Agent E2E。后续操作见 [`dam-single-logstore-pilot.md`](dam-single-logstore-pilot.md)。
+
 ### 1. 安装并固定 CLI/插件
 
 ```powershell

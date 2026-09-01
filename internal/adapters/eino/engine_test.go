@@ -207,6 +207,46 @@ func TestEngineBuildsEvidenceBackedSpikeReport(t *testing.T) {
 	}
 }
 
+func TestEngineBuildsCountOnlyReportAndSkipsDimensionSources(t *testing.T) {
+	start := time.Date(2026, 8, 18, 10, 0, 0, 0, time.UTC)
+	changeSource := &fakeChangeSource{err: errors.New("must not be called")}
+	signalSource := &fakeOperationalSignalSource{err: errors.New("must not be called")}
+	executor := &fakeExecutor{results: map[string]domain.QueryResult{
+		"current":  countResult("current", 120),
+		"baseline": countResult("baseline", 20),
+	}}
+	engine, err := New(context.Background(), executor, time.Now, WithChangeSource(changeSource), WithOperationalSignalSource(signalSource))
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence, report, err := engine.Run(context.Background(), "inv_count", domain.InvestigationRequest{
+		Service: "dam-server", Environment: "test", TemplateID: domain.ErrorCountTemplateID,
+		StartTime: start, EndTime: start.Add(10 * time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Outcome != "spike_detected" || len(evidence) != 2 || len(executor.got) != 2 {
+		t.Fatalf("unexpected count-only report: evidence=%#v report=%#v", evidence, report)
+	}
+	if len(changeSource.got) != 0 || len(signalSource.got) != 0 {
+		t.Fatalf("count-only report called dimensional sources: changes=%d signals=%d", len(changeSource.got), len(signalSource.got))
+	}
+	if report.CauseAnalysis == nil || report.CauseAnalysis.Status != domain.CauseAnalysisInconclusive || report.IncidentTimeline == nil || report.IncidentTimeline.Status != domain.TimelineInconclusive {
+		t.Fatalf("count-only limitations are not explicit: %#v", report)
+	}
+	for _, item := range evidence {
+		if item.TemplateID != domain.ErrorCountTemplateID || item.APICalls != 2 || item.TopError != "" || len(item.ErrorPatterns) != 0 || len(item.Instances) != 0 {
+			t.Fatalf("count-only evidence leaked dimensions: %#v", item)
+		}
+	}
+	for _, finding := range report.Findings {
+		if strings.Contains(finding.Statement, "错误模式") || strings.Contains(finding.Statement, "实例") || strings.Contains(finding.Statement, "根因") {
+			t.Fatalf("count-only finding overclaimed: %#v", finding)
+		}
+	}
+}
+
 func TestEngineKeepsBoundedBaselineAbsenceAsCandidate(t *testing.T) {
 	start := time.Date(2026, 8, 18, 10, 0, 0, 0, time.UTC)
 	current := analysisResult("current", 100,
@@ -1072,6 +1112,16 @@ func analysisResult(name string, total int64, patterns, instances []domain.Count
 		result.TopErrorCount = patterns[0].Count
 	}
 	return result
+}
+
+func countResult(name string, total int64) domain.QueryResult {
+	return domain.QueryResult{
+		QueryID: "count-query-" + name, ResourceID: "dam-server-test-count",
+		TemplateID: domain.ErrorCountTemplateID, TemplateVersion: domain.ErrorCountTemplateVersion,
+		SchemaFingerprint: "schema-count-v1", PolicyVersion: "query-policy-v2", GovernanceFingerprint: strings.Repeat("d", 64),
+		Progress: "Complete", Complete: true, UsageKnown: true, APICalls: domain.ErrorCountAPICalls, ErrorCount: total,
+		NanosecondOrderedKnown: true, NanosecondOrdered: true,
+	}
 }
 
 func bucketTotal(buckets []domain.CountBucket) int64 {

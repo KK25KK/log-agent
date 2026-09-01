@@ -25,9 +25,15 @@ type Catalog struct {
 // NewCatalog returns the fixed local resource catalog. An incomplete principal
 // can be supplied, but it will never be authorized by Allowed.
 func NewCatalog(allowedPrincipal domain.Principal) *Catalog {
+	return NewCatalogForTemplate(allowedPrincipal, domain.ErrorAnalysisTemplateID)
+}
+
+// NewCatalogForTemplate creates the same fixed logical resource with one
+// registered template contract for end-to-end capability tests.
+func NewCatalogForTemplate(allowedPrincipal domain.Principal, templateID string) *Catalog {
 	return &Catalog{
 		allowedPrincipal: allowedPrincipal,
-		resource:         fixedResource(),
+		resource:         fixedResourceForTemplate(templateID),
 	}
 }
 
@@ -52,7 +58,15 @@ func (c *Catalog) Allowed(ctx context.Context, principal domain.Principal, resou
 }
 
 func fixedResource() domain.LogResource {
-	return domain.LogResource{
+	return fixedResourceForTemplate(domain.ErrorAnalysisTemplateID)
+}
+
+func fixedResourceForTemplate(templateID string) domain.LogResource {
+	contract, ok := domain.QueryTemplateByID(templateID)
+	if !ok {
+		contract, _ = domain.QueryTemplateByID(domain.ErrorAnalysisTemplateID)
+	}
+	resource := domain.LogResource{
 		ID:              mockResourceID,
 		CatalogVersion:  "mock-catalog-v1",
 		Service:         mockService,
@@ -60,15 +74,18 @@ func fixedResource() domain.LogResource {
 		Endpoint:        "mock://sls",
 		Project:         "mock-project",
 		LogStore:        "mock-logstore",
-		TemplateVersion: domain.ErrorAnalysisTemplateVersion,
+		TemplateVersion: contract.Version,
 		Selectors: []domain.LogSelector{
 			{Field: "service", Value: mockService},
 			{Field: "env", Value: mockEnvironment},
 		},
 		ErrorSelector: domain.LogSelector{Field: "level", Value: "ERROR"},
-		ErrorField:    "error_message",
-		InstanceField: "pod_name",
 	}
+	if contract.Dimensional {
+		resource.ErrorField = "error_message"
+		resource.InstanceField = "pod_name"
+	}
+	return resource
 }
 
 func cloneResource(resource domain.LogResource) domain.LogResource {

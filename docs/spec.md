@@ -25,7 +25,7 @@ Users can ask the bot to investigate an error spike for a known service, environ
 - An Eino graph for deterministic planning, query, verification, and reporting.
 - An administrator-managed service/environment to SLS resource catalog.
 - Default-deny principal-to-resource authorization.
-- A fixed, versioned `error_analysis_v2` query template; callers cannot provide raw SQL or SPL.
+- Two fixed, versioned query templates: dimensional `error_analysis_v2` and count-only `error_count_v1`; callers cannot provide raw SQL or SPL.
 - Preflight time-window, call-count, row-count, timeout, and concurrency budgets.
 - A post-query processed-byte budget used as the initial cost guardrail.
 - Index Schema validation before executing analytical queries.
@@ -58,7 +58,7 @@ Users can ask the bot to investigate an error spike for a known service, environ
 ## 4. Non-goals
 
 - Arbitrary model-generated SQL or SPL.
-- User-selected Endpoint, Project, LogStore, field name, or query template.
+- User-selected Endpoint, Project, LogStore, field name, or unregistered query template. The command may request only a closed template ID already bound to the resolved operator-owned resource version.
 - Multi-Agent orchestration, DeepAgent, or Supervisor patterns.
 - SLS write operations, alert mutation, or automatic remediation.
 - Token-by-token Feishu streaming cards or high-risk approval actions.
@@ -173,7 +173,14 @@ The resource catalog is a versioned JSON configuration managed by operators. It 
 
 In real mode, authentication is `SSO -> short-lived STS -> local Alibaba Cloud CLI StsToken Profile -> SLS plugin`. The service never receives AccessKey ID, AccessKey secret, or Security Token through its own environment. It selects a fixed operator-owned Profile (default `default`), strips direct credential environment variables from the child process, disables plugin auto-install, and never enables CLI debug output. Expired STS credentials fail visibly and require the operator to renew the Profile; the service does not switch accounts or refresh SSO sessions. Because the service deliberately does not read the Profile file, the deployment process must attest that the selected Profile was created in `StsToken` mode; a successful resource check proves access, not credential mode.
 
-The only production template in this version is `error_analysis_v2`. It performs four bounded, read-only aggregate requests for each observation: count before, Top 5 configured error dimensions, Top 5 configured instance dimensions, and count after. A resource therefore owns both `error_field` and `instance_field`, and both must be indexed text fields with statistics enabled. Users and models cannot submit provider query strings.
+The registered templates in this version are:
+
+- `error_analysis_v2` / `error-analysis-v2`: four bounded, read-only aggregate requests for each observation: count before, Top 5 configured error dimensions, Top 5 configured instance dimensions, and count after. Its resource owns distinct `error_field` and `instance_field` values, both indexed text fields with statistics enabled.
+- `error_count_v1` / `error-count-v1`: two bounded, read-only aggregate requests for each observation: count before and count after using only fixed scope selectors plus the separate error selector. It requires no analytical dimension, returns at most two aggregate rows, never reads `msg`, and never claims an error type, instance distribution, release cause, database cause, or unified event timeline.
+
+Every resource binds exactly one registered template version. The optional command template argument selects only a closed template ID; it must match the resolved resource version. Omitting the argument preserves backward compatibility by selecting `error_analysis_v2`. Users and models cannot submit provider query strings.
+
+For either template, unequal boundary counts make the observation `Incomplete`. For count-only results `PatternLimit` and `InstanceLimit` are zero, dimensional bucket collections remain empty and non-exhaustive, and renderers must display those dimensions as `本模板不适用` rather than as an empty exhaustive result.
 
 Top-K is an intentional template result, not provider truncation. Pattern and instance shares are derived locally from aggregate counts. A current pattern absent from the baseline Top 5 is only a candidate-new pattern unless the baseline buckets account for the complete baseline error count and neither compared label was redacted. Only then may the report call it confirmed new relative to the selected baseline window.
 
@@ -216,11 +223,11 @@ High-risk approval is a separate closed state machine: `PENDING -> APPROVED | RE
 ### Execute an investigation
 
 1. A worker claims the oldest runnable job using a time-limited lease.
-2. The graph creates current and baseline typed `error_analysis_v2` requests.
+2. The graph creates current and baseline typed requests using the registered template selected by the normalized investigation request.
 3. The query gateway resolves the resource and authorizes the trusted principal.
 4. Preflight budgets and index Schema are checked.
 5. A durable `STARTED` audit event is written before the first `GetLogsV2` log query is called. Schema metadata may be fetched before this event.
-6. The fixed template obtains total count, Top 5 error patterns, and Top 5 instances without returning raw log bodies.
+6. The fixed template obtains either count plus bounded Top-K dimensions (`error_analysis_v2`) or count only (`error_count_v1`) without returning raw log bodies.
 7. Provider progress and scan metadata returned by the CLI are normalized. `Incomplete`, timeout, provider truncation, missing usage metadata, or processed-byte overflow cannot produce a conclusive finding.
 8. Every returned bucket label is length-bounded and redacted before leaving the policy boundary.
 9. A single terminal success, incomplete, or failure event is appended to query audit.
@@ -402,10 +409,12 @@ M5-C feedback uses a store separate from both the production investigation Store
 - Feishu SDK is pinned to `v3.9.10`.
 - Alibaba Cloud CLI `3.x` and the installed `aliyun-cli-sls` plugin are deployment prerequisites; their exact approved versions are recorded and verified by the deployment process, not downloaded at runtime. `sls-check` proves that the configured binary/plugin can execute the required metadata commands, but does not itself attest a version allowlist.
 - Real catalog endpoints must use `https://`; same-region VPC endpoints are recommended for deployment.
+- Catalog endpoints remain absolute HTTPS Alibaba Log Service URLs, but the adapter derives and passes an explicit Region plus only the validated host to `aliyun-cli-sls --endpoint`; the plugin owns Project-subdomain construction and the selected Profile need not provide an implicit Region.
 - Credentials come only from an existing local Alibaba Cloud CLI `StsToken` Profile selected by `LOG_AGENT_SLS_CLI_PROFILE`; direct AK/SK/Token environment variables are stripped from the child process and are unsupported by this service. Credentials and tokens must never be logged.
 - The adapter resolves the `aliyun` executable at startup, invokes it with `exec.CommandContext` rather than a shell, bounds stdout/stderr, sets `ALIBABA_CLOUD_CLI_PLUGIN_AUTO_INSTALL=false`, and forces the selected Profile through `ALIBABA_CLOUD_PROFILE`.
 - Application cancellation and the per-call timeout terminate the CLI child process. STS expiry, missing Profile, missing plugin, unsupported output, or non-zero exit fails closed with a bounded sanitized error.
 - SLS `limited` metadata represents the SQL result-row limit and is not itself evidence of truncation. Every fixed aggregate SQL statement owns an explicit `LIMIT`.
+- SQL aggregate rows may be returned in the plugin's `data` container or a compatible legacy `logs` container. Both non-empty at once is ambiguous and fails closed; `meta` remains mandatory for quality and usage accounting.
 - Raw provider error messages, bodies, headers, URLs, and query strings cannot cross the Alibaba SLS adapter or enter query audit.
 - External messages and log content are untrusted input and cannot alter resources, templates, permissions, or budgets.
 - Feishu callback values are untrusted. They may select only a closed action enum and an investigation ID, and every mutation is authorized against the persisted requester.
@@ -436,6 +445,7 @@ M5-C feedback uses a store separate from both the production investigation Store
 - [x] Unknown resources, missing ACL bindings, unsafe windows, and invalid policy are rejected before log-query execution.
 - [x] Missing indexes or analytical fields without statistics enabled are rejected before the fixed query executes.
 - [x] The fixed template preserves adapter execution IDs plus provider progress, nanosecond-order metadata, processed rows, processed bytes, and elapsed time when the CLI exposes them; missing metadata fails closed, and provider Request IDs are never fabricated.
+- [x] The CLI adapter normalizes real `data/meta` aggregate responses and converts catalog HTTPS endpoints to explicit Region plus the plugin's host-only endpoint argument.
 - [x] Incomplete, timed-out, structurally inconsistent, truncated, metadata-deficient, or over-scan-budget results cannot yield a conclusive finding.
 - [x] Denied, started, succeeded, incomplete, and failed attempts are durably auditable without secrets, raw logs, or raw SQL.
 - [x] A configuration-check command is implemented and unit-tested not to query log bodies.

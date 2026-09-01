@@ -10,6 +10,7 @@ import (
 )
 
 var allowedRunbookMissingInputs = map[string]struct{}{
+	runbookMissingDimensionalEvidence: {},
 	runbookMissingConclusiveSpike:     {},
 	runbookMissingDeterministicAdvice: {},
 	runbookMissingResourceIdentity:    {},
@@ -50,6 +51,12 @@ func validateRunbookGuidance(guidance *domain.RunbookGuidance, evidence map[stri
 	}
 	if guidance.Status == domain.RunbookGuidanceSkippedNoTrigger {
 		return errors.New("runbook guidance skipped despite a conclusive error spike")
+	}
+	if countOnlyEvidence(evidence) {
+		if guidance.Status != domain.RunbookGuidanceInconclusive || hasRunbookSourceOutput(guidance) || !equalStrings(guidance.MissingInputs, []string{runbookMissingDimensionalEvidence}) {
+			return errors.New("count-only runbook guidance must remain source-free and inconclusive")
+		}
+		return nil
 	}
 
 	resourceID, resourceOK := governedRunbookResourceFromMap(evidence)

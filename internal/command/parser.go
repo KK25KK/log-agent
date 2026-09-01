@@ -11,7 +11,7 @@ import (
 
 const maxWindow = 24 * time.Hour
 
-var ErrUsage = errors.New("usage: /investigate <service> <environment> <duration>")
+var ErrUsage = errors.New("usage: /investigate <service> <environment> <duration> [template]")
 
 // ParseInvestigation parses the deliberately strict M0 command syntax.
 func ParseInvestigation(text string, now time.Time) (domain.InvestigationRequest, error) {
@@ -26,7 +26,7 @@ func ParseInvestigationWithGrace(text string, now time.Time, ingestionGrace time
 		return domain.InvestigationRequest{}, fmt.Errorf("ingestion grace must be at least %s", domain.MinimumIngestionGrace)
 	}
 	fields := strings.Fields(strings.TrimSpace(text))
-	if len(fields) != 4 || fields[0] != "/investigate" {
+	if (len(fields) != 4 && len(fields) != 5) || fields[0] != "/investigate" {
 		return domain.InvestigationRequest{}, ErrUsage
 	}
 
@@ -41,10 +41,19 @@ func ParseInvestigationWithGrace(text string, now time.Time, ingestionGrace time
 		return domain.InvestigationRequest{}, fmt.Errorf("duration must be greater than zero and at most %s: %w", maxWindow, ErrUsage)
 	}
 
+	templateID := domain.ErrorAnalysisTemplateID
+	if len(fields) == 5 {
+		templateID = fields[4]
+		if _, known := domain.QueryTemplateByID(templateID); !known {
+			return domain.InvestigationRequest{}, fmt.Errorf("unknown template %q: %w", templateID, ErrUsage)
+		}
+	}
+
 	end := now.UTC().Add(-ingestionGrace).Truncate(time.Second)
 	return domain.InvestigationRequest{
 		Service:     service,
 		Environment: environment,
+		TemplateID:  templateID,
 		StartTime:   end.Add(-window),
 		EndTime:     end,
 	}, nil

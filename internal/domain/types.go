@@ -59,6 +59,7 @@ func (p Principal) Key() string {
 type InvestigationRequest struct {
 	Service     string    `json:"service"`
 	Environment string    `json:"environment"`
+	TemplateID  string    `json:"template_id,omitempty"`
 	StartTime   time.Time `json:"start_time"`
 	EndTime     time.Time `json:"end_time"`
 	Requester   Principal `json:"requester"`

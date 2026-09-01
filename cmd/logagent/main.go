@@ -52,10 +52,14 @@ func run(args []string) error {
 	case "delivery-dlq-replay":
 		return runDeliveryDLQReplayCommand(args[1:])
 	case "mock-e2e":
-		if len(args) != 1 {
-			return errors.New("usage: logagent mock-e2e")
+		if len(args) > 2 {
+			return errors.New("usage: logagent mock-e2e [template]")
 		}
-		return runMockE2E()
+		templateID := domain.ErrorAnalysisTemplateID
+		if len(args) == 2 {
+			templateID = args[1]
+		}
+		return runMockE2E(templateID)
 	case "demo":
 		if len(args) != 1 {
 			return errors.New("usage: logagent demo")

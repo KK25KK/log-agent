@@ -20,6 +20,7 @@ type Backend struct {
 	currentStart time.Time
 	currentEnd   time.Time
 	executor     Executor
+	resource     domain.LogResource
 
 	statsMu sync.Mutex
 	stats   Stats
@@ -37,14 +38,22 @@ type Stats struct {
 // NewBackend binds the fixture to one exact current window and its immediately
 // preceding, equally-sized baseline window.
 func NewBackend(currentStart, currentEnd time.Time) (*Backend, error) {
+	return NewBackendForTemplate(currentStart, currentEnd, domain.ErrorAnalysisTemplateID)
+}
+
+func NewBackendForTemplate(currentStart, currentEnd time.Time, templateID string) (*Backend, error) {
 	currentStart = currentStart.UTC()
 	currentEnd = currentEnd.UTC()
 	if currentStart.IsZero() || currentEnd.IsZero() || !currentEnd.After(currentStart) {
 		return nil, errors.New("mock current window must have non-zero start and end with end after start")
 	}
+	if _, ok := domain.QueryTemplateByID(templateID); !ok {
+		return nil, errors.New("mock template must be registered")
+	}
 	return &Backend{
 		currentStart: currentStart,
 		currentEnd:   currentEnd,
+		resource:     fixedResourceForTemplate(templateID),
 	}, nil
 }
 
@@ -55,7 +64,7 @@ func (b *Backend) GetSchema(ctx context.Context, resource domain.LogResource) (d
 	if err := ctx.Err(); err != nil {
 		return domain.IndexSchema{}, err
 	}
-	if err := validateFixedResource(resource); err != nil {
+	if err := b.validateResource(resource); err != nil {
 		return domain.IndexSchema{}, err
 	}
 	return domain.IndexSchema{
@@ -79,7 +88,7 @@ func (b *Backend) Execute(ctx context.Context, query domain.ApprovedQuery) (doma
 	if err := ctx.Err(); err != nil {
 		return domain.QueryResult{}, err
 	}
-	if err := validateFixedResource(query.Resource); err != nil {
+	if err := b.validateResource(query.Resource); err != nil {
 		return domain.QueryResult{}, err
 	}
 
@@ -154,6 +163,13 @@ func (b *Backend) baselineStart() time.Time {
 
 func validateFixedResource(resource domain.LogResource) error {
 	if !reflect.DeepEqual(resource, fixedResource()) {
+		return fmt.Errorf("mock backend rejects resource %q: %w", resource.ID, ports.ErrQueryDenied)
+	}
+	return nil
+}
+
+func (b *Backend) validateResource(resource domain.LogResource) error {
+	if !reflect.DeepEqual(resource, b.resource) {
 		return fmt.Errorf("mock backend rejects resource %q: %w", resource.ID, ports.ErrQueryDenied)
 	}
 	return nil

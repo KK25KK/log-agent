@@ -220,11 +220,15 @@ func validateQuotaReservation(reservation domain.QueryQuotaReservation, policy d
 	if !boundedSafeCode(reservation.UsageKey, 64, 64) || !boundedSafeCode(reservation.TenantID, 64, 64) ||
 		!boundedSafeCode(reservation.InvestigationID, 1, 256) || !boundedSafeCode(reservation.QueryName, 1, 64) ||
 		reservation.Status != domain.QuotaReserved || !reservation.WindowEnd.After(reservation.WindowStart) ||
-		reservation.WindowEnd.Sub(reservation.WindowStart) != policy.Window || reservation.ReservedAPICalls != int64(domain.ErrorAnalysisAPICalls) ||
+		reservation.WindowEnd.Sub(reservation.WindowStart) != policy.Window || !registeredTemplateCallCount(reservation.ReservedAPICalls) ||
 		reservation.ReservedBytes != policy.ReservedBytesPerObservation || reservation.CreatedAt.IsZero() || reservation.UpdatedAt.IsZero() {
 		return errors.New("query quota reservation is invalid")
 	}
 	return nil
+}
+
+func registeredTemplateCallCount(calls int64) bool {
+	return calls == int64(domain.ErrorAnalysisAPICalls) || calls == int64(domain.ErrorCountAPICalls)
 }
 
 var _ ports.QueryQuotaStore = (*Store)(nil)
