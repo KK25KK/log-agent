@@ -168,43 +168,43 @@
 
 #### Step 1：写作前取证
 
-- [ ] 读取 `docs/development-process.md`、`docs/roadmap.md`、`docs/spec.md` 和 M0～M5 阶段文档，建立阶段事实表。
-- [ ] 用 Git 日志核对关键阶段提交，但以源码、测试和验收记录为实现证据，不把 commit 列表当正文。
-- [ ] 定位飞书/Web Intake、SQLite Store、Worker、Eino、Gateway、CLI SLS、Evidence、Summary、Delivery 和 Evaluation 的真实调用入口。
-- [ ] 单独整理真实联合样本、Mock E2E、离线评测和待验收项，防止不同证据层级混写。
+- [x] 读取 `docs/development-process.md`、`docs/roadmap.md`、`docs/spec.md` 和 M0～M5 阶段文档，建立阶段事实表。
+- [x] 用 Git 日志核对关键阶段提交，但以源码、测试和验收记录为实现证据，不把 commit 列表当正文。
+- [x] 定位飞书/Web Intake、SQLite Store、Worker、Eino、Gateway、CLI SLS、Evidence、Summary、Delivery 和 Evaluation 的真实调用入口。
+- [x] 单独整理真实联合样本、Mock E2E、离线评测和待验收项，防止不同证据层级混写。
 
 #### Step 2：解析三条调用链
 
-- [ ] 绘制业务主链路 Mermaid：飞书/Web → Intake → SQLite → Worker/Eino → Gateway/CLI SLS → Evidence/Report → 方舟摘要 → Delivery。
-- [ ] 绘制查询治理链路 Mermaid：可信身份 → Catalog → ACL → 固定模板 → 预算/水位 → Schema → Audit → Provider。
-- [ ] 绘制失败恢复链路 Mermaid：幂等 → 租约/fencing → Checkpoint → `NEEDS_REVIEW` → 报告/投递解耦 → 重试/死信/人工确认。
-- [ ] 对每个节点解释输入、输出、职责归属、失败点、恢复方式和可验证证据。
-- [ ] 提供一个 60～90 秒全链路口述稿和一个从用户提交开始的 3 分钟故事稿。
+- [x] 绘制业务主链路 Mermaid：飞书/Web → Intake → SQLite → Worker/Eino → Gateway/CLI SLS → Evidence/Report → 方舟摘要 → Delivery。
+- [x] 绘制查询治理链路 Mermaid：可信身份 → Catalog → ACL → 固定模板 → 预算/水位 → Schema → Audit → Provider。
+- [x] 绘制失败恢复链路 Mermaid：幂等 → 租约/fencing → Checkpoint → `NEEDS_REVIEW` → 报告/投递解耦 → 重试/死信/人工确认。
+- [x] 对每个节点解释输入、输出、职责归属、失败点、恢复方式和可验证证据。
+- [x] 提供一个 60～90 秒全链路口述稿和一个从用户提交开始的 3 分钟故事稿。
 
 #### Step 3：讲清架构选择
 
-- [ ] 逐项分析固定 Graph、分层架构、SQLite 状态机、受治理 Gateway、Evidence-first LLM、CLI + STS、单库 count-only 试点和本地 Web 入口。
-- [ ] 每项按“约束 → 可选方案 → 选择标准 → 当前方案 → 优势 → 代价 → 何时重选”展开。
-- [ ] 重点解释为什么没有直接采用开放式 ReAct、模型自由 SQL、应用长期 AK/SK、原始日志喂模型、一次覆盖 8 库或等待飞书权限。
+- [x] 逐项分析固定 Graph、分层架构、SQLite 状态机、受治理 Gateway、Evidence-first LLM、CLI + STS、单库 count-only 试点和本地 Web 入口。
+- [x] 每项按“约束 → 可选方案 → 选择标准 → 当前方案 → 优势 → 代价 → 何时重选”展开。
+- [x] 重点解释为什么没有直接采用开放式 ReAct、模型自由 SQL、应用长期 AK/SK、原始日志喂模型、一次覆盖 8 库或等待飞书权限。
 
 #### Step 4：讲清 0→1 演进
 
-- [ ] 绘制 M0～M5、真实 LLM、真实 SLS、本地 Web 联合试点的架构演进时间线。
-- [ ] 绘制“前一阶段的限制如何触发下一层组件”的因果图，不把最终架构描述成一次性设计完成。
-- [ ] 每阶段回答：已有能力、暴露问题、新增组件、方案取舍、实现困难、验证层级、启示和遗留项。
-- [ ] 完整复盘至少 8 个困难，统一使用“现象 → 根因 → 被否决方向 → 最终方案 → 验证结果 → 启示 → 尚存限制”。
-- [ ] 用证据矩阵明确单测、Mock E2E、离线 Golden/Replay、真实单库联合样本分别能证明和不能证明什么。
-- [ ] 提供不少于 4 个 📦 额外知识框、12 个源码/测试/开发记录定位，文末恰好 1 个“一句话记住”。
+- [x] 绘制 M0～M5、真实 LLM、真实 SLS、本地 Web 联合试点的架构演进时间线。
+- [x] 绘制“前一阶段的限制如何触发下一层组件”的因果图，不把最终架构描述成一次性设计完成。
+- [x] 每阶段回答：已有能力、暴露问题、新增组件、方案取舍、实现困难、验证层级、启示和遗留项。
+- [x] 完整复盘至少 8 个困难，统一使用“现象 → 根因 → 被否决方向 → 最终方案 → 验证结果 → 启示 → 尚存限制”。
+- [x] 用证据矩阵明确单测、Mock E2E、离线 Golden/Replay、真实单库联合样本分别能证明和不能证明什么。
+- [x] 提供不少于 4 个 📦 额外知识框、12 个源码/测试/开发记录定位，文末恰好 1 个“一句话记住”。
 
 #### Step 5：自查与提交
 
-- [ ] 检查行数 500～800、调用链图不少于 3、演进时间线不少于 1、因果图不少于 1、口述稿 2 份。
-- [ ] 检查架构决策不少于 8、完整困难复盘不少于 8、阶段覆盖 M0～M5 与三个真实接入节点。
-- [ ] 检查 `file:///` 不少于 12、📦 不少于 4、💡 恰好 1，所有链接可定位。
-- [ ] 检查每个“效果”都标注单测、Mock、离线评测或真实联合样本层级。
-- [ ] 检查飞书只称“功能已实现、真实平台验收待权限”，真实联合样本只称“单主 Logstore count-only”。
-- [ ] 运行 `git diff --check`。
-- [ ] Commit：`docs(interview): add zero-to-one architecture story`
+- [x] 检查行数 500～800、调用链图不少于 3、演进时间线不少于 1、因果图不少于 1、口述稿 2 份。
+- [x] 检查架构决策不少于 8、完整困难复盘不少于 8、阶段覆盖 M0～M5 与三个真实接入节点。
+- [x] 检查 `file:///` 不少于 12、📦 不少于 4、💡 恰好 1，所有链接可定位。
+- [x] 检查每个“效果”都标注单测、Mock、离线评测或真实联合样本层级。
+- [x] 检查飞书只称“功能已实现、真实平台验收待权限”，真实联合样本只称“单主 Logstore count-only”。
+- [x] 运行 `git diff --check`。
+- [x] Commit：`docs(interview): add zero-to-one architecture story`
 
 ### Task 10：更新使用入口
 
