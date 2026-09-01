@@ -43,7 +43,7 @@ Eino 固定调查 Graph
 - 真实模板只执行两次聚合读取：错误总数和 Top 错误维度，不返回原始日志正文。
 - 查询前校验时间窗、结果行数、API 调用数、超时和单进程并发。
 - 日志查询前通过 `GetIndex` 校验选择器字段和分析字段；错误维度必须是开启统计的 text 字段。Schema 元数据请求发生在 `STARTED` 日志查询审计之前。
-- 查询后保留 Request ID、Progress、`isAccurate`、处理行数、处理字节数和耗时；这里的 `isAccurate` 当前只解释为纳秒级有序元数据。
+- 查询后保留本地执行 ID，以及 CLI 暴露的 Progress、`isAccurate`、处理行数、处理字节数和耗时；Provider Request ID 不保证存在且不会伪造，这里的 `isAccurate` 当前只解释为纳秒级有序元数据。
 - Provider 结果不完整、截断、缺少质量/用量元数据或处理字节超预算时，Evidence 自动降级为“不足以得出确定结论”。M1 当时曾误把 `isAccurate` 当作分析准确性；当前实现只把它保存为纳秒级有序元数据，不参与质量门禁。
 - 查询标签离开网关前会做长度限制，并脱敏邮箱、IPv4、Bearer/JWT 和常见 AccessKey 形态。
 - 脱敏只替换展示标签，不改变聚合计数；Evidence 会保留 `redacted=true`，但不会仅因标签被替换就丢弃有效的计数结论。
@@ -58,7 +58,7 @@ Eino Graph 仍只负责“构造当前窗口和基线窗口 -> 调用查询边�
 
 ### 2.2 真实 SDK 放在最窄适配层
 
-只有 `internal/adapters/aliyunsls` 可以导入阿里云 SLS SDK。该适配器只暴露：
+只有 `internal/adapters/aliyuncli` 可以调用阿里云 CLI/SLS 插件。该适配器只暴露：
 
 - 获取索引 Schema；
 - 执行已经审核通过的固定聚合查询；
@@ -79,7 +79,7 @@ M1 的目标是先把真实数据访问做安全。SQL 字段、运算、分组�
 | 位置 | 职责 |
 | --- | --- |
 | `internal/application/query/gateway.go` | 不可绕过的 ACL、预算、Schema、审计、质量判定和脱敏网关 |
-| `internal/adapters/aliyunsls/backend.go` | 官方 SLS Go SDK、固定查询编译、Provider 元数据归一化 |
+| `internal/adapters/aliyuncli/backend.go` | CLI 进程边界、固定查询编译、Provider 元数据归一化 |
 | `internal/adapters/resourcecatalog/catalog.go` | JSON 资源目录、字段校验、Principal ACL、默认拒绝 |
 | `internal/adapters/sqlite/query_audit.go` | 追加式查询审计持久化 |
 | `internal/domain/query.go` | 资源、Schema、ApprovedQuery 和 QueryAudit 领域模型 |
@@ -150,8 +150,8 @@ Smoke 会经过与 Worker 相同的资源解析、ACL、预算、Schema、审计
 - Provider Incomplete、截断、用量缺失和字节超限的降级；历史 `isAccurate` 误读已从质量门禁移除；
 - 即使 Provider 忽略 Context 并在应用 deadline 后返回成功，也不能形成完整 Evidence；
 - SLS `limited` 元数据按“SQL 结果行限制”处理，不误判为截断；两个固定 SQL 都显式 `LIMIT 1`；
-- SDK 错误在适配层转成只含操作、状态码、错误码和 Request ID 的安全错误，Provider message/body 不进入查询审计；
-- ECS RAM Role 使用 IMDSv2 Token 加固模式，元数据请求有有限 timeout、临时凭据缓存，并禁用代理和重定向；
+- CLI 错误在适配层转成只含操作、退出码和关闭错误码的安全错误，Provider message/body 不进入查询审计；
+- 真实认证使用用户通过 SSO 获取并写入本机 CLI 的短期 `StsToken` Profile；应用不接收 AK/SK/Token；
 - Schema TTL 缓存过期后失败关闭；
 - 并发门禁和 permit 释放；
 - 查询审计追加、隔离、重启持久化和列白名单；
@@ -177,7 +177,7 @@ go vet ./...                PASS
 - `sls-check` 能定向访问指定试点 Project、LogStore，确认 Standard 模式和索引字段；
 - 已授权 Smoke Principal 能执行固定聚合；
 - 未授权 Principal 在真实配置中保持调用前拒绝；
-- 真实返回的 Progress、Request ID、纳秒级有序和处理字节元数据符合预期；
+- 真实返回的 Progress、纳秒级有序和处理字节元数据符合预期，本地执行 ID 可追踪，Provider Request ID 若缺失则保持为空；
 - RAM 策略只授予试点资源需要的只读权限；
 - 企业自定义敏感模式补充到脱敏规则。
 

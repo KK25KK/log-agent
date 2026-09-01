@@ -42,7 +42,7 @@ M2 把前两期的“可靠任务骨架 + 受控 SLS 查询”组合成第一个
 
 - 四次固定调用全部返回，且前后两次错误总数一致；
 - SLS `progress=Complete`；
-- Provider Request ID、处理行数、处理字节数和耗时元数据齐全；
+- 本地执行 ID、处理行数、处理字节数和耗时元数据齐全；Provider Request ID 仅在 CLI 明确返回时记录；
 - 聚合桶非空、计数为正、不重复、不超过 Top 5，且桶计数之和不超过错误总数；
 - API 调用数、返回行数和处理字节数没有越过策略预算。
 
@@ -104,7 +104,7 @@ M2 不需要 LLM 才能运行。错误增长倍数、错误占比、实例占比
 
 ```text
 internal/domain/query.go                 M2 固定模板和调用/行数常量
-internal/adapters/aliyunsls/backend.go   四次聚合查询、前后计数门禁与 Provider 结果归一化
+internal/adapters/aliyuncli/backend.go   四次 CLI 聚合查询、前后计数门禁与 Provider 结果归一化
 internal/application/query/gateway.go    ACL、Schema、预算、脱敏和查询审计
 internal/adapters/eino/engine.go         当前/基线分析与确定性报告
 internal/adapters/sqlite/delivery.go     卡片路由、顺序事件、租约与 fencing
@@ -114,7 +114,7 @@ internal/adapters/feishu/                 JSON 2.0 卡片、Reply/Patch 和 call
 cmd/logagent                              Worker、飞书入口和 Delivery Worker 组装
 ```
 
-Eino、飞书 SDK 和阿里云 SLS SDK 仍分别只允许存在于对应适配层，架构测试会阻止 SDK 类型进入核心业务。
+Eino、飞书 SDK 和阿里云 CLI 执行仍分别只允许存在于对应适配层，架构测试会阻止外部框架或进程执行进入核心业务。
 
 ## 5. 本地验证
 
@@ -165,7 +165,7 @@ go run ./cmd/logagent demo
 
 | 环境变量 | 默认值 | 含义 |
 | --- | ---: | --- |
-| `LOG_AGENT_SLS_REQUEST_TIMEOUT` | `15s` | 单次 SDK HTTP 请求超时 |
+| `LOG_AGENT_SLS_REQUEST_TIMEOUT` | `15s` | 单次 CLI 调用超时 |
 | `LOG_AGENT_SLS_QUERY_TIMEOUT` | `45s` | 一个窗口四次聚合的应用总时限 |
 | `LOG_AGENT_SLS_INGESTION_GRACE` | `10s` | 窗口结束相对消息时刻的索引安全水位，最小 `3s` |
 | `LOG_AGENT_SLS_MAX_ROWS` | `12` | 一个窗口最大聚合行数 |

@@ -10,7 +10,7 @@ import (
 	"syscall"
 	"time"
 
-	"logagent/internal/adapters/aliyunsls"
+	"logagent/internal/adapters/aliyuncli"
 	"logagent/internal/adapters/changecatalog"
 	"logagent/internal/adapters/resourcecatalog"
 	"logagent/internal/adapters/slsmock"
@@ -58,18 +58,16 @@ func buildChangeSource(config config.Config) (ports.ChangeSource, error) {
 	return changecatalog.Load(config.ChangeCatalogPath)
 }
 
-func buildAliyunDependencies(config config.Config) (*resourcecatalog.Catalog, *aliyunsls.Backend, error) {
+func buildAliyunDependencies(config config.Config) (*resourcecatalog.Catalog, *aliyuncli.Backend, error) {
 	catalog, err := resourcecatalog.Load(config.SLS.CatalogPath)
 	if err != nil {
 		return nil, nil, err
 	}
-	backend, err := aliyunsls.New(aliyunsls.Config{
-		CredentialMode:  config.SLS.CredentialMode,
-		AccessKeyID:     config.SLS.AccessKeyID,
-		AccessKeySecret: config.SLS.AccessKeySecret,
-		SecurityToken:   config.SLS.SecurityToken,
-		ECSRAMRoleName:  config.SLS.ECSRAMRoleName,
-		RequestTimeout:  config.SLS.RequestTimeout,
+	backend, err := aliyuncli.New(aliyuncli.Config{
+		CLIPath:        config.SLS.CLIPath,
+		Profile:        config.SLS.CLIProfile,
+		RequestTimeout: config.SLS.RequestTimeout,
+		MaxOutputBytes: config.SLS.CLIMaxOutputBytes,
 	})
 	if err != nil {
 		return nil, nil, err

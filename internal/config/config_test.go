@@ -9,7 +9,7 @@ import (
 
 func TestLoadDefaultsToOfflineMock(t *testing.T) {
 	t.Setenv("LOG_AGENT_SLS_MODE", "")
-	t.Setenv("LOG_AGENT_SLS_CREDENTIAL_MODE", "")
+	t.Setenv("LOG_AGENT_SLS_CLI_PROFILE", "")
 	t.Setenv("LOG_AGENT_LLM_MODE", "")
 	t.Setenv("ARK_API_KEY", "")
 	t.Setenv("LOG_AGENT_ARK_MODEL", "")
@@ -17,7 +17,7 @@ func TestLoadDefaultsToOfflineMock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config.SLS.Mode != "mock" || config.SLS.MaxAPICalls != 4 || config.SLS.MaxRows != 12 || config.SLS.MaxConcurrent <= 0 {
+	if config.SLS.Mode != "mock" || config.SLS.CLIProfile != "default" || config.SLS.MaxAPICalls != 4 || config.SLS.MaxRows != 12 || config.SLS.MaxConcurrent <= 0 {
 		t.Fatalf("unexpected defaults: %#v", config.SLS)
 	}
 	if config.SLS.QueryTimeout != 45*time.Second || config.Delivery.MaxAttempts != 5 || config.Delivery.Lease <= config.Delivery.SendTimeout {
@@ -90,11 +90,18 @@ func TestLoadRejectsUnsafeIngestionGrace(t *testing.T) {
 	}
 }
 
-func TestLoadRejectsQueryTimeoutBelowSDKRequestTimeout(t *testing.T) {
+func TestLoadRejectsQueryTimeoutBelowCLIRequestTimeout(t *testing.T) {
 	t.Setenv("LOG_AGENT_SLS_REQUEST_TIMEOUT", "15s")
 	t.Setenv("LOG_AGENT_SLS_QUERY_TIMEOUT", "5s")
 	if _, err := Load(); err == nil {
 		t.Fatal("want invalid query timeout error")
+	}
+}
+
+func TestLoadRejectsUnsafeCLIOutputLimit(t *testing.T) {
+	t.Setenv("LOG_AGENT_SLS_CLI_MAX_OUTPUT_BYTES", "1024")
+	if _, err := Load(); err == nil {
+		t.Fatal("want unsafe CLI output limit error")
 	}
 }
 

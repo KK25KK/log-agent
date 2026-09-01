@@ -29,7 +29,7 @@ Users can ask the bot to investigate an error spike for a known service, environ
 - Preflight time-window, call-count, row-count, timeout, and concurrency budgets.
 - A post-query processed-byte budget used as the initial cost guardrail.
 - Index Schema validation before executing analytical queries.
-- An official Alibaba Cloud SLS Go SDK adapter using read-only APIs.
+- An Alibaba Cloud CLI/SLS-plugin adapter that uses an operator-selected local `StsToken` Profile and only read-only APIs.
 - Evidence carrying resource identity, query identity, time range, completeness, scan statistics, and result summary.
 - Current-versus-baseline error-pattern share, candidate-new-pattern, and instance-concentration analysis.
 - A versioned, administrator-managed change catalog for bounded release/configuration context.
@@ -161,7 +161,7 @@ Governed SOP guidance runs later in the Worker, only after the deterministic Eng
 
 ### Framework boundary
 
-Only the Eino orchestration adapter imports Eino packages. Only the Feishu adapter imports Feishu SDK packages. Only the Alibaba SLS adapter imports `github.com/aliyun/aliyun-log-go-sdk`. External SDK request and response types cannot escape their adapter packages.
+Only the Eino orchestration adapter imports Eino packages. Only the Feishu adapter imports Feishu SDK packages. The Alibaba SLS adapter invokes one resolved `aliyun` executable directly, without a shell, and owns all CLI arguments, output parsing, process limits, and error sanitization. CLI output types cannot escape the adapter package.
 
 ### Identity boundary
 
@@ -170,6 +170,8 @@ Only the Eino orchestration adapter imports Eino packages. Only the Feishu adapt
 ### Resource and query boundary
 
 The resource catalog is a versioned JSON configuration managed by operators. It maps a unique `(service, environment)` pair to an HTTPS endpoint, Project, LogStore, fixed scope selectors, one required and separate error selector, analytical dimension, and template version. Credentials are never stored in this file.
+
+In real mode, authentication is `SSO -> short-lived STS -> local Alibaba Cloud CLI StsToken Profile -> SLS plugin`. The service never receives AccessKey ID, AccessKey secret, or Security Token through its own environment. It selects a fixed operator-owned Profile (default `default`), strips direct credential environment variables from the child process, disables plugin auto-install, and never enables CLI debug output. Expired STS credentials fail visibly and require the operator to renew the Profile; the service does not switch accounts or refresh SSO sessions. Because the service deliberately does not read the Profile file, the deployment process must attest that the selected Profile was created in `StsToken` mode; a successful resource check proves access, not credential mode.
 
 The only production template in this version is `error_analysis_v2`. It performs four bounded, read-only aggregate requests for each observation: count before, Top 5 configured error dimensions, Top 5 configured instance dimensions, and count after. A resource therefore owns both `error_field` and `instance_field`, and both must be indexed text fields with statistics enabled. Users and models cannot submit provider query strings.
 
@@ -219,7 +221,7 @@ High-risk approval is a separate closed state machine: `PENDING -> APPROVED | RE
 4. Preflight budgets and index Schema are checked.
 5. A durable `STARTED` audit event is written before the first `GetLogsV2` log query is called. Schema metadata may be fetched before this event.
 6. The fixed template obtains total count, Top 5 error patterns, and Top 5 instances without returning raw log bodies.
-7. Provider progress and scan metadata are normalized. `Incomplete`, timeout, provider truncation, missing usage metadata, or processed-byte overflow cannot produce a conclusive finding.
+7. Provider progress and scan metadata returned by the CLI are normalized. `Incomplete`, timeout, provider truncation, missing usage metadata, or processed-byte overflow cannot produce a conclusive finding.
 8. Every returned bucket label is length-bounded and redacted before leaving the policy boundary.
 9. A single terminal success, incomplete, or failure event is appended to query audit.
 10. The report references every evidence item used by its findings.
@@ -250,7 +252,7 @@ High-risk approval is a separate closed state machine: `PENDING -> APPROVED | RE
 
 ### Validate a real SLS configuration
 
-An explicit diagnostic command loads the same catalog and credentials as a real worker, verifies configured Projects, LogStores, and indexes, and prints only non-secret metadata. A separate smoke command runs one authorized fixed-template query. Neither command is run implicitly by the offline demo or test suite.
+An explicit diagnostic command loads the same catalog and CLI Profile selection as a real worker, verifies configured Projects, LogStores, and indexes, and prints only non-secret metadata. A separate smoke command runs one authorized fixed-template query. Neither command is run implicitly by the offline demo or test suite.
 
 ### Recover work
 
@@ -350,7 +352,7 @@ Investigation states are `QUEUED`, `RUNNING`, `SUCCEEDED`, `FAILED`, `CANCELLED`
 
 Allowed terminal states cannot transition back to running. Each claim increments the attempt count and binds a lease owner and expiry. Renewal and completion require both the active lease owner and the active attempt fencing token, so a stale process cannot submit through a newer claim that reused the same worker ID.
 
-Provider `progress`, usage, and nanosecond-order metadata are preserved. `complete=true` is derived only from provider `Complete` plus local structural, usage, and budget gates. A finding is conclusive only when all referenced evidence is complete and not truncated. Otherwise the report must describe the result as insufficient data.
+Provider `progress`, usage, and nanosecond-order metadata exposed by the CLI are preserved. `complete=true` is derived only from provider `Complete` plus local structural, usage, and budget gates. Missing CLI metadata fails closed. A finding is conclusive only when all referenced evidence is complete and not truncated. Otherwise the report must describe the result as insufficient data.
 
 Near-real-time requests use a configured ingestion watermark. The default command scope ends ten seconds before the message timestamp, and the query gateway rejects a scope whose end has not crossed that watermark. Matching count-before/count-after values are additionally required for a complete multi-query observation. The watermark is an operator-owned ingestion-latency assumption and must be calibrated against the pilot pipeline.
 
@@ -358,13 +360,13 @@ The provider `isAccurate` field is a nanosecond-order option, not an analytical 
 
 Redaction changes only the displayed aggregate label; it does not change the aggregate counts or automatically make otherwise complete evidence inconclusive. The `Redacted` marker remains on Evidence so readers know that a label was transformed.
 
-Query audit is append-only and excludes credentials, raw log bodies, and raw provider query strings. A query-spec fingerprint includes the resolved resource, template and policy versions, selectors, time range, and enforced limits.
+Query audit is append-only and excludes credentials, raw log bodies, and raw provider query strings. A query-spec fingerprint includes the resolved resource, template and policy versions, selectors, time range, and enforced limits. `QueryID` is an adapter-generated execution correlation ID. A provider Request ID is recorded only when the transport exposes one; the normal CLI success response does not guarantee it, so the system must never copy or relabel a local execution ID as a provider Request ID.
 
 Notification delivery states are `PENDING`, `RUNNING`, `SENT`, and `DEAD`. Claims use owner, lease expiry, and attempt fencing. A delivery failure never rolls back or changes the investigation business state. M4-B uses a closed failure disposition, append-only attempt audit and bounded retry. Operational replay must pass the latest-card-projection transaction guard and is itself audited.
 
 M2 runs one Feishu/delivery process. Database fencing protects local claims and stale attempts, but globally ordered remote patches from multiple delivery processes require the production outbox/dispatcher work planned for M4.
 
-M4-A persists one checkpoint per logical SLS window. Its input hash combines the immutable logical `QuerySpec` with a governed fingerprint over the catalog and physical resource, selectors, schema, template, policy, and budgets. Confirmed successful results are reusable only while that governance identity still matches, and current/baseline Evidence with different governance identities cannot produce a report. An abandoned `STARTED` metered step is never automatically retried. Other executor errors remain terminal until the later M4 retry-classification slice is implemented. Paid POST queries disable the SDK's server-error retry; metadata GET transport retries are bounded by the configured request timeout. The system does not claim exactly-once SLS query execution.
+M4-A persists one checkpoint per logical SLS window. Its input hash combines the immutable logical `QuerySpec` with a governed fingerprint over the catalog and physical resource, selectors, schema, template, policy, and budgets. Confirmed successful results are reusable only while that governance identity still matches, and current/baseline Evidence with different governance identities cannot produce a report. An abandoned `STARTED` metered step is never automatically retried. Other executor errors remain terminal until the later M4 retry-classification slice is implemented. The CLI adapter performs exactly one process invocation per declared metadata or query call and does not enable hidden retries. The system does not claim exactly-once SLS query execution.
 
 Existing queued records created before trusted principals were persisted decode with an empty principal and must fail closed in real-SLS mode. The offline mock remains backward compatible.
 
@@ -398,11 +400,11 @@ M5-C feedback uses a store separate from both the production investigation Store
 
 - Eino is pinned to `v0.9.14`; pre-release APIs are excluded.
 - Feishu SDK is pinned to `v3.9.10`.
-- Alibaba SLS Go SDK is pinned to `v0.1.126`.
+- Alibaba Cloud CLI `3.x` and the installed `aliyun-cli-sls` plugin are deployment prerequisites; their exact approved versions are recorded and verified by the deployment process, not downloaded at runtime. `sls-check` proves that the configured binary/plugin can execute the required metadata commands, but does not itself attest a version allowlist.
 - Real catalog endpoints must use `https://`; same-region VPC endpoints are recommended for deployment.
-- Credentials come from environment-provided STS/AccessKey values or an ECS RAM role provider. The ECS provider uses IMDSv2 hardened metadata access. Credentials and tokens must never be logged.
-- The official SLS Go SDK query methods do not accept caller contexts. The adapter disables SDK retries for server errors and enforces a fixed HTTP client timeout; it must not claim immediate transport cancellation.
-- Application context is checked before SDK calls and again before accepting returned results, and it controls policy waits. Immediate in-flight SLS request cancellation requires a separately reviewed context-aware transport or upstream SDK support.
+- Credentials come only from an existing local Alibaba Cloud CLI `StsToken` Profile selected by `LOG_AGENT_SLS_CLI_PROFILE`; direct AK/SK/Token environment variables are stripped from the child process and are unsupported by this service. Credentials and tokens must never be logged.
+- The adapter resolves the `aliyun` executable at startup, invokes it with `exec.CommandContext` rather than a shell, bounds stdout/stderr, sets `ALIBABA_CLOUD_CLI_PLUGIN_AUTO_INSTALL=false`, and forces the selected Profile through `ALIBABA_CLOUD_PROFILE`.
+- Application cancellation and the per-call timeout terminate the CLI child process. STS expiry, missing Profile, missing plugin, unsupported output, or non-zero exit fails closed with a bounded sanitized error.
 - SLS `limited` metadata represents the SQL result-row limit and is not itself evidence of truncation. Every fixed aggregate SQL statement owns an explicit `LIMIT`.
 - Raw provider error messages, bodies, headers, URLs, and query strings cannot cross the Alibaba SLS adapter or enter query audit.
 - External messages and log content are untrusted input and cannot alter resources, templates, permissions, or budgets.
@@ -426,14 +428,14 @@ M5-C feedback uses a store separate from both the production investigation Store
 
 ### Read-only SLS query foundation
 
-- [x] The official SLS Go SDK exists only inside its adapter package.
+- [x] The Alibaba Cloud CLI/SLS plugin protocol exists only inside its adapter package; the Go SDK is not a runtime dependency.
 - [x] The default demo remains offline and produces deterministic facts.
 - [x] A unique service/environment mapping resolves to one configured HTTPS SLS target.
 - [x] Every resource has an explicit error selector separate from its scope selectors.
 - [x] A trusted principal is derived from the inbound envelope and cannot be forged in the request.
 - [x] Unknown resources, missing ACL bindings, unsafe windows, and invalid policy are rejected before log-query execution.
 - [x] Missing indexes or analytical fields without statistics enabled are rejected before the fixed query executes.
-- [x] The fixed template preserves provider request IDs, progress, nanosecond-order metadata, processed rows, processed bytes, and elapsed time.
+- [x] The fixed template preserves adapter execution IDs plus provider progress, nanosecond-order metadata, processed rows, processed bytes, and elapsed time when the CLI exposes them; missing metadata fails closed, and provider Request IDs are never fabricated.
 - [x] Incomplete, timed-out, structurally inconsistent, truncated, metadata-deficient, or over-scan-budget results cannot yield a conclusive finding.
 - [x] Denied, started, succeeded, incomplete, and failed attempts are durably auditable without secrets, raw logs, or raw SQL.
 - [x] A configuration-check command is implemented and unit-tested not to query log bodies.

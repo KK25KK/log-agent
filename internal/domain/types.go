@@ -87,6 +87,7 @@ type CountBucket struct {
 // QueryResult is the provider-neutral observation returned by an SLS executor.
 type QueryResult struct {
 	QueryID                 string        `json:"query_id"`
+	ProviderRequestID       string        `json:"provider_request_id,omitempty"`
 	QuerySpecHash           string        `json:"query_spec_hash"`
 	ResourceID              string        `json:"resource_id"`
 	TemplateID              string        `json:"template_id"`

@@ -476,7 +476,7 @@ func (g *Gateway) auditTerminal(spec domain.QuerySpec, approved domain.ApprovedQ
 	return g.audit(ctx, spec, approved, domain.QueryAudit{
 		Outcome:           outcome,
 		Reason:            reason,
-		ProviderRequestID: result.QueryID,
+		ProviderRequestID: result.ProviderRequestID,
 		Progress:          result.Progress,
 		Complete:          result.Complete,
 		Truncated:         result.Truncated,

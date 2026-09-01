@@ -37,11 +37,9 @@ type DeliveryConfig struct {
 type SLSConfig struct {
 	Mode              string
 	CatalogPath       string
-	CredentialMode    string
-	AccessKeyID       string
-	AccessKeySecret   string
-	SecurityToken     string
-	ECSRAMRoleName    string
+	CLIPath           string
+	CLIProfile        string
+	CLIMaxOutputBytes int64
 	RequestTimeout    time.Duration
 	QueryTimeout      time.Duration
 	MaxWindow         time.Duration
@@ -93,13 +91,10 @@ func Load() (Config, error) {
 			WorkerID: valueOrDefault("LOG_AGENT_DELIVERY_WORKER_ID", "feishu-delivery-local"),
 		},
 		SLS: SLSConfig{
-			Mode:            valueOrDefault("LOG_AGENT_SLS_MODE", "mock"),
-			CatalogPath:     valueOrDefault("LOG_AGENT_SLS_CATALOG", "./config/sls-resources.json"),
-			CredentialMode:  valueOrDefault("LOG_AGENT_SLS_CREDENTIAL_MODE", "static"),
-			AccessKeyID:     os.Getenv("ALIBABA_CLOUD_ACCESS_KEY_ID"),
-			AccessKeySecret: os.Getenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET"),
-			SecurityToken:   os.Getenv("ALIBABA_CLOUD_SECURITY_TOKEN"),
-			ECSRAMRoleName:  os.Getenv("LOG_AGENT_SLS_ECS_RAM_ROLE_NAME"),
+			Mode:        valueOrDefault("LOG_AGENT_SLS_MODE", "mock"),
+			CatalogPath: valueOrDefault("LOG_AGENT_SLS_CATALOG", "./config/sls-resources.json"),
+			CLIPath:     os.Getenv("LOG_AGENT_SLS_CLI_PATH"),
+			CLIProfile:  valueOrDefault("LOG_AGENT_SLS_CLI_PROFILE", "default"),
 		},
 		LLM: LLMConfig{
 			Mode:    valueOrDefault("LOG_AGENT_LLM_MODE", "mock"),
@@ -115,9 +110,6 @@ func Load() (Config, error) {
 	}
 	if config.SLS.Mode != "mock" && config.SLS.Mode != "aliyun" {
 		return Config{}, fmt.Errorf("LOG_AGENT_SLS_MODE must be mock or aliyun")
-	}
-	if config.SLS.CredentialMode != "static" && config.SLS.CredentialMode != "ecs_ram_role" {
-		return Config{}, fmt.Errorf("LOG_AGENT_SLS_CREDENTIAL_MODE must be static or ecs_ram_role")
 	}
 	if config.LLM.Mode != "disabled" && config.LLM.Mode != "mock" && config.LLM.Mode != "volcengine" {
 		return Config{}, fmt.Errorf("LOG_AGENT_LLM_MODE must be disabled, mock, or volcengine")
@@ -167,6 +159,13 @@ func Load() (Config, error) {
 	}
 	if config.SLS.QueryTimeout < config.SLS.RequestTimeout {
 		return Config{}, fmt.Errorf("LOG_AGENT_SLS_QUERY_TIMEOUT must be at least LOG_AGENT_SLS_REQUEST_TIMEOUT")
+	}
+	config.SLS.CLIMaxOutputBytes, err = int64OrDefault("LOG_AGENT_SLS_CLI_MAX_OUTPUT_BYTES", 4*1024*1024)
+	if err != nil {
+		return Config{}, err
+	}
+	if config.SLS.CLIMaxOutputBytes < 64*1024 || config.SLS.CLIMaxOutputBytes > 16*1024*1024 {
+		return Config{}, fmt.Errorf("LOG_AGENT_SLS_CLI_MAX_OUTPUT_BYTES must be between 65536 and 16777216")
 	}
 	config.SLS.MaxWindow, err = durationOrDefault("LOG_AGENT_SLS_MAX_WINDOW", 2*time.Hour)
 	if err != nil {

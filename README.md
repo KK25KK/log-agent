@@ -52,14 +52,14 @@ Eino 只负责流程编排，不负责业务状态、权限、幂等、审计和
 - 唯一生产查询模板 `error_analysis_v2`；用户和模型不能提交 Project、LogStore、SQL 或 SPL。
 - 执行前校验时间窗、固定调用数、返回行数、超时和单进程并发。
 - 通过 `GetIndex` 校验字段索引；错误维度和实例维度都必须是开启统计的 text 字段。
-- 使用官方 `github.com/aliyun/aliyun-log-go-sdk v0.1.126` 执行四条只读聚合查询：前置错误总数、Top 5 错误模式、Top 5 实例和后置错误总数。
-- 保存四次 Provider Request ID、Progress、纳秒有序元数据、处理行数、处理字节数和耗时；前后总数变化时按证据不足处理。
+- 通过本机阿里云 CLI + SLS 插件执行四条只读聚合查询：前置错误总数、Top 5 错误模式、Top 5 实例和后置错误总数。
+- 保存四次本地执行 ID，以及 CLI 暴露的 Progress、纳秒有序元数据、处理行数、处理字节数和耗时；CLI 未提供 Provider Request ID 时保持为空，不伪造；前后总数变化时按证据不足处理。
 - `Incomplete`、结构不一致、截断、元数据缺失或扫描字节超预算时禁止生成确定性结论。
 - 查询标签做长度限制，并脱敏邮箱、IPv4、Bearer/JWT 和常见 AccessKey 形态。
 - SQLite 追加式查询审计，记录拒绝、开始、成功、证据不足和失败，不保存凭据、原始日志或原始 SQL。
 - `sls-check` 定向检查 Project、LogStore、Standard 模式和字段 Schema；不依赖有分页上限的全量资源列表。
 - 显式 `sls-smoke` 查询命令。
-- SDK 依赖边界架构测试。
+- CLI 执行边界架构测试。
 
 ### 飞书调查闭环
 
@@ -326,33 +326,34 @@ Copy-Item .\config\sls-resources.example.json .\config\sls-resources.json
 
 目录中不要写 AccessKey 或 Token。
 
-### 2. 配置凭据与预算
+### 2. 配置 CLI Profile 与预算
 
-项目不会自动加载 `.env`；请在进程环境中设置变量。短期联调可以使用资源级 RAM 用户或 STS，生产优先 ECS RAM Role/短期凭据。
+项目不会自动加载 `.env`，也不接收 AK/SK/Token 环境变量。先由用户通过企业 SSO 获取短期 STS，并在自己的终端写入本机阿里云 CLI `StsToken` Profile：
+
+```powershell
+aliyun configure --mode StsToken --profile default
+```
+
+凭据只由 CLI Profile 读取；STS 到期后由用户重新获取并覆盖该 Profile。log-agent 的 Go 代码不会自动续签、切换账号或读取 Profile 文件。
+
+完整迁移影响、安全边界和逐步接入操作见 [`docs/sls-cli-sts-migration.md`](docs/sls-cli-sts-migration.md)。
 
 最小只读 RAM 策略模板见 `config/sls-readonly-policy.example.json`。它只包含定向检查和查询需要的 `GetProject`、`GetLogStore`、`GetIndex`、`GetLogStoreLogs`，请替换地域、账号、Project 和 LogStore 占位符；不要给 Agent `AliyunLogFullAccess`。
 
 ```powershell
 $env:LOG_AGENT_SLS_MODE = "aliyun"
 $env:LOG_AGENT_SLS_CATALOG = ".\config\sls-resources.json"
-$env:LOG_AGENT_SLS_CREDENTIAL_MODE = "static"
-$env:ALIBABA_CLOUD_ACCESS_KEY_ID = "your-access-key-id"
-$env:ALIBABA_CLOUD_ACCESS_KEY_SECRET = "your-access-key-secret"
-$env:ALIBABA_CLOUD_SECURITY_TOKEN = "your-sts-token" # 长期 RAM AK 时可不设
-```
-
-使用 ECS RAM Role 时：
-
-```powershell
-$env:LOG_AGENT_SLS_CREDENTIAL_MODE = "ecs_ram_role"
-$env:LOG_AGENT_SLS_ECS_RAM_ROLE_NAME = "your-role-name"
+$env:LOG_AGENT_SLS_CLI_PROFILE = "default"
+# 可选：aliyun 不在 PATH 时指定可信绝对路径
+$env:LOG_AGENT_SLS_CLI_PATH = "C:\path\to\aliyun.exe"
 ```
 
 默认门禁：
 
 | 配置 | 默认值 | 含义 |
 | --- | ---: | --- |
-| `LOG_AGENT_SLS_REQUEST_TIMEOUT` | `15s` | 单次 SDK HTTP 请求硬超时 |
+| `LOG_AGENT_SLS_REQUEST_TIMEOUT` | `15s` | 单次 CLI 调用超时 |
+| `LOG_AGENT_SLS_CLI_MAX_OUTPUT_BYTES` | `4194304` | 单次 CLI stdout 上限 |
 | `LOG_AGENT_SLS_QUERY_TIMEOUT` | `45s` | 一个窗口四次聚合的应用总时限 |
 | `LOG_AGENT_SLS_MAX_WINDOW` | `2h` | 单个观察窗口上限 |
 | `LOG_AGENT_SLS_INGESTION_GRACE` | `10s` | 查询结束时间相对消息时刻向前回退的索引安全水位，最小 `3s` |
@@ -495,7 +496,7 @@ internal/ports                       Store、Engine、QueryGateway、SLSBackend�
 internal/adapters/eino               唯一允许导入 Eino 的包
 internal/adapters/feishu             唯一允许导入飞书 SDK 的包
 internal/adapters/feishumock         离线飞书收件与卡片投递模拟，不导入 SDK
-internal/adapters/aliyunsls           唯一允许导入阿里云 SLS SDK 的包
+internal/adapters/aliyuncli           唯一允许调用阿里云 CLI/SLS 插件的包
 internal/adapters/resourcecatalog     JSON 资源目录与静态 ACL
 internal/adapters/changecatalog       M3 版本化发布/配置变更目录
 internal/adapters/signalmock          M3-B 指标/Trace 聚合离线 Mock
@@ -522,10 +523,11 @@ internal/application/runbook.go       Worker 后处理的 SOP 查询、引用派
 ## 当前边界与已知限制
 
 - 代码已经具备真实 SLS 适配器，但本仓库没有试点账号、Project、LogStore、真实 Schema 或凭据，因此尚未声称真实环境联调通过。
-- 官方 Go SDK 的 `GetLogsV2` 不接收调用方 `context.Context`。当前关闭 SDK 的 500/502/503 自动重试，同时把 HTTP timeout 和 SDK 内部 GET 网络错误重试窗口都限制为配置值，并在调用返回后再次检查 deadline；四次顺序查询由独立的总查询时限约束，但用户取消仍不能保证底层 HTTP 立即中止。
-- 内置 ECS RAM Role Provider 使用官方推荐的 IMDSv2 加固模式获取元数据 Token，再读取临时凭据；请求有有限 timeout、缓存凭据且禁止代理和重定向。该模式仍需在你的 ECS 试点上做真实验证。
+- 真实适配器不再链接阿里云 Go SDK。它解析一次可信 `aliyun` 可执行文件，不经 shell 调用，强制固定 Profile、禁用插件自动安装、移除子进程中的 AK/SK/Token 覆盖变量，并限制 stdout/stderr 和调用时长。
+- CLI 成功 JSON 通常不保证返回 Provider Request ID；系统使用独立本地执行 ID 做内部关联，Provider Request ID 只有在 CLI 明确返回时才进入审计。该变化降低了云侧工单关联能力，但不会削弱 ACL、预算、Schema、Checkpoint 或证据完整性门禁。
+- 手工写入的 STS Profile 会过期。到期查询会失败并保留安全错误/审计，需要值班人员续签后再按现有 `NEEDS_REVIEW` 与成本确认规则处理；当前模式不是无人值守的长期凭据方案。
 - SLS `limited` 表示 SQL 的结果行限制，不等同于发生截断；两个总数查询显式 `LIMIT 1`，两个维度查询显式 `LIMIT 5`，不会仅凭该元数据误判证据不足。
-- 付费的四个 POST 聚合请求不会在 SDK 内自动重试，因此正常执行的 `api_calls=4` 同时代表四个逻辑请求和四个物理请求；元数据 GET 遇到网络错误时仍可能在配置的短窗口内重试。M4-A 会复用已落盘窗口；若进程在查询可能执行后、Checkpoint 提交前崩溃，则进入 `NEEDS_REVIEW` 而不是自动重试，所以系统仍不承诺 Provider exactly-once。
+- 适配器每个声明的元数据或聚合调用只启动一次 CLI，不在应用内自动重试。M4-A 会复用已落盘窗口；若进程在查询可能执行后、Checkpoint 提交前崩溃，则进入 `NEEDS_REVIEW` 而不是自动重试，所以系统仍不承诺 Provider exactly-once。
 - SLS 没有为多次 `GetLogsV2` 暴露跨请求快照令牌。飞书命令和 `sls-smoke` 默认分析“截至消息时刻前 10 秒”的等长窗口，Gateway 对尚未越过配置水位的请求 fail closed；同一窗口还会用前后两次计数做一致性门禁，计数变化时绝不形成确定性结论。10 秒是可配置的运维假设而非 Provider 完整性证明，生产试点必须根据实际采集/索引延迟调大。
 - 扫描字节和真实费用无法在执行前精确获知；当前在返回后用 `processed_bytes` 做硬门禁，超限结果只能成为非结论性证据。
 - 查询仅返回聚合，不返回原始日志。通用敏感信息识别不可能完全可靠，生产前仍需按企业字段规范补充脱敏模式。

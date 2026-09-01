@@ -65,7 +65,8 @@ func (f *fakeBackend) Execute(ctx context.Context, approved domain.ApprovedQuery
 		}
 	}
 	if f.executeDelay > 0 {
-		// Deliberately ignores ctx to emulate the current SLS SDK request API.
+		// Deliberately ignores ctx to verify that the gateway rejects a result
+		// returned after its application deadline, regardless of transport.
 		time.Sleep(f.executeDelay)
 	}
 	return f.result, f.executeErr
@@ -133,6 +134,21 @@ func TestGatewayExecutesAuthorizedFixedTemplate(t *testing.T) {
 	}
 	if auditor.events[1].ProviderRequestID != "req-count-before,req-patterns,req-instances,req-count-after" {
 		t.Fatalf("provider request ID not audited: %#v", auditor.events[1])
+	}
+}
+
+func TestGatewayDoesNotRelabelExecutionIDAsProviderRequestID(t *testing.T) {
+	backend := validBackend()
+	backend.result.ProviderRequestID = ""
+	auditor := &fakeAuditor{}
+	gateway := newTestGateway(t, fakeCatalog{resource: testResource(), allowed: true}, backend, auditor, testBudget())
+
+	result, err := gateway.Execute(context.Background(), testSpec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.QueryID == "" || len(auditor.events) != 2 || auditor.events[1].ProviderRequestID != "" {
+		t.Fatalf("local execution ID was relabeled as a provider ID: result=%#v audit=%#v", result, auditor.events)
 	}
 }
 
@@ -599,7 +615,7 @@ func validBackend() *fakeBackend {
 			},
 		},
 		result: domain.QueryResult{
-			QueryID: "req-count-before,req-patterns,req-instances,req-count-after", Progress: "Complete", NanosecondOrderedKnown: true, NanosecondOrdered: true,
+			QueryID: "exec-count-before,exec-patterns,exec-instances,exec-count-after", ProviderRequestID: "req-count-before,req-patterns,req-instances,req-count-after", Progress: "Complete", NanosecondOrderedKnown: true, NanosecondOrdered: true,
 			UsageKnown: true, ProcessedRows: 400, ProcessedBytes: 512, APICalls: domain.ErrorAnalysisAPICalls,
 			ErrorCount: 100, TopError: "timeout", TopErrorCount: 80,
 			ErrorPatterns:           []domain.CountBucket{{Label: "timeout", Count: 80}, {Label: "database", Count: 20}},

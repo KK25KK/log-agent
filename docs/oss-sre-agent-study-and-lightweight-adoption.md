@@ -66,7 +66,7 @@ flowchart LR
 | 应用调度 | Inbox 消费、任务状态、调查执行、校验和投递 | [`internal/application/worker.go`](../internal/application/worker.go)、[`internal/application/intake.go`](../internal/application/intake.go) |
 | Agent 编排 | Eino 固定图、节点顺序、状态传递和 Trace | [`internal/adapters/eino/engine.go`](../internal/adapters/eino/engine.go) |
 | 查询治理 | ResourceCatalog、ACL、Schema、预算、审计、Checkpoint | [`internal/application/query/gateway.go`](../internal/application/query/gateway.go)、[`internal/application/checkpoint_executor.go`](../internal/application/checkpoint_executor.go) |
-| 数据源适配 | 阿里云 SLS 适配器和离线 Mock | [`internal/adapters/aliyunsls/backend.go`](../internal/adapters/aliyunsls/backend.go)、[`internal/adapters/slsmock/backend.go`](../internal/adapters/slsmock/backend.go) |
+| 数据源适配 | 阿里云 SLS CLI 适配器和离线 Mock | [`internal/adapters/aliyuncli/backend.go`](../internal/adapters/aliyuncli/backend.go)、[`internal/adapters/slsmock/backend.go`](../internal/adapters/slsmock/backend.go) |
 | 证据与判断 | Query/Evidence、CauseAnalysis、IncidentTimeline、Summary 等领域合同 | [`internal/domain/query.go`](../internal/domain/query.go)、[`internal/domain/cause.go`](../internal/domain/cause.go)、[`internal/domain/incident_timeline.go`](../internal/domain/incident_timeline.go) |
 | 可选增强 | 指标/Trace 时间线、受治理 SOP、LLM 摘要 | [`internal/adapters/signalmock/source.go`](../internal/adapters/signalmock/source.go)、[`internal/application/runbook.go`](../internal/application/runbook.go)、[`internal/application/summary.go`](../internal/application/summary.go) |
 | 稳定性治理 | SQLite 状态、投递重试/死信、租户额度、LLM 额度 | [`internal/adapters/sqlite`](../internal/adapters/sqlite)、[`internal/application/delivery.go`](../internal/application/delivery.go)、[`internal/application/quota_executor.go`](../internal/application/quota_executor.go) |

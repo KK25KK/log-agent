@@ -31,6 +31,8 @@
 - 对 `Complete/Incomplete`、截断和超时的统一处理。
 - 查询审计与敏感字段脱敏。
 
+当前真实适配器已从 Go SDK 迁移为本机阿里云 CLI + SLS 插件，认证合同为 `SSO -> STS -> StsToken Profile`。这只是传输层替换，M1 的 Catalog、ACL、Schema、预算、审计和固定聚合范围不变；迁移影响与操作步骤见 [`sls-cli-sts-migration.md`](sls-cli-sts-migration.md)。
+
 验收：指定试点服务可以通过固定模板查询真实数据；越权和可预判的超预算查询在执行前被拒绝，实际扫描量超限时结果被降级为证据不足。
 
 ## M2：错误突增调查闭环（代码完成，真实飞书/SLS 试点待联调）

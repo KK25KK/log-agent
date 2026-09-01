@@ -90,12 +90,12 @@ func forbiddenSummaryEvaluationImport(path string) bool {
 	if path == "net" || strings.HasPrefix(path, "net/") || path == "os/signal" || path == "logagent/internal/config" {
 		return true
 	}
-	return path == "logagent/internal/adapters/feishu" || path == "logagent/internal/adapters/aliyunsls" || path == "logagent/internal/adapters/volcark"
+	return path == "logagent/internal/adapters/feishu" || path == "logagent/internal/adapters/aliyuncli" || path == "logagent/internal/adapters/volcark"
 }
 
 func forbiddenEvaluationImport(path string) bool {
 	if path == "net" || strings.HasPrefix(path, "net/") || path == "os/signal" || path == "logagent/internal/config" {
 		return true
 	}
-	return path == "logagent/internal/adapters/feishu" || path == "logagent/internal/adapters/aliyunsls" || path == "logagent/internal/adapters/volcark" || path == "logagent/internal/adapters/summarymock"
+	return path == "logagent/internal/adapters/feishu" || path == "logagent/internal/adapters/aliyuncli" || path == "logagent/internal/adapters/volcark" || path == "logagent/internal/adapters/summarymock"
 }

@@ -36,7 +36,7 @@ flowchart LR
     EG --> GW[Query Gateway<br/>ACL / Schema / 预算 / 审计]
     GW --> SLS{SLS Backend}
     SLS --> SM[Mock SLS<br/>离线默认]
-    SLS --> SR[阿里云 SLS SDK<br/>代码具备待联调]
+    SLS --> SR[阿里云 CLI + SLS 插件<br/>代码具备待联调]
     EG --> EV[Evidence + Report]
     EV --> CH{Change Source}
     CH --> CM[Mock / 静态 JSON]
@@ -78,7 +78,7 @@ flowchart LR
 | Eino 固定 Graph | 已完成 | 固定执行计划、查询、报告、变更关联节点；Eino 只负责流程编排 | `internal/adapters/eino/engine.go` | 调查逻辑可测试且不依赖 LLM 自由发挥 |
 | SLS 资源目录与 ACL | 已完成；真实配置待录入 | `service/environment` 映射到受控资源，Principal 到 ResourceID 静态授权 | `internal/adapters/resourcecatalog/catalog.go` | 用户不能越权切换 Project/LogStore |
 | 查询治理网关 | 已完成 | 统一做资源解析、ACL、Schema、模板、窗口、行数、调用数、并发、超时、成本代理和审计 | `internal/application/query/gateway.go` | 所有 SLS 查询必须先经过同一个安全闸门 |
-| 阿里云 SLS 查询 | 代码已具备，待真实联调 | 官方 SLS Go SDK，固定执行 count-before、Top5 错误、Top5 实例、count-after | `internal/adapters/aliyunsls/backend.go` | 真实接入后只返回聚合证据，不返回原始日志正文 |
+| 阿里云 SLS 查询 | 代码已具备，待真实联调 | 本机 CLI + SLS 插件，固定执行 count-before、Top5 错误、Top5 实例、count-after | `internal/adapters/aliyuncli/backend.go` | 真实接入后只返回聚合证据，不返回原始日志正文 |
 | 当前/基线错误分析 | 已完成 | 两个等长时间窗，每窗四次固定聚合；首尾 count 必须一致 | `internal/adapters/eino/engine.go`、`internal/domain/query.go` | 能识别突增、错误模式占比、实例集中和数据不足 |
 | 近实时安全水位 | 已完成 | 查询窗口结束时间向前扣除 ingestion grace，Gateway 再次 fail closed | `internal/command`、`internal/application/query/gateway.go` | 减少日志尚未完成索引时产生的过度自信结论 |
 | Evidence 证据链 | 已完成 | Finding、Recommendation、Cause Ledger 都必须引用同一报告中的 Evidence/Change ID | `internal/domain/types.go`、`internal/application/worker.go` | 每个结论都能追溯查询窗口、模板、质量和来源 |
@@ -108,7 +108,7 @@ flowchart LR
 | --- | --- | --- | --- | --- |
 | 飞书入站 | `feishumock` 构造可信消息 | App/Tenant/User/Chat/Message 和用户命令 | Intake、幂等事务、调查/Job 创建 | 官方 SDK Receiver 已实现，待企业应用联调 |
 | 飞书出站 | `feishumock.Sender` 记录 Reply/Patch | 飞书 OpenAPI 返回和远端 Message ID | Delivery Outbox、租约、顺序、卡片渲染 | 官方 SDK Sender 已实现，待真实卡片视觉与限流联调 |
-| 阿里云 SLS | `slsmock` / `evalmock` 返回固定聚合 | Schema、当前/基线错误数、Top5 模式/实例、Provider usage | Resource/ACL Gateway、预算、审计、Checkpoint、Evidence、Graph | `aliyunsls` 已实现，待试点 Project/LogStore 联调 |
+| 阿里云 SLS | `slsmock` / `evalmock` 返回固定聚合 | Schema、当前/基线错误数、Top5 模式/实例、Provider usage | Resource/ACL Gateway、预算、审计、Checkpoint、Evidence、Graph | `aliyuncli` 已实现，待试点 Project/LogStore 联调 |
 | 飞书身份与资源授权 | Mock Principal + Mock Catalog | 真实 AppID、TenantKey、OpenID 和资源绑定 | ACL 决策和 fail-closed 行为 | 需把真实飞书身份写入管理员资源目录 |
 | 发布/配置变更 | Demo/Fixture ChangeSet，或管理员静态 JSON | 发布事件、版本、负责人、影响实例 | 七项支持/反证规则和 Evidence Ledger | 静态 JSON 可用；真实发布平台/CMDB 连接器未实现 |
 | 指标/Trace 调查信号 | `signalmock` 固定错误率与 P95 延迟聚合 | ARMS/CMS/Prometheus/OTel 的受控聚合结果 | Evidence 派生查询、闭集校验、异常复算、Worker 引用门禁和飞书时间线 | 端口与 Mock 已实现；真实连接器、额度、审计和试点未实现 |
@@ -125,7 +125,7 @@ flowchart LR
 | SQLite | 是真实持久化实现，不是 Mock | 没有正式迁移工具、生产备份恢复、多实例全局配额和数据库故障转移验收 |
 | 静态 Resource Catalog | 是真实治理配置 | 尚未录入和验证公司的真实 SLS 资源、字段、RAM 权限与用户绑定 |
 | 静态 Change Catalog | 是可运行的管理员配置 | 不是实时发布平台/配置中心/CMDB，存在人工同步时效问题 |
-| 飞书/SLS SDK 适配器 | 是真实代码 | 没有仓库可公开保存的真实凭据、试点环境结果和真实网络故障演练 |
+| 飞书 SDK / SLS CLI 适配器 | 是真实代码 | 没有仓库可公开保存的真实凭据、试点环境结果和真实网络故障演练 |
 | Eino Graph | 是真实确定性编排 | LLM 摘要位于 Worker 后处理，不进入 Graph 决策；真实模型质量与费用仍待验收 |
 
 ## 6. 真实系统分别负责什么，应该怎么接入
@@ -136,26 +136,26 @@ flowchart LR
 
 - 提供真实 LogStore Schema。
 - 对当前窗口和基线窗口执行固定聚合。
-- 返回 Progress、Request ID、处理行数、处理字节和耗时等查询元数据。
+- 返回本地执行 ID，以及 CLI 暴露的 Progress、处理行数、处理字节和耗时等查询元数据；Provider Request ID 不保证存在且不会伪造。
 - 不向 Agent 返回原始日志正文。
 
 #### 当前怎么实现
 
 - Mock：`internal/adapters/slsmock` 和 `internal/adapters/evalmock`。
-- 真实适配器：`internal/adapters/aliyunsls/backend.go`。
+- 真实适配器：`internal/adapters/aliyuncli/backend.go`。
 - 统一治理入口：`internal/application/query/gateway.go`。
 - 启动组装：`cmd/logagent/sls.go` 的 `buildWorkerExecutor/buildAliyunDependencies`。
 
 #### 怎么接入
 
 1. 复制并填写 `config/sls-resources.example.json`，每个试点资源固定 Endpoint、Project、LogStore、selectors、error selector、error field、instance field 和 bindings。
-2. 创建资源级只读 RAM 权限，优先使用 ECS RAM Role 或 STS；不要把 AK 写进 Catalog 或 Git。
+2. 创建资源级只读 RAM 权限，通过 SSO 获取短期 STS 并写入本机 CLI `StsToken` Profile；不要把 AK/Token 写进 Catalog、环境文件或 Git。
 3. 设置：
 
 ```powershell
 $env:LOG_AGENT_SLS_MODE = "aliyun"
 $env:LOG_AGENT_SLS_CATALOG = ".\config\sls-resources.json"
-$env:LOG_AGENT_SLS_CREDENTIAL_MODE = "ecs_ram_role" # 或联调期 static/STS
+$env:LOG_AGENT_SLS_CLI_PROFILE = "default"
 $env:LOG_AGENT_SLS_ECS_RAM_ROLE_NAME = "<role-name>"
 ```
 
@@ -179,7 +179,7 @@ go run ./cmd/logagent sls-smoke order-service prod 10m
 #### 预期效果
 
 - 报告中的 120/20 等 Mock 数字替换为真实试点 LogStore 聚合结果。
-- Evidence 带真实 ResourceID、Schema/模板/策略指纹、Provider Request ID 和完整性元数据。
+- Evidence 带真实 ResourceID、Schema/模板/策略指纹、本地执行 ID 和完整性元数据；Provider Request ID 仅在 CLI 明确返回时进入查询审计。
 - 越权、字段不满足统计、窗口/预算超限在请求前拒绝；Incomplete/超成本结果不生成确定性结论。
 
 ### 6.2 飞书企业自建应用
@@ -472,7 +472,7 @@ flowchart LR
 | Mock/真实 SLS 切换 | `cmd/logagent/sls.go` |
 | 配置与环境变量 | `internal/config/config.go`、`.env.example` |
 | 飞书真实适配器 | `internal/adapters/feishu` |
-| SLS 真实适配器 | `internal/adapters/aliyunsls` |
+| SLS 真实适配器 | `internal/adapters/aliyuncli` |
 | 查询安全闸门 | `internal/application/query` |
 | 调查 Worker 与恢复 | `internal/application/worker.go`、`checkpoint_executor.go` |
 | Eino 调查逻辑 | `internal/adapters/eino/engine.go` |

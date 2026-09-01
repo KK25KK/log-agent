@@ -8,7 +8,7 @@
 可以直接进入真实系统的链路目前已经存在，核心是**配置 + 启动参数切换 + 生产化存储替换**：
 
 1. 飞书入口与卡片投递：已经是 SDK 真实代码路径（`runFeishu`）。
-2. SLS 查询：默认是 `mock`，配置 `LOG_AGENT_SLS_MODE=aliyun` 即走真实 `aliyunsls`。
+2. SLS 查询：默认是 `mock`，配置 `LOG_AGENT_SLS_MODE=aliyun` 即走真实 `aliyuncli`，由本机 CLI 的 `StsToken` Profile 完成认证与签名。
 3. 查询治理（资源目录/ACL/Schema/预算/审计）：`query` Gateway 已经接管真实执行前门禁。
 4. 持久化状态机：当前仍是 `sqlite`，但这是已知技术预览；真实化要实现 DB 适配器并替换启动文件里的 `sqlite.Open`。
 5. 变更来源（M3）：默认 `disabled`，可配静态 Change Catalog 文件；真实接平台还未建模。
@@ -16,7 +16,7 @@
 7. 受治理 SOP：只有 Mock SLS 模式注入 `runbookmock`；真实 `RunbookSource` Adapter、企业内容治理和审批生命周期尚未接入。
 8. LLM 摘要：默认 `summarymock`，火山方舟 Responses API 适配器与 SQLite 请求/Token 额度治理已实现；真实模型、Prompt、Token 价格校准与留存策略尚未联调。
 
-> 关键约束：不允许把飞书 SDK 或阿里云 SDK 引入业务核心层。接口边界由 `internal/ports` 保护；真实/离线实现只切换在适配层和启动组装处。
+> 关键约束：不允许把飞书 SDK 或阿里云 CLI 执行引入业务核心层。接口边界由 `internal/ports` 保护；真实/离线实现只切换在适配层和启动组装处。
 
 ## 二、代码入口总览（从入口命令开始）
 
@@ -26,7 +26,7 @@
 - 组装点：`cmd/logagent/sls.go` -> `buildWorkerExecutor` -> `application.NewCheckpointExecutor`。
 - 执行器链：
   - `newMockExecutor()`：返回 `slsmock.Executor`（离线/合成），生产不要启用。
-  - `buildAliyunDependencies()`：`resourcecatalog.Load` + `aliyunsls.New`，返回真实的 catalog/backend。
+  - `buildAliyunDependencies()`：`resourcecatalog.Load` + `aliyuncli.New`，返回真实的 catalog/backend。
   - `queryapp.NewGateway(catalog, backend, auditor, budget)`：固定模板、固定预算、ACL、Schema、审计的一站式门禁层（最终会被 Worker/Engine 调用）。
 - 引擎：`eino.New(...)` 只接 `application.GovernedSLSExecutor`，再注入 `WithChangeSource`。
 - 状态执行：`application.NewWorker(...).RunOne` 读取 Store 的任务并触发 `engine.Run`；确定性报告首次校验通过后，Worker 才允许追加受治理 SOP 指引，并在进入 LLM 摘要前再次校验整份报告。
@@ -52,8 +52,8 @@
 - `internal/adapters/resourcecatalog/catalog.go`
   - `Load(config)`：`service + environment -> LogResource`
   - `Allowed(principal, resourceID)`：静态 ACL
-- `internal/adapters/aliyunsls/backend.go`
-  - `New(config)`：创建客户端与凭据；
+- `internal/adapters/aliyuncli/backend.go`
+  - `New(config)`：解析固定 CLI 路径、Profile 与进程边界；
   - `GetSchema(ctx, resource)`：预检 schema；
   - `Execute(ctx, query)`：执行四次聚合（count-before / top error / top instance / count-after）；
   - `CheckResources(ctx, resources)`：`sls-check` 诊断。
@@ -156,7 +156,7 @@
 ### 4.1 先切“真实查询”
 1. 将 `LOG_AGENT_SLS_MODE=aliyun`。
 2. 填 `LOG_AGENT_SLS_CATALOG` 为试点目录文件，确保 `service/environment` 对应单一试点。
-3. 填 `LOG_AGENT_SLS_CREDENTIAL_MODE` 与 AK/STS 或 ECS RAM Role。
+3. 用户从 SSO 获取 STS，并执行 `aliyun configure --mode StsToken --profile default`；服务只配置 `LOG_AGENT_SLS_CLI_PROFILE=default`，不接收 AK/SK/Token。
 4. 先运行：
    - `go run ./cmd/logagent sls-check`
    - `go run ./cmd/logagent sls-smoke <service> <env> <window>`
@@ -224,7 +224,7 @@ cmd/logagent/main.go           命令入口与 worker/feishu 进程
 cmd/logagent/sls.go            SLS 查询模式切换、Catalog/Backend 组装、sls-check/smoke
 internal/application           Intake / Worker / Checkpoint / Actions / Delivery
 internal/application/query      Query Gateway（进入 SLS 前的唯一治理闸门）
-internal/adapters/aliyunsls     阿里云 SLS SDK 适配层
+internal/adapters/aliyuncli     阿里云 CLI/SLS 插件适配层
 internal/adapters/resourcecatalog 资源目录与 ACL
 internal/adapters/feishu        飞书 SDK 适配层
 internal/adapters/feishumock    飞书离线 mock
@@ -242,7 +242,7 @@ internal/ports                  接口边界：Store / Query / Executor / Change
 
 本文件只覆盖“进入真实系统的生产接入面”，不是新增新功能：
 
-- 第三方 SDK 的实际接入面：已完成（飞书、阿里云都在适配层）。
+- 第三方实际接入面：已完成（飞书 SDK、阿里云 CLI 都隔离在适配层）。
 - 实时链路可运行：依赖真实 credential、catalog 与生产数据库后可跑。
 - 生产数据库替换：未完成；属于 M4-C。
 - 真实发布平台/CMDB 关联：本阶段仍 `disabled/change-catalog-file`，不属于此切片的硬性前提。

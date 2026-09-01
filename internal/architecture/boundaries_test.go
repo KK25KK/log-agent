@@ -18,7 +18,7 @@ func TestFrameworkImportsStayInsideAdapters(t *testing.T) {
 	}{
 		{prefix: "github.com/cloudwego/eino", allowed: filepath.Join("internal", "adapters", "eino")},
 		{prefix: "github.com/larksuite/oapi-sdk-go", allowed: filepath.Join("internal", "adapters", "feishu")},
-		{prefix: "github.com/aliyun/aliyun-log-go-sdk", allowed: filepath.Join("internal", "adapters", "aliyunsls")},
+		{prefix: "os/exec", allowed: filepath.Join("internal", "adapters", "aliyuncli")},
 	}
 
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
