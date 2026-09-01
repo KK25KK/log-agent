@@ -6,6 +6,7 @@
 | --- | --- | --- |
 | [`spec.md`](spec.md) | 唯一当前技术与行为契约 | 行为代码变更前先更新 |
 | [`roadmap.md`](roadmap.md) | 当前阶段边界、完成状态和后续计划 | 只写可独立验收的阶段 |
+| [`development-process.md`](development-process.md) | 从 Mock-first 到 DAM 真实 SLS + 方舟联合验收的开发过程、关键决策、问题闭环和取舍 | 新阶段或真实验收完成后追加；不替代规范与路线图 |
 | [`local-mock-e2e.md`](local-mock-e2e.md) | 飞书、SLS、指标/Trace、受治理 SOP 与摘要 Mock 主链的运行、预期输出与边界 | Mock 行为变化或复跑验收时同步更新 |
 | [`m4-recoverable-query-steps.md`](m4-recoverable-query-steps.md) | 第五期 M4-A 的检查点、结果未知与恢复合同 | M4-A 行为或验收变化时同步更新 |
 | [`m3b-cross-signal-incident-timeline.md`](m3b-cross-signal-incident-timeline.md) | M3-B 的 Mock-first 指标/Trace 聚合时间线、信任边界与真实接入前置条件 | 信号 Schema、阈值、状态、接线或验收变化时同步更新 |

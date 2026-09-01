@@ -578,4 +578,4 @@ internal/application/runbook.go       Worker 后处理的 SOP 查询、引用派
 - 非文本消息、格式错误的命令和永久无效事件目前会被安全确认但不会回复用法提示；这是已知的交互限制。
 - 系统只有只读调查能力，不包含自动处置工具。
 
-文档入口见 [`docs/README.md`](docs/README.md)。其中 `spec.md` 是唯一当前规范，M0～M3 是历史阶段归档，M4-A 文档记录第五期已完成的恢复切片，M5-A 文档记录第六期的全合成离线评测门禁，M5-B 文档记录第七至九期 B1～B3 的事件、回放和比较合同；这些都不代表完整生产验收。完整路线图见 [`docs/roadmap.md`](docs/roadmap.md)，迁移前生成的方案、用例图和 Canvas 文件保存在 [`artifacts/`](artifacts/README.md)。
+文档入口见 [`docs/README.md`](docs/README.md)。其中 `spec.md` 是唯一当前规范，[`docs/development-process.md`](docs/development-process.md) 记录从 Mock-first 到 DAM 真实 SLS + 方舟联合验收的开发过程与关键取舍；M0～M3 是历史阶段归档，M4-A 文档记录第五期已完成的恢复切片，M5-A 文档记录第六期的全合成离线评测门禁，M5-B 文档记录第七至九期 B1～B3 的事件、回放和比较合同；这些都不代表完整生产验收。完整路线图见 [`docs/roadmap.md`](docs/roadmap.md)，迁移前生成的方案、用例图和 Canvas 文件保存在 [`artifacts/`](artifacts/README.md)。
