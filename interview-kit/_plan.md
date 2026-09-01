@@ -210,12 +210,12 @@
 
 **文件：** 修改 `interview-kit/README.md`
 
-- [ ] 把材料清单从 5 份扩展为 7 份，补充两份新文档的用途和选择建议。
-- [ ] 更新“面试前 15 分钟”“准备 1 小时”“完整学习”路线，避免要求读者一次读完长文。
-- [ ] 增加“先横向补八股，再纵向练项目故事”的 Agent 岗位专项路线。
-- [ ] 检查 7 个相对链接均存在，README 不重复正文内容。
-- [ ] 运行 `git diff --check`。
-- [ ] Commit：`docs(interview): update interview kit reading paths`
+- [x] 把材料清单从 5 份扩展为 7 份，补充两份新文档的用途和选择建议。
+- [x] 更新“面试前 15 分钟”“准备 1 小时”“完整学习”路线，避免要求读者一次读完长文。
+- [x] 增加“先横向补八股，再纵向练项目故事”的 Agent 岗位专项路线。
+- [x] 检查 7 个相对链接均存在，README 不重复正文内容。
+- [x] 运行 `git diff --check`。
+- [x] Commit：`docs(interview): update interview kit reading paths`
 
 ### Task 11：v0.2 整体验收
 
