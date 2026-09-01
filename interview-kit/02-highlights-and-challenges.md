@@ -467,7 +467,7 @@ SQLite 的领取与失败落库见
 ### 效果与证据边界
 
 飞书接收器、卡片动作、Reply/Patch Sender 与可靠投递功能已经实现，
-完整应用合同由 [mock_e2e_test.go](file:///D:/日志agent/cmd/logagent/mock_e2e_test.go#L11-L103) 覆盖。
+核心实现可见 [receiver.go](file:///D:/日志agent/internal/adapters/feishu/receiver.go#L77-L159) 和 [sender.go](file:///D:/日志agent/internal/adapters/feishu/sender.go#L38-L149)。
 本地 Web 联合链进一步串联真实 SLS 和真实 LLM，验证了飞书之外的应用主链。
 当前缺少的是飞书应用权限下的平台验收，不是飞书功能代码本身。
 

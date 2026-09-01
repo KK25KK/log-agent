@@ -3,7 +3,7 @@
 > 生成时间：2026-09-02
 > 基于规格：[_spec.md](./_spec.md)
 > 源码基线：`e115d4dcd7993b1c25e0001be951dad2c2cc1f1c`
-> 状态：已批准，执行中
+> 状态：已完成
 
 **目标：** 在 `interview-kit/` 中交付架构、亮点难点、项目介绍、简历条目和逐条面试脚本，面向校招 Agent 开发岗位，内容可直接用于学习、简历选择和口述。
 
@@ -119,16 +119,16 @@
 
 **范围：** `interview-kit/*.md`
 
-- [ ] 读取 `self-review-grep.md` 和 `cross-review-checklist.md`。
-- [ ] 检查所有 Markdown 链接、源码绝对路径和行号抽样。
-- [ ] 检查 Mermaid 代码块成对闭合、图节点数和中文命名。
-- [ ] 检查 7 条简历编号与 7 份脚本严格对应。
-- [ ] 检查至少 21 个追问、脚本无代码围栏、教学文档知识框和“一句话记住”达标。
-- [ ] 全局搜索并人工复核“生产、上线、准确率、节省、全部、自动修复”等高风险词。
-- [ ] 核对真实验收元数据、Mock 边界、未完成项与当前文档一致。
-- [ ] 运行 `git diff --check`；文档任务不修改 Go 代码，因此不以 Go 测试代替内容验收。
-- [ ] 更新 `_plan.md` 全部 checkbox 和状态为已完成。
-- [ ] Finalize commit：`docs(interview): finalize log agent interview kit (v0.1.0)`
+- [x] 读取 `self-review-grep.md` 和 `cross-review-checklist.md`。
+- [x] 检查所有 Markdown 链接、源码绝对路径和行号抽样。
+- [x] 检查 Mermaid 代码块成对闭合、图节点数和中文命名。
+- [x] 检查 7 条简历编号与 7 份脚本严格对应。
+- [x] 检查至少 21 个追问、脚本无代码围栏、教学文档知识框和“一句话记住”达标。
+- [x] 全局搜索并人工复核“生产、上线、准确率、节省、全部、自动修复”等高风险词。
+- [x] 核对真实验收元数据、Mock 边界、未完成项与当前文档一致。
+- [x] 运行 `git diff --check`；文档任务不修改 Go 代码，因此不以 Go 测试代替内容验收。
+- [x] 更新 `_plan.md` 全部 checkbox 和状态为已完成。
+- [x] Finalize commit：`docs(interview): finalize log agent interview kit (v0.1.0)`
 
 ---
 
