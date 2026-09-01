@@ -2,7 +2,7 @@
 
 > 生成时间：2026-09-02
 > 目标源码 commit：`e115d4dcd7993b1c25e0001be951dad2c2cc1f1c`
-> 状态：已批准（用户确认校招 Agent 开发定位并要求完成 plan）
+> 状态：v0.1 已完成；v0.2 Agent 八股映射扩展待用户批准
 
 ---
 
@@ -64,6 +64,7 @@
 | `03-project-introduction-script.md` | 一句话、30 秒、3 分钟和 5 分钟项目介绍口述稿 | 180～320 行 |
 | `04-resume-bullets.md` | 6～8 条不超过约 30 字的简历候选条目，以及逐条详细拆解 | 300～500 行 |
 | `05-interview-scripts-by-resume-bullet.md` | 对应每条简历候选项的完整口述稿、追问与防守边界 | 500～900 行 |
+| `06-agent-interview-fundamentals.md` | 通用 Agent 八股、项目映射、标准回答、知识点和递进追问 | 650～900 行 |
 
 ## 5. 内容要求
 
@@ -188,3 +189,113 @@
 - 不能虚构个人贡献、生产上线、业务指标、模型准确率或成本收益。
 - 重点体现 Go 工程能力、Agent 治理、真实系统接入、可靠性和评测意识。
 - 文件组织由本规格确定；本次采用多文件模式。
+
+## 11. v0.2：Agent 八股与项目映射扩展
+
+### 11.1 目标
+
+新增 `06-agent-interview-fundamentals.md`，解决两个问题：
+
+1. 面试者只会讲项目，但回答不了通用 Agent 原理；
+2. 背得出通用八股，却不能解释它与当前 Log Agent 的具体关系。
+
+每个主题必须先给出不依赖本项目的“原八股问法”和通用标准答案，
+随后再映射到 Log Agent 的真实设计、面试官项目化问法、项目标准答案、核心知识点和延伸追问。
+
+“原八股”指业界通行的基础问题及基于权威资料重新组织的答案，
+不逐字复制培训题库或大段引用网页内容。
+
+### 11.2 主题范围
+
+正文覆盖以下 17 个主题：
+
+1. 什么是 LLM Agent，与普通 Chatbot 有什么区别；
+2. Agent 的 Model、Tools、Instructions、State/Memory 分别负责什么；
+3. Workflow 与自主 Agent 有什么区别，如何选择；
+4. ReAct 的 Thought/Action/Observation 循环是什么；
+5. 固定 Graph、Plan-and-Execute 与开放式 ReAct 如何取舍；
+6. Tool/Function Calling 的完整执行链与安全边界；
+7. 为什么使用 Eino，框架和自研代码如何划界；
+8. 短期记忆、长期记忆、业务状态和 Checkpoint 有什么区别；
+9. RAG、工具查询和 Evidence-grounded Generation 有什么区别；
+10. Agent 幻觉从哪里来，Grounding 怎样降低风险；
+11. JSON Mode、Structured Output 与应用层语义校验有什么区别；
+12. Guardrails、最小权限和 Prompt Injection 怎样治理；
+13. Human-in-the-Loop 在什么时候中断、审批和恢复；
+14. 单 Agent 与多 Agent 如何选择，为什么本项目不做多 Agent；
+15. Context Engineering、Token 预算和成本治理；
+16. Agent 评测应怎样设计 Golden、反证、Replay 和线上反馈；
+17. Agent 可观测性、幂等、重试和外部结果未知怎样处理。
+
+如果一个主题无法与当前仓库真实实现或明确取舍建立联系，
+正文应将其写成对比边界，而不是虚构“项目已经使用”。
+
+### 11.3 单题固定结构
+
+每个主题严格按以下顺序组织：
+
+1. **原八股**：面试中常见的通用问法；
+2. **通用标准答案**：脱离项目也成立的 30～60 秒答案；
+3. **怎么对应本项目**：指出当前实现、主动取舍或未采用项；
+4. **面试官会怎么问**：改写成围绕 Log Agent 的真实追问；
+5. **项目标准答案**：可直接口述，按问题—方案—效果—取舍闭环；
+6. **对应知识点**：列出 3～6 个关键词，并解释它们之间的关系；
+7. **延伸追问**：至少 2 个递进问题，给出答案要点和边界。
+
+正文先展示通用答案，再做项目映射，不能反过来只讲项目实现。
+
+### 11.4 资料来源
+
+外部知识只采用论文、框架官方文档和权威工程资料：
+
+- [OpenAI：A practical guide to building agents](https://openai.com/business/guides-and-resources/a-practical-guide-to-building-ai-agents/)
+- [Anthropic：Building effective agents](https://www.anthropic.com/research/building-effective-agents)
+- [ReAct 原论文](https://arxiv.org/abs/2210.03629)
+- [Eino 官方：Graph 与 Agent 选择](https://www.cloudwego.io/docs/eino/overview/graph_or_agent/)
+- [Eino 官方：Chain/Graph/Workflow](https://www.cloudwego.io/docs/eino/core_modules/chain_and_graph_orchestration/)
+- [Eino 官方：Memory 与 Session](https://www.cloudwego.io/docs/eino/quick_start/chapter_03_memory_and_session/)
+- [Eino 官方：Human-in-the-Loop](https://www.cloudwego.io/docs/eino/core_modules/eino_adk/agent_hitl/)
+- [Eino 官方：Callback 与 Trace](https://www.cloudwego.io/docs/eino/quick_start/chapter_06_callback_and_trace/)
+- [RAG 原论文](https://arxiv.org/abs/2005.11401)
+- [OpenAI：Structured Outputs](https://openai.com/index/introducing-structured-outputs-in-the-api/)
+- [OpenAI：Evals API](https://platform.openai.com/docs/api-reference/evals)
+- [OWASP LLM01:2025 Prompt Injection](https://owasp.org/www-project-top-10-for-large-language-model-applications/assets/PDF/OWASP-Top-10-for-LLMs-v2025.pdf)
+- [OpenTelemetry GenAI 语义约定](https://opentelemetry.io/docs/specs/semconv/registry/attributes/gen-ai/)
+- [AWS Builders' Library：Making retries safe with idempotent APIs](https://aws.amazon.com/builders-library/making-retries-safe-with-idempotent-APIs/)
+
+正文以概括和推导为主，不长篇引用来源；
+涉及框架当前能力时标注官方链接和检索日期 `2026-09-02`。
+
+### 11.5 项目映射边界
+
+- 可以把 Log Agent 定义为“带 Agent 特征的受治理 Workflow/固定图 Agent”，并说明业界对 Agent 定义存在宽窄口径；
+- 不声称当前使用开放式 ReAct；项目使用的是 Eino 固定 Graph；
+- 不声称当前实现通用对话 Memory；项目持久化的是调查业务状态、租约和 QueryStep Checkpoint；
+- 不声称当前使用向量 RAG；Evidence 来自受治理 SLS 聚合查询，Runbook 真实来源待接入；
+- 不声称 Structured Output 能消除事实错误；项目还执行 Evidence ID、建议代码和敏感内容校验；
+- 不声称使用 Multi-Agent 或 MCP；可以解释当前为何不需要；
+- 飞书功能表述继续使用“功能已实现，真实平台验收待权限”；
+- 真实 SLS + 方舟仅代表单主 Logstore、count-only 的本地联合样本；
+- 不虚构 Agent 准确率、线上流量、生产收益或个人独立贡献。
+
+### 11.6 教学结构与规模
+
+- 正文目标 650～900 行；
+- 开头先画一张“通用 Agent 知识 → 本项目模块”的 Mermaid 映射图；
+- 至少 17 个原八股问题、17 个通用答案、17 个项目答案；
+- 每题至少 2 个延伸追问，全文不少于 34 个；
+- 至少 12 个项目源码/测试定位，至少 4 个额外知识框；
+- 文末提供“高频十题速背”和恰好一个“一句话记住”。
+
+### 11.7 v0.2 验收标准
+
+- [ ] 所有 17 个主题均先呈现原八股，再呈现项目映射；
+- [ ] 通用标准答案不依赖 Log Agent 也能成立；
+- [ ] 项目标准答案与 v0.1 架构、亮点和真实验收边界一致；
+- [ ] 至少 34 个延伸追问，并从概念逐步追到取舍与故障场景；
+- [ ] 外部结论均可追溯到本节列出的权威来源；
+- [ ] 项目映射至少提供 12 个有效 `file:///` 源码或测试链接；
+- [ ] 未使用的 ReAct、RAG、Multi-Agent、MCP 不被包装成已实现能力；
+- [ ] README 增加新章节入口和对应阅读路线；
+- [ ] 行数、知识框、Mermaid、源码链接和文末速记满足阈值；
+- [ ] 全局链接、事实边界、术语和 Git 工作树交叉审查通过。
