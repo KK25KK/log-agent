@@ -140,27 +140,27 @@
 
 #### Step 1：写作前取证
 
-- [ ] 读取 `tutorial.md.tpl`、`rhythm-checklist.md`、`audience-guide.md` 和 `source-linking.md`。
-- [ ] 复核 Eino Graph、Worker、Query Gateway、Checkpoint、Summary、Evaluation 的源码与测试入口。
-- [ ] 复核 OpenAI、Anthropic、ReAct、Eino、RAG、OWASP、OpenTelemetry 和 AWS 幂等资料的当前官方页面或原论文。
-- [ ] 为 17 个主题建立“通用结论 → 项目实现/未采用项 → 证据文件 → 面试边界”取证表，正文不展示过程草稿。
+- [x] 读取 `tutorial.md.tpl`、`rhythm-checklist.md`、`audience-guide.md` 和 `source-linking.md`。
+- [x] 复核 Eino Graph、Worker、Query Gateway、Checkpoint、Summary、Evaluation 的源码与测试入口。
+- [x] 复核 OpenAI、Anthropic、ReAct、Eino、RAG、OWASP、OpenTelemetry 和 AWS 幂等资料的当前官方页面或原论文。
+- [x] 为 17 个主题建立“通用结论 → 项目实现/未采用项 → 证据文件 → 面试边界”取证表，正文不展示过程草稿。
 
 #### Step 2：写正文
 
-- [ ] 先用类比和 Mermaid 图解释 Model、Tools、Instructions、State 与本项目模块的对应关系。
-- [ ] 逐题完成“原八股 → 通用标准答案 → 怎么对应本项目 → 面试官问法 → 项目标准答案 → 知识点 → 至少 2 个延伸追问”。
-- [ ] 明确区分固定 Graph 与开放式 ReAct、业务状态与通用 Memory、Evidence 查询与向量 RAG、单 Agent 与 Multi-Agent/MCP。
-- [ ] 解释为什么选择 Eino，但把权限、状态、可靠性、证据和成本治理保留在自研应用层。
-- [ ] 提供不少于 4 个 📦 额外知识框、12 个源码/测试定位、高频十题速背和文末恰好 1 个“一句话记住”。
+- [x] 先用类比和 Mermaid 图解释 Model、Tools、Instructions、State 与本项目模块的对应关系。
+- [x] 逐题完成“原八股 → 通用标准答案 → 怎么对应本项目 → 面试官问法 → 项目标准答案 → 知识点 → 至少 2 个延伸追问”。
+- [x] 明确区分固定 Graph 与开放式 ReAct、业务状态与通用 Memory、Evidence 查询与向量 RAG、单 Agent 与 Multi-Agent/MCP。
+- [x] 解释为什么选择 Eino，但把权限、状态、可靠性、证据和成本治理保留在自研应用层。
+- [x] 提供不少于 4 个 📦 额外知识框、12 个源码/测试定位、高频十题速背和文末恰好 1 个“一句话记住”。
 
 #### Step 3：自查与提交
 
-- [ ] 检查行数 650～900、主题数 17、原八股/通用答案/项目答案各 17、延伸追问不少于 34。
-- [ ] 检查 `file:///` 不少于 12、外部权威链接不少于 12、Mermaid 不少于 1、📦 不少于 4、💡 恰好 1。
-- [ ] 抽样核对源码行号和外部结论，确认没有把 ReAct、RAG、Multi-Agent 或 MCP 写成已实现能力。
-- [ ] 全文搜索“生产、上线、准确率、节省、全部、自动修复”，逐条复核证据边界。
-- [ ] 运行 `git diff --check`。
-- [ ] Commit：`docs(interview): add agent fundamentals mapping`
+- [x] 检查行数 650～900、主题数 17、原八股/通用答案/项目答案各 17、延伸追问不少于 34。
+- [x] 检查 `file:///` 不少于 12、外部权威链接不少于 12、Mermaid 不少于 1、📦 不少于 4、💡 恰好 1。
+- [x] 抽样核对源码行号和外部结论，确认没有把 ReAct、RAG、Multi-Agent 或 MCP 写成已实现能力。
+- [x] 全文搜索“生产、上线、准确率、节省、全部、自动修复”，逐条复核证据边界。
+- [x] 运行 `git diff --check`。
+- [x] Commit：`docs(interview): add agent fundamentals mapping`
 
 ### Task 9：调用链与 0→1 架构演进
 
