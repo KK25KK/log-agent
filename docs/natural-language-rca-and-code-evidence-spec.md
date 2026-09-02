@@ -284,7 +284,7 @@ Provider 不提供通用 Shell、自由 Git 参数、任意正则、仓库树遍
 
 ## 10. Observability and evaluation
 
-新增稳定 Span：
+生产可观测接线时应使用以下稳定 Span 名称：
 
 - `intent.resolve`
 - `trace.primary`
@@ -297,6 +297,8 @@ Provider 不提供通用 Shell、自由 Git 参数、任意正则、仓库树遍
 - `rca.verify`
 
 Trace 只保存调用状态、计数、耗时、指纹和安全原因码，不保存问题原文、TraceID、代码正文、日志正文或凭据。
+
+当前前五阶段的 Trace/部署/代码/联合 RCA 后处理尚未接入原 M5-B 的评测专用 Agent Trace Recorder；现阶段通过 Trace 查询审计/Checkpoint、部署与代码指纹、命令计数及 `joint-rca-evaluate` 确定性重放验收。不能把上面的目标 Span 名称写成当前已经采集的生产遥测。
 
 评测至少覆盖：
 
@@ -341,8 +343,8 @@ Trace 只保存调用状态、计数、耗时、指纹和安全原因码，不�
 - [x] `joint-rca-v1` 候选同时展示支持证据、软反证、数据缺口、固定评分和限制，并由 Worker 全量重算；
 - [x] 当前代码证据阶段不会仅凭代码、Diff 或时间相关输出确认根因；
 - [x] 当前代码证据只供人工审核，不存在自动修改或生产操作；
-- [ ] Mock、离线、真实单次和生产验收边界在报告中可辨识；
-- [ ] 全仓测试、静态检查、重点恢复测试和安全评测通过；
+- [x] 联合 RCA 评测报告显式区分 `SYNTHETIC_MOCK` 数据源、真实事故/专家标签数、网络调用和生产声明权限；真实试点手册进一步分开四类 Profile；
+- [x] 全仓测试、静态检查、既有 Engine/摘要门禁与新增联合 RCA 门禁通过；恢复、未知结果和 fencing 场景继续由全仓测试覆盖；
 - [ ] 脱敏历史故障和真实 Reviewer 门禁通过后才允许扩大试点。
 
 ## 13. Decisions

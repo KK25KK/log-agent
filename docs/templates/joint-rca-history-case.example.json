@@ -1,0 +1,31 @@
+{
+  "schema_version": "joint-rca-history-case-v1",
+  "data_source": "TEMPLATE_ONLY",
+  "case_id": "replace-with-non-sensitive-case-id",
+  "service": "dam-server",
+  "environment": "test",
+  "occurred_at": "2026-09-02T00:00:00Z",
+  "trace_id_fingerprint": "replace-with-sha256-fingerprint-never-raw-trace-id",
+  "deployment_fingerprint": "replace-with-deployment-evidence-fingerprint",
+  "agent_report_fingerprint": "replace-with-redacted-report-fingerprint",
+  "expert_label": {
+    "status": "PENDING_REVIEW",
+    "root_cause_category": "UNLABELLED",
+    "expected_repository_id": "",
+    "expected_files": [],
+    "expected_symbols": [],
+    "accepted_candidate_ids": [],
+    "rejected_candidate_ids": [],
+    "required_missing_inputs": []
+  },
+  "privacy_review": {
+    "raw_logs_removed": true,
+    "raw_trace_id_removed": true,
+    "credentials_removed": true,
+    "personal_data_removed": true,
+    "code_snippets_removed": true,
+    "reviewer": "replace-with-reviewer-reference",
+    "reviewed_at": "2026-09-02T00:00:00Z"
+  },
+  "production_claim_allowed": false
+}

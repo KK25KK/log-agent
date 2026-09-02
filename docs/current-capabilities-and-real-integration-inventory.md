@@ -5,8 +5,8 @@
 | 盘点日期 | 2026-09-02 |
 | 代码基线 | 当前仓库工作树（自然语言接单、DAM Trace、运行时锚点、本地 Git 代码证据与联合根因候选前五阶段已加入） |
 | 当前结论 | 原有主体业务链保持不变；新增关闭的 `trace_search_v1`、DAM 8 成员时间线、`runtime-anchor-v1`、事故时间部署 Commit + 本地 Git 有界证据，以及 `joint-rca-v1` 确定性联合候选。本地离线验收已通过，真实 intent/8 库 Trace/code smoke、候选专家评审、真实飞书和生产治理仍待完成 |
-| 数据边界 | 当前自动化路径使用合成日志、合成飞书身份、合成变更、合成指标/Trace 聚合、确定性 Mock SOP 和合成标签，不代表真实生产效果或企业知识内容 |
-| 验证边界 | 第二轮严格门禁及两个 fail-closed 边界落地后的最终工作树已完成 `gofmt`、全仓测试、`go vet`、重点包乱序 20 轮、仓库链接/diff、`mock-e2e`、`demo`、两类评测与快照/replay/比较/反馈/灰度演练总检；Runbook 为 1 次调用/1 项/3 步，SLS 为 2 次观察/8 次 Provider 调用/0 次外部网络，安全复查未发现 P0–P3。race 因 `CGO_ENABLED=0` 且无 GCC 未执行 |
+| 数据边界 | 默认离线自动化使用合成日志、飞书身份、变更、指标/Trace、Mock SOP 和合成标签；另有一次 DAM 单 Logstore 真实 SLS + 方舟联合试点记录。两者都不代表真实多库根因效果、真实飞书或企业知识内容 |
+| 验证边界 | 2026-09-02 当前前五阶段工作树通过 `gofmt`、全仓测试、`go vet`、重点包多轮、Engine 5/5、摘要 9/9、联合 RCA 8/8、两种聚合 Mock E2E、8 成员 Mock Trace Smoke 和 `demo`；联合评测明确真实事故/专家标签/网络/生产声明均为 0。真实 Trace+部署+代码 Smoke 未执行；race 因 `CGO_ENABLED=0` 且无 GCC 未执行 |
 
 ## 1. 一句话概括
 
@@ -99,6 +99,7 @@ flowchart LR
 | 查询与交付审计 | 已完成 | 查询 start/terminal 审计、Evidence Ledger、Delivery 状态都持久化 | `internal/adapters/sqlite` | 能定位查询、证据、报告和卡片状态，不记录原始日志/密钥 |
 | 全 Mock 端到端 | Mock 可验收（本轮已实跑） | Mock 飞书、SLS、指标/Trace、Runbook 与摘要复用真实业务链和 SQLite | `cmd/logagent/mock_e2e.go`、`internal/adapters/feishumock`、`internal/adapters/slsmock`、`internal/adapters/runbookmock` | 实测保持 2 个 SLS 观察、8 次 Provider 代理和 0 网络，并增加 1 次 Runbook 查询、1 项 3 步人工指引 |
 | 合成黄金集评测 | 已完成 | 5 类严格 Fixture 运行真实 Eino Graph，对结果、证据、建议、Cause、成本和 Trace 做门禁 | `internal/evaluation`、`internal/adapters/evalmock` | 当前合成集 5/5 通过；失败门禁返回非零退出码 |
+| 联合 RCA 合成门禁 | 已完成 | 8 类严格 Fixture 运行生产 `BuildJointRCA`，检查状态/Verdict/引用/重放、伪确定根因、自动动作和外部调用；数据边界写入报告 | `internal/evaluation/jointrca`、`cmd/logagent/joint_rca_evaluate.go` | 8/8 通过，真实事故/专家标签/网络/生产声明均为 0；不代表真实候选准确率 |
 | Agent 自观测 | 已完成离线切片 | 关闭枚举的 RUN/GRAPH_NODE/TOOL Span，有界 Recorder 和版本清单 | `internal/observability`、`internal/domain/agent_trace.go` | 评测可验证固定执行路径、调用数、字节数和事件完整性 |
 | 离线快照与回放 | 已完成 | append-only JSON 快照、SHA-256、严格 Schema、父引用和当前二进制重跑 | `internal/evaluation/replay`、`internal/adapters/replayfs` | 成功/失败评测可归档；重复、篡改和不兼容输入会拒绝 |
 | 兼容快照比较 | 已完成 | 只读比较版本、Gate、Case、质量、成本代理、工具和 Trace；不兼容时 delta-free | `internal/evaluation/replay/compare.go`、`cmd/logagent/evaluate.go` | 可识别新增失败、恢复和固定方向回归；不执行 Graph 或网络 |
@@ -122,7 +123,7 @@ flowchart LR
 | 代码仓库 | 自动测试创建临时双 Commit Git 仓库 | DAM 实际业务仓库与事故版本代码 | 固定 Git 参数、Commit/路径/预算、Blob/指纹、脱敏、Worker/UI 合同 | 本地 Git 真实只读适配器已实现；DAM 仓库配置与代表性 Trace/code Smoke 待验收 |
 | 指标/Trace 调查信号 | `signalmock` 固定错误率与 P95 延迟聚合 | ARMS/CMS/Prometheus/OTel 的受控聚合结果 | Evidence 派生查询、闭集校验、异常复算、Worker 引用门禁和飞书时间线 | 端口与 Mock 已实现；真实连接器、额度、审计和试点未实现 |
 | SOP/知识指引 | `runbookmock` 固定返回版本化的一项三步人工核查条目；可信组装标记 `SYNTHETIC_MOCK` | Wiki、文档平台、错误码平台或企业搜索的受控匹配结果；可信组装标记 `ENTERPRISE_GOVERNED` | 严格 Evidence/Job 窗口绑定、Worker 首次/二次校验、Recommendation/Evidence 派生、内容指纹、独立超时、可信时钟、安全状态和带来源标题的飞书纯文本展示 | 端口、应用服务与 Mock 已实现；真实 `RunbookSource`、内容治理、租户权限、审计和质量评测未实现 |
-| 历史故障与专家标签 | `synthetic-v1.json` | 历史事故、专家期望、成本代理 | 真实 Graph、结果校验、Trace、评测门禁 | 真实脱敏数据集和专家标注流程未实现 |
+| 历史故障与专家标签 | `synthetic-v1.json` 与联合 RCA 合成集 | 历史事故、专家期望、成本代理 | 真实 Graph/联合投影、结果校验、Trace、评测门禁 | 脱敏 Case 与双 Reviewer 模板/流程已归档；真实数据和真实专家结果仍为 0 |
 | Reviewer 反馈与灰度策略 | `feedback-seed` + 固定策略 | 两名虚拟 Reviewer、Verdict/Reason、quorum 与演练阈值 | 严格快照引用、append-only 纠正、B3 对比和决策状态机 | 真实 Reviewer 身份、UI、团队策略和生产动作未实现 |
 | Agent Trace 后端 | 内存 `BoundedRecorder` + 本地回放文件 | 生产 Trace Collector、检索、保留和告警 | Span 合同、版本指纹、完整性检查 | 真实 OTel/AgentSight/可观测后端未实现 |
 | LLM Provider | `summarymock` 生成确定性引用摘要 | 火山方舟模型响应、Token 和时延 | Worker 前后校验、严格 JSON Schema/引用门禁、fallback、飞书渲染、独立 check/smoke | 方舟独立合成 Smoke 与 DAM count-only Worker 联合 E2E 已通过且 Key 不入库；Prompt/留存/成本、真实质量和真实飞书 E2E 仍待验收 |

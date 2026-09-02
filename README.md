@@ -86,6 +86,14 @@ Eino 只负责流程编排，不负责业务状态、权限、幂等、审计和
 
 完整规则、调用链和验收边界见 [`docs/joint-root-cause-candidates.md`](docs/joint-root-cause-candidates.md)。
 
+离线门禁与真实试点：
+
+```powershell
+go run ./cmd/logagent joint-rca-evaluate
+```
+
+当前仓库内置 8 个纯合成安全场景；门禁固定声明真实事故数和专家标签数均为 0、外部网络调用为 0、生产声明不允许。脱敏历史 Case、双 Reviewer 和真实 Trace+Code Smoke 的准备方式见 [`docs/joint-rca-evaluation-and-real-pilot.md`](docs/joint-rca-evaluation-and-real-pilot.md)。
+
 ### 调查骨架
 
 - 飞书企业自建应用 WebSocket 长连接入口。
@@ -621,13 +629,16 @@ go test -count=1 ./...
 go vet ./...
 go run ./cmd/logagent evaluate
 go run ./cmd/logagent summary-evaluate
+go run ./cmd/logagent joint-rca-evaluate
 go run ./cmd/logagent mock-e2e
 go run ./cmd/logagent demo
 ```
 
 `go test -race ./...` 在 Windows 上需要 C 编译器并启用 `CGO_ENABLED=1`。
 
-默认测试全部离线，不读取云凭据、不访问 SLS 或发布平台。只有显式运行 `sls-check`、`sls-smoke`，或以 `LOG_AGENT_SLS_MODE=aliyun` 启动 Worker，才会访问真实 SLS。
+默认测试全部离线，不读取云凭据、不访问 SLS 或发布平台。只有显式运行 `sls-check`、`sls-smoke`，或以 `LOG_AGENT_SLS_MODE=aliyun` / `LOG_AGENT_TRACE_MODE=aliyun` 启动相应链路，才会访问真实 SLS。
+
+2026-09-02 联合 RCA 阶段再次通过 `gofmt -w .`、`go test -count=1 ./...`、`go vet ./...`、`evaluate` 5/5、`summary-evaluate` 9/9、`joint-rca-evaluate` 8/8，以及 `error_analysis_v2/error_count_v1` 两条 Mock E2E 和 8 成员 Mock `trace-smoke`。联合评测指纹为 `0362e2d15f144fb78bffb611e560b4f0eed0348fa7da0766431f7c4b1ac08d79`，明确记录 `real_incident_count=0`、`expert_label_count=0`、`external_network_calls=0` 和 `production_claim_allowed=false`。当前仍没有真实 TraceID 与可信部署目录的同调查 Smoke；`go test -race ./...` 仍因 `CGO_ENABLED=0` 且无 GCC 未执行。
 
 以下是受治理 SOP 进入 Worker 之前保存的离线基线验收记录：当时 `gofmt`、`go test -count=1 ./...`、`go vet ./...`、重点包乱序 20 轮、`evaluate`、`summary-evaluate`、`mock-e2e`、快照保存/回放/比较、`feedback-seed` 和 `rollout-rehearse` 均通过。`evaluate` 的 5/5 个合成 Case 全部通过，`trace_contract_accuracy=1`；共记录 76 个事件、13 个工具 Span、0 个丢弃事件，并与 10 次逻辑 SLS 观察、40 次 Provider 调用代理、3 次 Change Source 调用和 78,080 processed bytes 完全核对。`summary-evaluate` 的 9/9 个安全 Case 通过，预期/实际 Mock Provider 调用均为 8，敏感输入 Case 调用为 0，Token、凭据和外部网络调用为 0。C1/C2 手工链路形成十条活动反馈、五个完整 Case、两名虚拟 Reviewer quorum，并返回 `REHEARSAL_PASSED`、`SYNTHETIC_MOCK`、`production_action_allowed=false`；阻断和证据不足路径由离线测试覆盖。Engine 数据集指纹为 `caf2714c80a646c5da15134c6557879565ffc8e083a66da1f1c9e49d3d0dc1f8`，摘要数据集指纹为 `82e813aed0721f15b89a19b053da6b1d47509ab07f45122af4ed0c075e60a0b1`，规范化版本指纹为 `14db14acf992ebd06d9d4d71f89056be2a2b984baeb6bf5de2c136db442f7c53`。这些仍只是全合成 Mock 的工程回归结果，并且都不包含 SOP 数据。`go test -race ./...` 当时未执行，因为 Windows 环境 `CGO_ENABLED=0` 且未安装 GCC，不能写成已通过。
 

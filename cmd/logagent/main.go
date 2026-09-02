@@ -33,13 +33,15 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: logagent <evaluate|summary-evaluate|replay|replay-compare|feedback-seed|rollout-rehearse|delivery-dlq-list|delivery-dlq-replay|mock-e2e|demo|worker|feishu|web|sls-check|sls-smoke|trace-check|trace-smoke|code-check|llm-check|llm-smoke|intent-check|intent-smoke>")
+		return errors.New("usage: logagent <evaluate|summary-evaluate|joint-rca-evaluate|replay|replay-compare|feedback-seed|rollout-rehearse|delivery-dlq-list|delivery-dlq-replay|mock-e2e|demo|worker|feishu|web|sls-check|sls-smoke|trace-check|trace-smoke|code-check|llm-check|llm-smoke|intent-check|intent-smoke>")
 	}
 	switch args[0] {
 	case "evaluate":
 		return runEvaluateCommand(args[1:])
 	case "summary-evaluate":
 		return runSummaryEvaluate(args[1:])
+	case "joint-rca-evaluate":
+		return runJointRCAEvaluate(args[1:])
 	case "replay":
 		return runReplayCommand(args[1:])
 	case "replay-compare":

@@ -11,6 +11,7 @@
 | [`runtime-error-anchors.md`](runtime-error-anchors.md) | 从脱敏 Trace 事件确定性提取错误文本、类型、路由、符号和堆栈帧；含预算、校验、展示和非根因边界 | 锚点类型、提取规则、预算、校验或代码检索入口变化时同步更新 |
 | [`deployment-and-code-evidence.md`](deployment-and-code-evidence.md) | 事故时间部署 Commit 解析、本地 Git 固定只读能力、代码 Evidence、预算、脱敏和真实接入步骤 | 部署来源、仓库目录、Git 能力、预算、出站策略或真实验收变化时同步更新 |
 | [`joint-root-cause-candidates.md`](joint-root-cause-candidates.md) | 运行时、部署 Commit、代码命中和可信 Diff 的确定性联合账本、候选分数与人工验证动作 | 候选状态、固定规则、分数、展示、出站策略或真实专家验收变化时同步更新 |
+| [`joint-rca-evaluation-and-real-pilot.md`](joint-rca-evaluation-and-real-pilot.md) | 联合 RCA 的独立合成门禁、脱敏历史 Case/专家评审模板及真实 Trace+Code 单次试点步骤 | Fixture、门禁、真实样本、Reviewer 结果或试点状态变化时同步更新 |
 | [`roadmap.md`](roadmap.md) | 当前阶段边界、完成状态和后续计划 | 只写可独立验收的阶段 |
 | [`development-process.md`](development-process.md) | 从 Mock-first 到 DAM 真实 SLS + 方舟联合验收的开发过程、关键决策、问题闭环和取舍 | 新阶段或真实验收完成后追加；不替代规范与路线图 |
 | [`local-mock-e2e.md`](local-mock-e2e.md) | 飞书、SLS、指标/Trace、受治理 SOP 与摘要 Mock 主链的运行、预期输出与边界 | Mock 行为变化或复跑验收时同步更新 |
