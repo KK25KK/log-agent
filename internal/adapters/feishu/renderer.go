@@ -23,6 +23,8 @@ const (
 	maxRunbookItems          = 2
 	maxRunbookSteps          = 3
 	maxAISummaryNotes        = 2
+	maxTraceMembers          = 8
+	maxTraceEvents           = 12
 	maxAggregateItems        = 5
 	maxStatementRunes        = 480
 	maxAggregateRunes        = 96
@@ -133,17 +135,23 @@ func renderIntentPreviewCard(resolution domain.IntentResolution) (cardDocument, 
 	if resolution.ID == "" || resolution.Problem.Text == "" || resolution.Status == domain.IntentResolutionParsing {
 		return cardDocument{}, errors.New("intent resolution is not ready for card rendering")
 	}
+	planDetails := fmt.Sprintf(
+		"**解析状态：** %s\n\n**意图：** %s\n\n**逻辑范围：** %s / %s\n\n**时间窗口：** %s\n\n**固定模板：** %s\n\n**置信度：** %.0f%%",
+		safeMarkdown(string(resolution.Status), maxIdentifierRunes), safeMarkdown(string(resolution.Intent), maxIdentifierRunes),
+		safeMarkdown(resolution.Service, maxIdentifierRunes), safeMarkdown(resolution.Environment, maxIdentifierRunes),
+		time.Duration(resolution.DurationSeconds)*time.Second, safeMarkdown(resolution.TemplateID, maxIdentifierRunes), resolution.Confidence*100,
+	)
+	if resolution.TraceIDHint != "" {
+		planDetails += "\n\n**TraceID：** " + safeMarkdown(resolution.TraceIDHint, maxIdentifierRunes)
+	}
 	elements := []any{
 		markdown("**用户描述（未验证）：** " + safeMarkdown(resolution.Problem.Text, maxStatementRunes)),
 		cardDivider{Tag: "hr"},
-		markdown(fmt.Sprintf(
-			"**解析状态：** %s\n\n**意图：** %s\n\n**逻辑范围：** %s / %s\n\n**时间窗口：** %s\n\n**固定模板：** %s\n\n**置信度：** %.0f%%",
-			safeMarkdown(string(resolution.Status), maxIdentifierRunes), safeMarkdown(string(resolution.Intent), maxIdentifierRunes),
-			safeMarkdown(resolution.Service, maxIdentifierRunes), safeMarkdown(resolution.Environment, maxIdentifierRunes),
-			time.Duration(resolution.DurationSeconds)*time.Second, safeMarkdown(resolution.TemplateID, maxIdentifierRunes), resolution.Confidence*100,
-		)),
+		markdown(planDetails),
 	}
-	if resolution.Status == domain.IntentResolutionResolved && resolution.Intent == domain.IntentErrorSpike && resolution.TemplateID == domain.ErrorCountTemplateID {
+	if resolution.Status == domain.IntentResolutionResolved &&
+		((resolution.Intent == domain.IntentErrorSpike && resolution.TemplateID == domain.ErrorCountTemplateID) ||
+			(resolution.Intent == domain.IntentTraceSearch && resolution.TemplateID == domain.TraceSearchTemplateID)) {
 		elements = append(elements,
 			markdown("当前尚未访问日志。只有点击确认后才会创建调查并执行受控只读查询。"),
 			intentConfirmButton(resolution.ID),
@@ -213,6 +221,7 @@ func renderReportCard(investigation domain.Investigation) cardDocument {
 	}
 	elements = append(elements, cardDivider{Tag: "hr"})
 	elements = append(elements, markdown("**调查结果：** "+safeMarkdown(report.Outcome, maxAggregateRunes)))
+	elements = appendTraceSummary(elements, report.TraceInvestigation)
 	elements = appendReportSummary(elements, report.Summary)
 	for index, finding := range boundedFindings(report.Findings) {
 		conclusion := "非确定性"
@@ -352,6 +361,15 @@ func renderEvidenceCard(investigation domain.Investigation) (cardDocument, error
 	}
 	elements := summaryElements(investigation)
 	elements = append(elements, cardDivider{Tag: "hr"})
+	if investigation.Report.TraceInvestigation != nil {
+		elements = appendTraceEvidence(elements, investigation.Report.TraceInvestigation)
+		elements = append(elements, buttonRow(investigation.ID,
+			buttonSpec{label: "返回报告", action: domain.ActionViewReport, style: "primary"},
+			buttonSpec{label: "扩大时间窗", action: domain.ActionExpandWindow},
+			buttonSpec{label: "重新运行", action: domain.ActionRerun},
+		))
+		return newCard("Trace 调查证据", "blue", elements), nil
+	}
 	evidence := investigation.Report.Evidence
 	if len(evidence) == 0 {
 		elements = append(elements, markdown("当前报告没有可展示的证据。"))
@@ -399,6 +417,71 @@ func renderEvidenceCard(investigation domain.Investigation) (cardDocument, error
 		buttonSpec{label: "重新运行", action: domain.ActionRerun},
 	))
 	return newCard("日志调查证据", "blue", elements), nil
+}
+
+func appendTraceSummary(elements []any, trace *domain.TraceInvestigation) []any {
+	if trace == nil {
+		return elements
+	}
+	content := fmt.Sprintf(
+		"**Trace 时间线：** %s｜成员 %d｜事件 %d｜API %d｜扫描 %s\n\nTrace 指纹：%s",
+		safeMarkdown(string(trace.Status), maxIdentifierRunes), len(trace.Members), len(trace.Events),
+		trace.TotalAPICalls, formatBytes(trace.TotalProcessedBytes), safeMarkdown(shortFingerprint(trace.TraceIDFingerprint), maxIdentifierRunes),
+	)
+	return append(elements, markdown(content))
+}
+
+func appendTraceEvidence(elements []any, trace *domain.TraceInvestigation) []any {
+	members := trace.Members
+	if len(members) > maxTraceMembers {
+		members = members[:maxTraceMembers]
+	}
+	for index, member := range members {
+		content := fmt.Sprintf(
+			"**成员 %d · %s**\n\n状态：%s｜事件：%d｜API：%d｜扫描：%s",
+			index+1, safeMarkdown(member.MemberID, maxIdentifierRunes),
+			safeMarkdown(string(member.Status), maxIdentifierRunes), member.EventCount,
+			member.APICalls, formatBytes(member.ProcessedBytes),
+		)
+		if member.IncompleteReason != "" {
+			content += "\n\n不完整原因：" + safeMarkdown(member.IncompleteReason, maxIdentifierRunes)
+		}
+		elements = append(elements, markdown(content))
+	}
+	events := trace.Events
+	if len(events) > maxTraceEvents {
+		events = events[:maxTraceEvents]
+	}
+	for index, event := range events {
+		content := fmt.Sprintf(
+			"**时间线 %d · %s · %s**\n\n%s",
+			index+1, formatTraceEventTime(event.EventTime), safeMarkdown(event.MemberID, maxIdentifierRunes),
+			safeMarkdown(event.Message, maxStatementRunes),
+		)
+		if event.Level != "" || event.Operation != "" {
+			content += "\n\n级别：" + safeMarkdown(valueOrDash(event.Level), maxAggregateRunes) +
+				"｜操作：" + safeMarkdown(valueOrDash(event.Operation), maxAggregateRunes)
+		}
+		elements = append(elements, markdown(content))
+	}
+	if len(trace.Events) > len(events) {
+		elements = append(elements, markdown(fmt.Sprintf("其余 %d 条脱敏事件未在卡片中展示。", len(trace.Events)-len(events))))
+	}
+	return elements
+}
+
+func shortFingerprint(value string) string {
+	if len(value) <= 12 {
+		return value
+	}
+	return value[:12] + "…"
+}
+
+func formatTraceEventTime(value time.Time) string {
+	if value.IsZero() {
+		return "时间未知"
+	}
+	return value.In(shanghaiLocation).Format("01-02 15:04:05.000")
 }
 
 func appendCauseSummary(elements []any, analysis *domain.CauseAnalysis) []any {

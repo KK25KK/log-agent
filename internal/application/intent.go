@@ -22,6 +22,7 @@ const IntentQuotaPolicyVersion = "intent-quota-v1"
 var (
 	intentSecretPattern    = regexp.MustCompile(`(?i)(bearer\s+[A-Za-z0-9._~+/=-]{8,}|LTAI[A-Za-z0-9]{12,}|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+|[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}|\b(?:\d{1,3}\.){3}\d{1,3}\b)`)
 	intentInjectionPattern = regexp.MustCompile(`(?i)(忽略.{0,12}(规则|指令|限制)|ignore.{0,12}(instruction|rule)|执行.{0,8}(SPL|SQL|shell|命令)|execute.{0,8}(SPL|SQL|shell)|\bcurl\b|\bkubectl\b|\brm\s+-)`)
+	intentTraceIDPattern   = regexp.MustCompile(`^[A-Za-z0-9._:-]{8,256}$`)
 )
 
 type IntentPolicy struct {
@@ -264,8 +265,20 @@ func (s *IntentResolutionService) Confirm(ctx context.Context, resolutionID stri
 	if !now.Before(resolution.ExpiresAt) {
 		return "", false, ports.ErrIntentExpired
 	}
-	if resolution.Status != domain.IntentResolutionResolved || resolution.Intent != domain.IntentErrorSpike ||
-		resolution.TemplateID != domain.ErrorCountTemplateID {
+	if resolution.Status != domain.IntentResolutionResolved {
+		return "", false, ports.ErrIntentInvalid
+	}
+	switch resolution.Intent {
+	case domain.IntentErrorSpike:
+		if resolution.TemplateID != domain.ErrorCountTemplateID || resolution.TraceID != "" {
+			return "", false, ports.ErrIntentInvalid
+		}
+	case domain.IntentTraceSearch:
+		if resolution.TemplateID != domain.TraceSearchTemplateID || !intentTraceIDPattern.MatchString(resolution.TraceID) ||
+			resolution.TraceIDFingerprint != traceIDFingerprint(resolution.TraceID) || resolution.TraceIDHint != traceIDHint(resolution.TraceID) {
+			return "", false, ports.ErrIntentInvalid
+		}
+	default:
 		return "", false, ports.ErrIntentInvalid
 	}
 	capabilities, err := s.capabilities.ListAllowedCapabilities(ctx, principal)
@@ -280,7 +293,7 @@ func (s *IntentResolutionService) Confirm(ctx context.Context, resolutionID stri
 	request := domain.InvestigationRequest{
 		Service: resolution.Service, Environment: resolution.Environment,
 		TemplateID: resolution.TemplateID, StartTime: end.Add(-window), EndTime: end,
-		Problem: &resolution.Problem, IntentResolutionID: resolution.ID,
+		Problem: &resolution.Problem, IntentResolutionID: resolution.ID, TraceID: resolution.TraceID,
 	}
 	inbound := domain.InboundMessage{
 		AppID: principal.AppID, TenantKey: principal.TenantKey, UserID: principal.UserID,
@@ -340,9 +353,46 @@ func (s *IntentResolutionService) resolveDraft(resolution *domain.IntentResoluti
 		resolution.Status = domain.IntentResolutionUnknown
 		resolution.ReasonCode = "unsupported_intent"
 	case domain.IntentTraceSearch:
-		clearIntentScope(resolution)
-		resolution.Status = domain.IntentResolutionRejected
-		resolution.ReasonCode = "intent_not_enabled"
+		if (resolution.Service != "" && !safeIntentCode(resolution.Service, 1, 64)) ||
+			(resolution.Environment != "" && !safeIntentCode(resolution.Environment, 1, 64)) {
+			clearIntentScope(resolution)
+			resolution.Intent = domain.IntentUnknown
+			resolution.Status = domain.IntentResolutionFallback
+			resolution.ReasonCode = "intent_fields_unsafe"
+			return
+		}
+		if resolution.Service == "" || resolution.Environment == "" || resolution.DurationSeconds <= 0 || resolution.TraceID == "" {
+			resolution.Status = domain.IntentResolutionIncomplete
+			resolution.ReasonCode = "intent_fields_incomplete"
+			return
+		}
+		if !intentTraceIDPattern.MatchString(resolution.TraceID) {
+			clearIntentScope(resolution)
+			resolution.Status = domain.IntentResolutionRejected
+			resolution.ReasonCode = "trace_id_rejected"
+			return
+		}
+		if resolution.DurationSeconds > int64((30*time.Minute)/time.Second) {
+			resolution.Status = domain.IntentResolutionRejected
+			resolution.ReasonCode = "trace_window_rejected"
+			return
+		}
+		if resolution.Confidence < s.policy.MinConfidence {
+			resolution.Status = domain.IntentResolutionIncomplete
+			resolution.ReasonCode = "intent_confidence_below_policy"
+			return
+		}
+		capability, ok := matchingIntentCapability(capabilities, resolution.Intent, resolution.Service, resolution.Environment)
+		if !ok || capability.TemplateID != domain.TraceSearchTemplateID {
+			resolution.Status = domain.IntentResolutionRejected
+			resolution.ReasonCode = "intent_scope_forbidden"
+			return
+		}
+		resolution.TemplateID = capability.TemplateID
+		resolution.TraceIDFingerprint = traceIDFingerprint(resolution.TraceID)
+		resolution.TraceIDHint = traceIDHint(resolution.TraceID)
+		resolution.Status = domain.IntentResolutionResolved
+		resolution.ReasonCode = ""
 	case domain.IntentErrorSpike:
 		if (resolution.Service != "" && !safeIntentCode(resolution.Service, 1, 64)) ||
 			(resolution.Environment != "" && !safeIntentCode(resolution.Environment, 1, 64)) {
@@ -418,6 +468,7 @@ func applyIntentProviderResult(resolution *domain.IntentResolution, result domai
 	resolution.Service = result.Draft.Service
 	resolution.Environment = result.Draft.Environment
 	resolution.DurationSeconds = result.Draft.DurationSeconds
+	resolution.TraceID = result.Draft.TraceID
 	resolution.Confidence = result.Draft.Confidence
 	resolution.Provider = result.Provider
 	resolution.Model = result.Model
@@ -443,6 +494,21 @@ func clearIntentScope(resolution *domain.IntentResolution) {
 	resolution.Environment = ""
 	resolution.DurationSeconds = 0
 	resolution.TemplateID = ""
+	resolution.TraceID = ""
+	resolution.TraceIDFingerprint = ""
+	resolution.TraceIDHint = ""
+}
+
+func traceIDFingerprint(traceID string) string {
+	digest := sha256.Sum256([]byte(traceID))
+	return hex.EncodeToString(digest[:])
+}
+
+func traceIDHint(traceID string) string {
+	if len(traceID) <= 12 {
+		return traceID
+	}
+	return traceID[:8] + "…" + traceID[len(traceID)-4:]
 }
 
 func matchingIntentCapability(capabilities []domain.InvestigationCapability, intent domain.IntentKind, service, environment string) (domain.InvestigationCapability, bool) {

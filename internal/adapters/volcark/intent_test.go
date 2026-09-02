@@ -21,7 +21,7 @@ func TestIntentParserCallsResponsesAPIWithLogicalCapabilitiesOnly(t *testing.T) 
 		if err := json.NewDecoder(request.Body).Decode(&received); err != nil {
 			t.Fatal(err)
 		}
-		_, _ = writer.Write([]byte(`{"id":"resp_intent","model":"model","status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"{\"intent\":\"error_spike\",\"service\":\"dam-server\",\"environment\":\"test\",\"duration_seconds\":1800,\"confidence\":0.96}"}]}],"usage":{"input_tokens":40,"output_tokens":20,"total_tokens":60}}`))
+		_, _ = writer.Write([]byte(`{"id":"resp_intent","model":"model","status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"{\"intent\":\"error_spike\",\"service\":\"dam-server\",\"environment\":\"test\",\"duration_seconds\":1800,\"trace_id\":null,\"confidence\":0.96}"}]}],"usage":{"input_tokens":40,"output_tokens":20,"total_tokens":60}}`))
 	}))
 	defer server.Close()
 	parser, err := newIntentParser("test-key", "model", server.URL, &http.Client{Timeout: time.Second}, 16*1024, 512, true)
@@ -65,7 +65,7 @@ func TestIntentParserRejectsUnknownFieldsAndProviderBody(t *testing.T) {
 			_, _ = writer.Write([]byte("secret provider diagnostic"))
 			return
 		}
-		_, _ = writer.Write([]byte(`{"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"{\"intent\":\"unknown\",\"service\":null,\"environment\":null,\"duration_seconds\":null,\"confidence\":1,\"spl\":\"*\"}"}]}]}`))
+		_, _ = writer.Write([]byte(`{"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"{\"intent\":\"unknown\",\"service\":null,\"environment\":null,\"duration_seconds\":null,\"trace_id\":null,\"confidence\":1,\"spl\":\"*\"}"}]}]}`))
 	}))
 	defer server.Close()
 	parser, err := newIntentParser("secret-key", "model", server.URL, &http.Client{Timeout: time.Second}, 16*1024, 512, true)

@@ -44,6 +44,10 @@ func TestLoadDefaultsToOfflineMock(t *testing.T) {
 	if config.IntentQuota.Window != time.Hour || config.IntentQuota.MaxRequests != 100 || config.IntentQuota.MaxTokens != 51200 || config.IntentQuota.ReservedTokensPerRequest != 512 {
 		t.Fatalf("unexpected intent quota defaults: %#v", config.IntentQuota)
 	}
+	if config.Trace.Mode != "disabled" || config.Trace.MaxWindow != 30*time.Minute || config.Trace.MemberLimit != 50 ||
+		config.Trace.GlobalLimit != 500 || config.Trace.MaxConcurrency != 2 || config.Trace.RetryIncomplete != 1 {
+		t.Fatalf("unexpected Trace defaults: %#v", config.Trace)
+	}
 	if config.Quota.Window != time.Hour || config.Quota.MaxObservations != 100 || config.Quota.MaxAPICalls != 400 ||
 		config.Quota.ReservedBytesPerObservation != config.SLS.MaxProcessedBytes || config.Quota.MaxProcessedBytes <= config.Quota.ReservedBytesPerObservation {
 		t.Fatalf("unexpected tenant quota defaults: %#v", config.Quota)
@@ -51,6 +55,18 @@ func TestLoadDefaultsToOfflineMock(t *testing.T) {
 	if config.Web.Address != "127.0.0.1:8080" || config.Web.DatabasePath != "./data/web-pilot.db" ||
 		config.Web.AppID != "local-web" || config.Web.TenantKey != "local-pilot" || config.Web.UserID != "operator" {
 		t.Fatalf("unexpected local Web defaults: %#v", config.Web)
+	}
+}
+
+func TestLoadAcceptsDisabledTraceRetryAndRejectsUnsafeTraceBudgets(t *testing.T) {
+	t.Setenv("LOG_AGENT_TRACE_RETRY_INCOMPLETE", "0")
+	loaded, err := Load()
+	if err != nil || loaded.Trace.RetryIncomplete != 0 {
+		t.Fatalf("zero Trace retry should be valid: %#v err=%v", loaded.Trace, err)
+	}
+	t.Setenv("LOG_AGENT_TRACE_MAX_CONCURRENT", "3")
+	if _, err := Load(); err == nil {
+		t.Fatal("want Trace concurrency budget error")
 	}
 }
 

@@ -33,7 +33,7 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: logagent <evaluate|summary-evaluate|replay|replay-compare|feedback-seed|rollout-rehearse|delivery-dlq-list|delivery-dlq-replay|mock-e2e|demo|worker|feishu|web|sls-check|sls-smoke|llm-check|llm-smoke|intent-check|intent-smoke>")
+		return errors.New("usage: logagent <evaluate|summary-evaluate|replay|replay-compare|feedback-seed|rollout-rehearse|delivery-dlq-list|delivery-dlq-replay|mock-e2e|demo|worker|feishu|web|sls-check|sls-smoke|trace-check|trace-smoke|llm-check|llm-smoke|intent-check|intent-smoke>")
 	}
 	switch args[0] {
 	case "evaluate":
@@ -147,8 +147,26 @@ func run(args []string) error {
 			return err
 		}
 		return runIntentSmoke(loaded, strings.Join(args[1:], " "))
+	case "trace-check":
+		if len(args) != 1 {
+			return errors.New("usage: logagent trace-check")
+		}
+		loaded, err := config.Load()
+		if err != nil {
+			return err
+		}
+		return runTraceCheck(loaded)
+	case "trace-smoke":
+		if len(args) != 5 {
+			return errors.New("usage: logagent trace-smoke <service> <environment> <duration> <trace-id>")
+		}
+		loaded, err := config.Load()
+		if err != nil {
+			return err
+		}
+		return runTraceSmoke(loaded, args[1], args[2], args[3], args[4])
 	default:
-		return fmt.Errorf("unknown command %q; use evaluate, summary-evaluate, replay, replay-compare, feedback-seed, rollout-rehearse, delivery-dlq-list, delivery-dlq-replay, mock-e2e, demo, worker, feishu, web, sls-check, sls-smoke, llm-check, llm-smoke, intent-check, or intent-smoke", args[0])
+		return fmt.Errorf("unknown command %q; see logagent usage", args[0])
 	}
 }
 
@@ -280,6 +298,14 @@ func buildInvestigationWorker(ctx context.Context, config config.Config, store *
 	if err != nil {
 		return nil, err
 	}
+	traceEngine, _, err := buildTraceEngine(config, store)
+	if err != nil {
+		return nil, err
+	}
+	router, err := application.NewRoutingEngine(engine, traceEngine)
+	if err != nil {
+		return nil, err
+	}
 	summary, err := buildSummaryService(config, store, time.Now)
 	if err != nil {
 		return nil, err
@@ -297,7 +323,7 @@ func buildInvestigationWorker(ctx context.Context, config config.Config, store *
 	if summary != nil {
 		options = append(options, application.WithWorkerSummary(summary))
 	}
-	worker, err := application.NewWorker(store, engine, config.WorkerID, config.WorkerLease, options...)
+	worker, err := application.NewWorker(store, router, config.WorkerID, config.WorkerLease, options...)
 	if err != nil {
 		return nil, err
 	}

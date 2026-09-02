@@ -414,8 +414,30 @@ git diff --check
 - 模型可能返回未授权资源或物理信息：输入只包含 ACL 过滤后的逻辑能力，输出再经关闭枚举、格式、置信度、窗口和模板校验。
 - Provider 超时是否重试不明确：不自动重试，记录 `OUTCOME_UNKNOWN` 并保留额度代理，避免静默重复计费。
 - 群聊正文带 `@_user_1`：适配器只依据飞书结构化 mention 判断是否点名机器人，随后移除该标记再进入应用层。
-- 旧 SQLite 数据库没有版本标记：引入 `PRAGMA user_version=1`，在事务中执行幂等建表并拒绝比当前代码更新的 Schema。
+- 旧 SQLite 数据库没有版本标记：第一阶段引入 `PRAGMA user_version=1`；第二阶段增加 Trace Checkpoint 后升为版本 2，在事务中执行幂等建表并拒绝比当前代码更新的 Schema。
 
 ### 效果与边界
 
 Mock 页面链路已经能够完成“输入问题—查看预览—确认—Intake—Worker/Eino—Mock SLS—报告—本地 Delivery”，并证明确认前不会创建调查。单元测试覆盖重复解析/确认、越权、低置信度、Trace 不降级、注入、额度和方舟严格 JSON 合同。真实方舟意图解析尚未执行；当前也没有实现 TraceID 8 库查询、错误锚点、部署 Commit 或代码证据，因此本阶段只能改善接单体验，不能宣称已经能从任意 Bug 描述定位代码根因。
+
+## 12. 2026-09-02：从错误趋势进入 DAM TraceID 跨库时间线
+
+### 问题
+
+单 Logstore 的 `error_count_v1` 可以回答错误是否增加，却不能把同一请求在 DAM Server、消费、转码和定时任务等日志来源中的执行顺序串起来。直接把 StoreView 或 8 个物理 Logstore 交给模型选择，会扩大越权、注入和扫描成本；复用聚合查询端口又会把“计数桶”和“脱敏事件”混成不稳定合同。
+
+### 方案
+
+新增独立 `TraceResourceCatalog/TraceBackend/GovernedTraceExecutor` 端口和 `trace_search_v1` 报告合同。自然语言只增加关闭的 `trace_search` 枚举；确认后由 `RoutingEngine` 选择 TraceEngine。TraceEngine 先执行管理员指定的主成员，再以最大并发 2 执行其余成员；Gateway 对每个成员重新做 ACL、Schema、窗口、条数、字节和超时约束，并在写 Evidence 前完成 TraceID与敏感信息脱敏。SQLite 为每个成员保存有租约 fencing 的 Checkpoint 和开始/终止审计。
+
+### 难点与解决
+
+- 8 个库字段能力不同：资源目录逐成员声明全文/字段检索和允许投影，不在代码中假设所有库有同一 Schema。
+- 需要并发但不能给 SLS 压力：主服务串行优先，其余成员使用固定 worker pool，上限 2；测试同时验证调用首项与最大活跃数。
+- 进程崩溃后不知道付费查询是否完成：`STARTED` Checkpoint 被新租约发现时转为 `OUTCOME_UNKNOWN`，调查进入 `NEEDS_REVIEW`，不自动查询。
+- 原始日志有泄露风险：Gateway 只接受关闭的事件投影，替换 TraceID并脱敏 Token、邮箱、IP 与 URL 参数，再计算消息指纹；物理 Logstore 不进入页面和卡片。
+- 多库时间戳精度不一：保留纳秒/秒/未知质量标记，按时间、成员和事件 ID 稳定排序；窗口外或缺少事件时间的成员降级为不完整。
+
+### 效果与边界
+
+全离线测试和 Mock `trace-smoke` 已完成：一次调查覆盖 8 个逻辑成员、8 个 Checkpoint 和 16 条开始/终止审计，Mock 场景产生 2 条脱敏事件；普通 Eino 错误趋势链路未被替换。首次真实 `trace-check` 暴露了“全文索引没有字段 Keys 被误判为空索引”的兼容问题；Trace 专用 Schema 读取器随后同时识别字段索引和 `line` 全文索引，保留原错误计数模板的严格字段规则。重跑后 8/8 成员均为 `READY`、日志读取为 0。真实 TraceID 日志查询仍需 `trace-smoke` 验收；当前尚未实现错误锚点、部署 Commit、代码检索或根因确认。

@@ -24,6 +24,18 @@ func buildIntentResolutionService(loaded config.Config, store *sqlite.Store, int
 	if err != nil {
 		return nil, err
 	}
+	capabilitySources := []ports.IntentCapabilitySource{catalog}
+	if loaded.Trace.Mode != "disabled" {
+		traceCatalog, traceErr := buildTraceCatalog(loaded)
+		if traceErr != nil {
+			return nil, traceErr
+		}
+		capabilitySources = append(capabilitySources, traceCatalog)
+	}
+	capabilities, err := application.NewIntentCapabilityUnion(capabilitySources...)
+	if err != nil {
+		return nil, err
+	}
 	var parser ports.InvestigationIntentParser
 	provider := ""
 	model := ""
@@ -49,7 +61,7 @@ func buildIntentResolutionService(loaded config.Config, store *sqlite.Store, int
 	default:
 		return nil, errors.New("unsupported intent parser mode")
 	}
-	return application.NewIntentResolutionService(store, parser, catalog, intake, application.IntentPolicy{
+	return application.NewIntentResolutionService(store, parser, capabilities, intake, application.IntentPolicy{
 		MaxInputRunes: loaded.Intent.MaxInputRunes, MinConfidence: loaded.Intent.MinConfidence,
 		MaxWindow: loaded.SLS.MaxWindow, IngestionGrace: loaded.SLS.IngestionGrace,
 		ResolutionTTL: loaded.Intent.ResolutionTTL, Provider: provider, Model: model, PromptHash: promptHash,
@@ -68,13 +80,25 @@ func runIntentCheck(loaded config.Config) error {
 	if err != nil {
 		return err
 	}
+	capabilitySources := []ports.IntentCapabilitySource{catalog}
+	if loaded.Trace.Mode != "disabled" {
+		traceCatalog, traceErr := buildTraceCatalog(loaded)
+		if traceErr != nil {
+			return traceErr
+		}
+		capabilitySources = append(capabilitySources, traceCatalog)
+	}
+	union, err := application.NewIntentCapabilityUnion(capabilitySources...)
+	if err != nil {
+		return err
+	}
 	principal := domain.Principal{AppID: loaded.Web.AppID, TenantKey: loaded.Web.TenantKey, UserID: loaded.Web.UserID}
-	capabilities, err := catalog.ListAllowedCapabilities(context.Background(), principal)
+	capabilities, err := union.ListAllowedCapabilities(context.Background(), principal)
 	if err != nil {
 		return err
 	}
 	if len(capabilities) == 0 {
-		return errors.New("intent-check found no error_count_v1 capability allowed for the fixed Web principal")
+		return errors.New("intent-check found no allowed logical capability for the fixed Web principal")
 	}
 	return printJSON(map[string]any{
 		"status": "READY", "mode": loaded.Intent.Mode, "model": loaded.Intent.Model,

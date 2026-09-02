@@ -90,6 +90,47 @@ func TestIntentResolutionRequiresConfirmationBeforeInvestigation(t *testing.T) {
 	}
 }
 
+func TestTraceIntentRequiresConfirmationAndPreservesExactTraceOnlyInRequest(t *testing.T) {
+	store, err := sqlite.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	principal := domain.Principal{AppID: "local-web", TenantKey: "tenant", UserID: "operator"}
+	parser := &intentParserStub{result: intentResult(domain.IntentDraft{
+		Intent: domain.IntentTraceSearch, Service: "dam-server", Environment: "test",
+		DurationSeconds: 600, TraceID: "trace-12345678", Confidence: .98,
+	})}
+	capabilities := &intentCapabilitiesStub{values: []domain.InvestigationCapability{{
+		Service: "dam-server", Environment: "test", Intent: domain.IntentTraceSearch, TemplateID: domain.TraceSearchTemplateID,
+	}}}
+	now := time.Date(2026, 9, 2, 8, 0, 0, 0, time.UTC)
+	service := newIntentService(t, store, parser, capabilities, now)
+	resolution, created, err := service.Resolve(context.Background(), intentInbound(principal, "trace-natural-1", now), "查一下 Trace trace-12345678")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !created || resolution.Status != domain.IntentResolutionResolved || resolution.TemplateID != domain.TraceSearchTemplateID ||
+		resolution.TraceIDFingerprint == "" || resolution.TraceIDHint == "" {
+		t.Fatalf("unexpected Trace resolution: %#v", resolution)
+	}
+	if _, investigations, jobs, _, err := store.Counts(context.Background()); err != nil || investigations != 0 || jobs != 0 {
+		t.Fatalf("Trace preview performed a query: investigations=%d jobs=%d err=%v", investigations, jobs, err)
+	}
+	investigationID, confirmed, err := service.Confirm(context.Background(), resolution.ID, principal, "chat")
+	if err != nil || !confirmed {
+		t.Fatalf("confirm Trace intent: id=%q confirmed=%v err=%v", investigationID, confirmed, err)
+	}
+	investigation, err := store.GetInvestigation(context.Background(), investigationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if investigation.Request.TraceID != "trace-12345678" || investigation.Request.TemplateID != domain.TraceSearchTemplateID ||
+		investigation.Request.EndTime.Sub(investigation.Request.StartTime) != 10*time.Minute {
+		t.Fatalf("Trace confirmation lost governed request: %#v", investigation.Request)
+	}
+}
+
 func TestIntentResolutionDeduplicatesAndRejectsPromptInjection(t *testing.T) {
 	store, err := sqlite.Open(":memory:")
 	if err != nil {
@@ -124,7 +165,7 @@ func TestIntentResolutionDoesNotDowngradeTraceOrLowConfidence(t *testing.T) {
 		status domain.IntentResolutionStatus
 		reason string
 	}{
-		{name: "trace", draft: domain.IntentDraft{Intent: domain.IntentTraceSearch, Confidence: 0.99}, status: domain.IntentResolutionRejected, reason: "intent_not_enabled"},
+		{name: "trace", draft: domain.IntentDraft{Intent: domain.IntentTraceSearch, Confidence: 0.99}, status: domain.IntentResolutionIncomplete, reason: "intent_fields_incomplete"},
 		{name: "low confidence", draft: domain.IntentDraft{Intent: domain.IntentErrorSpike, Service: "dam-server", Environment: "test", DurationSeconds: 600, Confidence: 0.5}, status: domain.IntentResolutionIncomplete, reason: "intent_confidence_below_policy"},
 	}
 	for _, test := range tests {

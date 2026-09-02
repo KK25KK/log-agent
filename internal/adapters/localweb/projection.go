@@ -18,22 +18,37 @@ type ScopeView struct {
 }
 
 type EvidenceView struct {
-	ID                 string               `json:"id"`
-	Name               string               `json:"name"`
-	StartTime          time.Time            `json:"start_time"`
-	EndTime            time.Time            `json:"end_time"`
-	Progress           string               `json:"progress"`
-	Complete           bool                 `json:"complete"`
-	Truncated          bool                 `json:"truncated"`
-	ProcessedRows      int64                `json:"processed_rows"`
-	ProcessedBytes     int64                `json:"processed_bytes"`
-	ElapsedMillisecond int64                `json:"elapsed_millisecond"`
-	APICalls           int                  `json:"api_calls"`
-	ErrorCount         int64                `json:"error_count"`
-	TopError           string               `json:"top_error,omitempty"`
-	TopErrorCount      int64                `json:"top_error_count,omitempty"`
-	ErrorPatterns      []domain.CountBucket `json:"error_patterns,omitempty"`
-	Instances          []domain.CountBucket `json:"instances,omitempty"`
+	ID                 string                   `json:"id"`
+	Name               string                   `json:"name"`
+	StartTime          time.Time                `json:"start_time"`
+	EndTime            time.Time                `json:"end_time"`
+	Progress           string                   `json:"progress"`
+	Complete           bool                     `json:"complete"`
+	Truncated          bool                     `json:"truncated"`
+	ProcessedRows      int64                    `json:"processed_rows"`
+	ProcessedBytes     int64                    `json:"processed_bytes"`
+	ElapsedMillisecond int64                    `json:"elapsed_millisecond"`
+	APICalls           int                      `json:"api_calls"`
+	ErrorCount         int64                    `json:"error_count"`
+	TopError           string                   `json:"top_error,omitempty"`
+	TopErrorCount      int64                    `json:"top_error_count,omitempty"`
+	ErrorPatterns      []domain.CountBucket     `json:"error_patterns,omitempty"`
+	Instances          []domain.CountBucket     `json:"instances,omitempty"`
+	TraceMemberStatus  domain.TraceMemberStatus `json:"trace_member_status,omitempty"`
+	TraceEventCount    int                      `json:"trace_event_count,omitempty"`
+}
+
+type TraceInvestigationView struct {
+	Status              domain.TraceInvestigationStatus `json:"status"`
+	Complete            bool                            `json:"complete"`
+	TraceIDFingerprint  string                          `json:"trace_id_fingerprint"`
+	TotalEvents         int                             `json:"total_events"`
+	EventsTruncated     bool                            `json:"events_truncated"`
+	Members             []domain.TraceMemberSummary     `json:"members"`
+	Events              []domain.TraceEvent             `json:"events"`
+	TotalAPICalls       int                             `json:"total_api_calls"`
+	TotalProcessedRows  int64                           `json:"total_processed_rows"`
+	TotalProcessedBytes int64                           `json:"total_processed_bytes"`
 }
 
 type ReportView struct {
@@ -46,6 +61,7 @@ type ReportView struct {
 	TimelineStatus  domain.TimelineStatus         `json:"timeline_status,omitempty"`
 	TimelineItems   []domain.IncidentTimelineItem `json:"timeline_items,omitempty"`
 	RunbookGuidance *domain.RunbookGuidance       `json:"runbook_guidance,omitempty"`
+	Trace           *TraceInvestigationView       `json:"trace,omitempty"`
 	Summary         *SummaryView                  `json:"summary,omitempty"`
 	GeneratedAt     time.Time                     `json:"generated_at"`
 }
@@ -129,7 +145,7 @@ func projectReport(report domain.Report) *ReportView {
 		GeneratedAt:     report.GeneratedAt,
 	}
 	for _, evidence := range report.Evidence {
-		view.Evidence = append(view.Evidence, EvidenceView{
+		projected := EvidenceView{
 			ID: evidence.ID, Name: evidence.Name, StartTime: evidence.StartTime, EndTime: evidence.EndTime,
 			Progress: evidence.Progress, Complete: evidence.Complete, Truncated: evidence.Truncated,
 			ProcessedRows: evidence.ProcessedRows, ProcessedBytes: evidence.ProcessedBytes,
@@ -137,7 +153,28 @@ func projectReport(report domain.Report) *ReportView {
 			ErrorCount: evidence.ErrorCount, TopError: evidence.TopError, TopErrorCount: evidence.TopErrorCount,
 			ErrorPatterns: append([]domain.CountBucket(nil), evidence.ErrorPatterns...),
 			Instances:     append([]domain.CountBucket(nil), evidence.Instances...),
-		})
+		}
+		if evidence.TraceMember != nil {
+			projected.TraceMemberStatus = evidence.TraceMember.Status
+			projected.TraceEventCount = len(evidence.TraceMember.Events)
+		}
+		view.Evidence = append(view.Evidence, projected)
+	}
+	if report.TraceInvestigation != nil {
+		trace := report.TraceInvestigation
+		const maxDisplayedTraceEvents = 100
+		eventLimit := len(trace.Events)
+		if eventLimit > maxDisplayedTraceEvents {
+			eventLimit = maxDisplayedTraceEvents
+		}
+		view.Trace = &TraceInvestigationView{
+			Status: trace.Status, Complete: trace.Complete, TraceIDFingerprint: trace.TraceIDFingerprint,
+			TotalEvents: len(trace.Events), EventsTruncated: eventLimit < len(trace.Events),
+			Members:       append([]domain.TraceMemberSummary(nil), trace.Members...),
+			Events:        append([]domain.TraceEvent(nil), trace.Events[:eventLimit]...),
+			TotalAPICalls: trace.TotalAPICalls, TotalProcessedRows: trace.TotalProcessedRows,
+			TotalProcessedBytes: trace.TotalProcessedBytes,
+		}
 	}
 	if report.CauseAnalysis != nil {
 		view.CauseStatus = report.CauseAnalysis.Status

@@ -16,7 +16,7 @@ import (
 	"logagent/internal/ports"
 )
 
-const currentSchemaVersion = 1
+const currentSchemaVersion = 2
 
 const schema = `
 CREATE TABLE IF NOT EXISTS investigations (
@@ -110,6 +110,48 @@ CREATE TABLE IF NOT EXISTS query_steps (
     updated_at INTEGER NOT NULL,
     PRIMARY KEY (investigation_id, step_key),
     FOREIGN KEY (investigation_id) REFERENCES investigations(id)
+);
+
+CREATE TABLE IF NOT EXISTS trace_query_steps (
+    investigation_id TEXT NOT NULL,
+    member_id TEXT NOT NULL,
+    input_hash TEXT NOT NULL,
+    status TEXT NOT NULL,
+    job_attempt INTEGER NOT NULL,
+    lease_owner TEXT NOT NULL,
+    result_json TEXT NOT NULL DEFAULT '',
+    output_hash TEXT NOT NULL DEFAULT '',
+    reason_code TEXT NOT NULL DEFAULT '',
+    started_at INTEGER NOT NULL,
+    completed_at INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (investigation_id, member_id),
+    FOREIGN KEY (investigation_id) REFERENCES investigations(id)
+);
+
+CREATE TABLE IF NOT EXISTS trace_audit (
+    audit_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    investigation_id TEXT NOT NULL,
+    principal_app_id TEXT NOT NULL,
+    principal_tenant_key TEXT NOT NULL,
+    principal_user_id TEXT NOT NULL,
+    group_id TEXT NOT NULL,
+    member_id TEXT NOT NULL,
+    template_id TEXT NOT NULL,
+    trace_id_fingerprint TEXT NOT NULL,
+    governance_fingerprint TEXT NOT NULL,
+    query_spec_hash TEXT NOT NULL,
+    schema_fingerprint TEXT NOT NULL,
+    outcome TEXT NOT NULL,
+    reason_code TEXT NOT NULL,
+    provider_request_id TEXT NOT NULL,
+    progress TEXT NOT NULL,
+    returned_events INTEGER NOT NULL,
+    api_calls INTEGER NOT NULL,
+    processed_rows INTEGER NOT NULL,
+    processed_bytes INTEGER NOT NULL,
+    elapsed_millisecond INTEGER NOT NULL,
+    occurred_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS interaction_targets (
@@ -255,6 +297,9 @@ CREATE TABLE IF NOT EXISTS intent_resolutions (
     service TEXT NOT NULL DEFAULT '',
     environment TEXT NOT NULL DEFAULT '',
     duration_seconds INTEGER NOT NULL DEFAULT 0,
+    trace_id TEXT NOT NULL DEFAULT '',
+    trace_id_fingerprint TEXT NOT NULL DEFAULT '',
+    trace_id_hint TEXT NOT NULL DEFAULT '',
     template_id TEXT NOT NULL DEFAULT '',
     confidence REAL NOT NULL DEFAULT 0,
     provider TEXT NOT NULL,
@@ -313,6 +358,12 @@ ON query_audit(investigation_id, audit_id);
 
 CREATE INDEX IF NOT EXISTS idx_query_steps_status
 ON query_steps(status, updated_at);
+
+CREATE INDEX IF NOT EXISTS idx_trace_query_steps_status
+ON trace_query_steps(status, updated_at);
+
+CREATE INDEX IF NOT EXISTS idx_trace_audit_investigation
+ON trace_audit(investigation_id, audit_id);
 
 CREATE INDEX IF NOT EXISTS idx_evidence_ledger_investigation
 ON evidence_ledger(investigation_id, hypothesis_id, entry_id);
@@ -421,8 +472,19 @@ func migrate(db *sql.DB) error {
 	if _, err := tx.Exec(schema); err != nil {
 		return fmt.Errorf("apply sqlite schema version %d: %w", currentSchemaVersion, err)
 	}
+	if version == 1 {
+		for _, statement := range []string{
+			"ALTER TABLE intent_resolutions ADD COLUMN trace_id TEXT NOT NULL DEFAULT ''",
+			"ALTER TABLE intent_resolutions ADD COLUMN trace_id_fingerprint TEXT NOT NULL DEFAULT ''",
+			"ALTER TABLE intent_resolutions ADD COLUMN trace_id_hint TEXT NOT NULL DEFAULT ''",
+		} {
+			if _, err := tx.Exec(statement); err != nil {
+				return fmt.Errorf("upgrade sqlite schema from version 1 to 2: %w", err)
+			}
+		}
+	}
 	if version < currentSchemaVersion {
-		if _, err := tx.Exec("PRAGMA user_version = 1"); err != nil {
+		if _, err := tx.Exec("PRAGMA user_version = 2"); err != nil {
 			return fmt.Errorf("record sqlite schema version: %w", err)
 		}
 	}

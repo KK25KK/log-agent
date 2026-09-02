@@ -24,6 +24,7 @@ type Config struct {
 	LLMQuota          LLMQuotaConfig
 	Intent            IntentConfig
 	IntentQuota       IntentQuotaConfig
+	Trace             TraceConfig
 	SmokePrincipal    SmokePrincipal
 	Web               WebConfig
 }
@@ -108,6 +109,19 @@ type IntentQuotaConfig struct {
 	ReservedTokensPerRequest int64
 }
 
+type TraceConfig struct {
+	Mode              string
+	CatalogPath       string
+	MaxWindow         time.Duration
+	IngestionGrace    time.Duration
+	QueryTimeout      time.Duration
+	MemberLimit       int
+	GlobalLimit       int
+	MaxProcessedBytes int64
+	MaxConcurrency    int
+	RetryIncomplete   int
+}
+
 type SmokePrincipal struct {
 	AppID     string
 	TenantKey string
@@ -142,6 +156,10 @@ func Load() (Config, error) {
 			Model:   valueOrDefault("LOG_AGENT_INTENT_MODEL", os.Getenv("LOG_AGENT_ARK_MODEL")),
 			BaseURL: valueOrDefault("LOG_AGENT_INTENT_BASE_URL", valueOrDefault("LOG_AGENT_ARK_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3")),
 		},
+		Trace: TraceConfig{
+			Mode:        valueOrDefault("LOG_AGENT_TRACE_MODE", "disabled"),
+			CatalogPath: valueOrDefault("LOG_AGENT_TRACE_CATALOG", "./config/trace-resources.json"),
+		},
 		SmokePrincipal: SmokePrincipal{
 			AppID:     os.Getenv("LOG_AGENT_SMOKE_APP_ID"),
 			TenantKey: os.Getenv("LOG_AGENT_SMOKE_TENANT_KEY"),
@@ -164,6 +182,9 @@ func Load() (Config, error) {
 	}
 	if config.Intent.Mode != "disabled" && config.Intent.Mode != "mock" && config.Intent.Mode != "volcengine" {
 		return Config{}, fmt.Errorf("LOG_AGENT_INTENT_MODE must be disabled, mock, or volcengine")
+	}
+	if config.Trace.Mode != "disabled" && config.Trace.Mode != "mock" && config.Trace.Mode != "aliyun" {
+		return Config{}, fmt.Errorf("LOG_AGENT_TRACE_MODE must be disabled, mock, or aliyun")
 	}
 	var err error
 	config.WorkerPoll, err = durationOrDefault("LOG_AGENT_POLL_INTERVAL", time.Second)
@@ -248,6 +269,38 @@ func Load() (Config, error) {
 	config.SLS.MaxConcurrent, err = intOrDefault("LOG_AGENT_SLS_MAX_CONCURRENT", 2)
 	if err != nil {
 		return Config{}, err
+	}
+	config.Trace.MaxWindow, err = durationOrDefault("LOG_AGENT_TRACE_MAX_WINDOW", 30*time.Minute)
+	if err != nil || config.Trace.MaxWindow <= 0 || config.Trace.MaxWindow > 30*time.Minute {
+		return Config{}, fmt.Errorf("LOG_AGENT_TRACE_MAX_WINDOW must be between 1ns and 30m")
+	}
+	config.Trace.IngestionGrace, err = durationOrDefault("LOG_AGENT_TRACE_INGESTION_GRACE", domain.DefaultIngestionGrace)
+	if err != nil || config.Trace.IngestionGrace < domain.MinimumIngestionGrace {
+		return Config{}, fmt.Errorf("LOG_AGENT_TRACE_INGESTION_GRACE must be at least %s", domain.MinimumIngestionGrace)
+	}
+	config.Trace.QueryTimeout, err = durationOrDefault("LOG_AGENT_TRACE_QUERY_TIMEOUT", 20*time.Second)
+	if err != nil || config.Trace.QueryTimeout <= 0 {
+		return Config{}, fmt.Errorf("LOG_AGENT_TRACE_QUERY_TIMEOUT must be positive")
+	}
+	config.Trace.MemberLimit, err = intOrDefault("LOG_AGENT_TRACE_MEMBER_LIMIT", domain.TraceDefaultMemberLimit)
+	if err != nil || config.Trace.MemberLimit <= 0 || config.Trace.MemberLimit > domain.TraceDefaultMemberLimit {
+		return Config{}, fmt.Errorf("LOG_AGENT_TRACE_MEMBER_LIMIT must be between 1 and %d", domain.TraceDefaultMemberLimit)
+	}
+	config.Trace.GlobalLimit, err = intOrDefault("LOG_AGENT_TRACE_GLOBAL_LIMIT", domain.TraceDefaultGlobalLimit)
+	if err != nil || config.Trace.GlobalLimit <= 0 || config.Trace.GlobalLimit > domain.TraceDefaultGlobalLimit {
+		return Config{}, fmt.Errorf("LOG_AGENT_TRACE_GLOBAL_LIMIT must be between 1 and %d", domain.TraceDefaultGlobalLimit)
+	}
+	config.Trace.MaxProcessedBytes, err = int64OrDefault("LOG_AGENT_TRACE_MAX_PROCESSED_BYTES", 256*1024*1024)
+	if err != nil || config.Trace.MaxProcessedBytes <= 0 {
+		return Config{}, fmt.Errorf("LOG_AGENT_TRACE_MAX_PROCESSED_BYTES must be positive")
+	}
+	config.Trace.MaxConcurrency, err = intOrDefault("LOG_AGENT_TRACE_MAX_CONCURRENT", domain.TraceDefaultConcurrency)
+	if err != nil || config.Trace.MaxConcurrency <= 0 || config.Trace.MaxConcurrency > domain.TraceDefaultConcurrency {
+		return Config{}, fmt.Errorf("LOG_AGENT_TRACE_MAX_CONCURRENT must be between 1 and %d", domain.TraceDefaultConcurrency)
+	}
+	config.Trace.RetryIncomplete, err = nonNegativeIntOrDefault("LOG_AGENT_TRACE_RETRY_INCOMPLETE", 1)
+	if err != nil || config.Trace.RetryIncomplete < 0 || config.Trace.RetryIncomplete > 1 {
+		return Config{}, fmt.Errorf("LOG_AGENT_TRACE_RETRY_INCOMPLETE must be 0 or 1")
 	}
 	config.Quota.Window, err = durationOrDefault("LOG_AGENT_TENANT_QUOTA_WINDOW", time.Hour)
 	if err != nil {
@@ -401,6 +454,18 @@ func intOrDefault(name string, fallback int) (int, error) {
 	parsed, err := strconv.Atoi(raw)
 	if err != nil || parsed <= 0 {
 		return 0, fmt.Errorf("%s must be a positive integer", name)
+	}
+	return parsed, nil
+}
+
+func nonNegativeIntOrDefault(name string, fallback int) (int, error) {
+	raw := os.Getenv(name)
+	if raw == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.Atoi(raw)
+	if err != nil || parsed < 0 {
+		return 0, fmt.Errorf("%s must be a non-negative integer", name)
 	}
 	return parsed, nil
 }

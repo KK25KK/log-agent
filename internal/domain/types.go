@@ -65,6 +65,7 @@ type InvestigationRequest struct {
 	Requester          Principal         `json:"requester"`
 	Problem            *ProblemStatement `json:"problem,omitempty"`
 	IntentResolutionID string            `json:"intent_resolution_id,omitempty"`
+	TraceID            string            `json:"trace_id,omitempty"`
 }
 
 // QuerySpec is the auditable, typed request sent to an SLS executor.
@@ -123,39 +124,40 @@ type QueryResult struct {
 
 // Evidence preserves what was queried and whether the result was safe to use.
 type Evidence struct {
-	ID                      string        `json:"id"`
-	QueryID                 string        `json:"query_id"`
-	QuerySpecHash           string        `json:"query_spec_hash"`
-	ResourceID              string        `json:"resource_id"`
-	TemplateID              string        `json:"template_id"`
-	TemplateVersion         string        `json:"template_version"`
-	SchemaFingerprint       string        `json:"schema_fingerprint"`
-	PolicyVersion           string        `json:"policy_version"`
-	GovernanceFingerprint   string        `json:"governance_fingerprint"`
-	Name                    string        `json:"name"`
-	StartTime               time.Time     `json:"start_time"`
-	EndTime                 time.Time     `json:"end_time"`
-	Progress                string        `json:"progress"`
-	Complete                bool          `json:"complete"`
-	Truncated               bool          `json:"truncated"`
-	NanosecondOrderedKnown  bool          `json:"nanosecond_ordered_known"`
-	NanosecondOrdered       bool          `json:"nanosecond_ordered"`
-	UsageKnown              bool          `json:"usage_known"`
-	IncompleteReason        string        `json:"incomplete_reason,omitempty"`
-	ProcessedRows           int64         `json:"processed_rows"`
-	ProcessedBytes          int64         `json:"processed_bytes"`
-	ElapsedMillisecond      int64         `json:"elapsed_millisecond"`
-	APICalls                int           `json:"api_calls"`
-	Redacted                bool          `json:"redacted"`
-	ErrorCount              int64         `json:"error_count"`
-	TopError                string        `json:"top_error,omitempty"`
-	TopErrorCount           int64         `json:"top_error_count,omitempty"`
-	ErrorPatterns           []CountBucket `json:"error_patterns,omitempty"`
-	Instances               []CountBucket `json:"instances,omitempty"`
-	ErrorPatternsExhaustive bool          `json:"error_patterns_exhaustive"`
-	InstancesExhaustive     bool          `json:"instances_exhaustive"`
-	PatternLimit            int           `json:"pattern_limit"`
-	InstanceLimit           int           `json:"instance_limit"`
+	ID                      string             `json:"id"`
+	QueryID                 string             `json:"query_id"`
+	QuerySpecHash           string             `json:"query_spec_hash"`
+	ResourceID              string             `json:"resource_id"`
+	TemplateID              string             `json:"template_id"`
+	TemplateVersion         string             `json:"template_version"`
+	SchemaFingerprint       string             `json:"schema_fingerprint"`
+	PolicyVersion           string             `json:"policy_version"`
+	GovernanceFingerprint   string             `json:"governance_fingerprint"`
+	Name                    string             `json:"name"`
+	StartTime               time.Time          `json:"start_time"`
+	EndTime                 time.Time          `json:"end_time"`
+	Progress                string             `json:"progress"`
+	Complete                bool               `json:"complete"`
+	Truncated               bool               `json:"truncated"`
+	NanosecondOrderedKnown  bool               `json:"nanosecond_ordered_known"`
+	NanosecondOrdered       bool               `json:"nanosecond_ordered"`
+	UsageKnown              bool               `json:"usage_known"`
+	IncompleteReason        string             `json:"incomplete_reason,omitempty"`
+	ProcessedRows           int64              `json:"processed_rows"`
+	ProcessedBytes          int64              `json:"processed_bytes"`
+	ElapsedMillisecond      int64              `json:"elapsed_millisecond"`
+	APICalls                int                `json:"api_calls"`
+	Redacted                bool               `json:"redacted"`
+	ErrorCount              int64              `json:"error_count"`
+	TopError                string             `json:"top_error,omitempty"`
+	TopErrorCount           int64              `json:"top_error_count,omitempty"`
+	ErrorPatterns           []CountBucket      `json:"error_patterns,omitempty"`
+	Instances               []CountBucket      `json:"instances,omitempty"`
+	ErrorPatternsExhaustive bool               `json:"error_patterns_exhaustive"`
+	InstancesExhaustive     bool               `json:"instances_exhaustive"`
+	PatternLimit            int                `json:"pattern_limit"`
+	InstanceLimit           int                `json:"instance_limit"`
+	TraceMember             *TraceMemberResult `json:"trace_member,omitempty"`
 }
 
 // Finding is a conclusion with explicit evidence references.
@@ -177,16 +179,17 @@ type Recommendation struct {
 
 // Report is the durable user-facing result of an investigation.
 type Report struct {
-	InvestigationID  string            `json:"investigation_id"`
-	Outcome          string            `json:"outcome"`
-	Findings         []Finding         `json:"findings"`
-	Recommendations  []Recommendation  `json:"recommendations,omitempty"`
-	Evidence         []Evidence        `json:"evidence"`
-	CauseAnalysis    *CauseAnalysis    `json:"cause_analysis,omitempty"`
-	IncidentTimeline *IncidentTimeline `json:"incident_timeline,omitempty"`
-	RunbookGuidance  *RunbookGuidance  `json:"runbook_guidance,omitempty"`
-	Summary          *ReportSummary    `json:"summary,omitempty"`
-	GeneratedAt      time.Time         `json:"generated_at"`
+	InvestigationID    string              `json:"investigation_id"`
+	Outcome            string              `json:"outcome"`
+	Findings           []Finding           `json:"findings"`
+	Recommendations    []Recommendation    `json:"recommendations,omitempty"`
+	Evidence           []Evidence          `json:"evidence"`
+	CauseAnalysis      *CauseAnalysis      `json:"cause_analysis,omitempty"`
+	IncidentTimeline   *IncidentTimeline   `json:"incident_timeline,omitempty"`
+	TraceInvestigation *TraceInvestigation `json:"trace_investigation,omitempty"`
+	RunbookGuidance    *RunbookGuidance    `json:"runbook_guidance,omitempty"`
+	Summary            *ReportSummary      `json:"summary,omitempty"`
+	GeneratedAt        time.Time           `json:"generated_at"`
 }
 
 // Job is a claimed unit of work. Request is already decoded for the worker.

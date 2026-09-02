@@ -52,6 +52,35 @@ func TestRendererUsesJSON2AndOnlyAllowedButtons(t *testing.T) {
 	}
 }
 
+func TestRendererShowsBoundedGovernedTraceTimelineWithoutRawTraceID(t *testing.T) {
+	item := cardInvestigation(domain.StatusSucceeded)
+	item.Report.Summary = nil
+	item.Report.CauseAnalysis = nil
+	item.Report.IncidentTimeline = nil
+	item.Report.RunbookGuidance = nil
+	item.Report.TraceInvestigation = &domain.TraceInvestigation{
+		Status: domain.TraceInvestigationComplete, Complete: true, TraceIDFingerprint: strings.Repeat("a", 64),
+		Members:       []domain.TraceMemberSummary{{MemberID: "dam-server", Status: domain.TraceMemberComplete, EventCount: 1, APICalls: 1}},
+		Events:        []domain.TraceEvent{{MemberID: "dam-server", EventTime: time.Now().UTC(), Level: "error", Message: "[TRACE_ID] processing failed"}},
+		TotalAPICalls: 1, TotalProcessedBytes: 128,
+	}
+	card, err := renderActionCard(domain.ActionResult{View: domain.ActionViewEvidenceCard, Investigation: item})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(card)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value := string(encoded)
+	if !strings.Contains(value, "Trace 调查证据") || !strings.Contains(value, "dam-server") || !strings.Contains(value, "TRACE") {
+		t.Fatalf("Trace evidence was not rendered: %s", value)
+	}
+	if strings.Contains(value, "trace-12345678") {
+		t.Fatalf("raw TraceID leaked into card: %s", value)
+	}
+}
+
 func TestEvidenceViewHasBackAndFollowUpActions(t *testing.T) {
 	item := cardInvestigation(domain.StatusSucceeded)
 	card, err := renderActionCard(domain.ActionResult{View: domain.ActionViewEvidenceCard, Investigation: item})

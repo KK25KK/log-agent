@@ -32,19 +32,20 @@ flowchart LR
     R --> X[确认预览]
     X -->|未确认| STOP[零 SLS 调用]
     X -->|确认| I[既有 Intake / Job]
-    I --> W[Worker / Eino / SLS]
+    I --> W[Worker / RoutingEngine / SLS]
 ```
 
-## 3. 首版能力边界
+## 3. 当前能力边界
 
-首版只开放：
+当前只开放：
 
 | Intent | 行为 |
 | --- | --- |
 | `error_spike` | 必须匹配当前身份允许的 service/environment，并固定映射 `error_count_v1` |
+| `trace_search` | 必须带安全 TraceID、已授权逻辑范围和不超过 30 分钟的窗口，并固定映射 `trace_search_v1` |
 | `unknown` | 不创建调查，只返回当前不支持 |
 
-Trace、关键字、根因、代码搜索和任意 SPL 均不在本版开放范围。含 Trace 的问题不会退化成错误计数调查。
+关键字自由检索、根因结论、代码搜索和任意 SPL 仍不开放；含 Trace 的问题不会退化成错误计数调查。Trace 执行合同见 [`traceid-multi-logstore-timeline.md`](traceid-multi-logstore-timeline.md)。
 
 ## 4. 关键实现
 
@@ -59,7 +60,7 @@ Trace、关键字、根因、代码搜索和任意 SPL 均不在本版开放范�
 - 飞书普通文本预览与确认卡：`internal/adapters/feishu`。
 - 启动组装和 Smoke：`cmd/logagent/intent.go`。
 
-`InvestigationRequest` 只增加可选 `problem` 与 `intent_resolution_id`。旧 JSON、`/investigate`、结构化 Web 表单和既有 Worker 保持可用。
+`InvestigationRequest` 增加可选 `problem`、`intent_resolution_id` 与仅供异步执行的 `trace_id`。旧 JSON、`/investigate`、结构化 Web 表单和既有 Worker 保持可用。
 
 ## 5. 安全和恢复
 
@@ -71,7 +72,7 @@ Trace、关键字、根因、代码搜索和任意 SPL 均不在本版开放范�
 - Provider 调用失败或落库结果未知时记为 `OUTCOME_UNKNOWN`，不自动重试。
 - Resolution 默认 15 分钟过期，只允许原 Principal 确认；重复确认复用同一调查。
 - Intent 使用独立于报告摘要的请求/Token 固定窗额度，不能消耗摘要预算。
-- SQLite 使用事务迁移和 `PRAGMA user_version=1`；旧 `user_version=0` 数据库打开时创建新增表并记录版本，更高未知版本拒绝打开。
+- SQLite 使用事务迁移；当前 `PRAGMA user_version=2`（第二阶段增加 Trace Checkpoint/审计表），旧数据库打开时幂等创建新增表并记录版本，更高未知版本拒绝打开。
 
 ## 6. 配置
 
@@ -126,7 +127,7 @@ go run ./cmd/logagent intent-smoke "帮我看 DAM 测试环境最近半小时错
 - 确认后完整经过 Web、Intake、SQLite、Worker、Eino、Mock SLS、Mock 摘要和 Delivery；
 - 重复解析和重复确认幂等；
 - Prompt Injection 在 Provider 前拒绝；
-- Trace 不降级、低置信度不执行、超额度不调用 Provider；
+- Trace 不降级、授权 Trace 可确认并保留准确查询参数、低置信度不执行、超额度不调用 Provider；
 - 飞书普通文本只生成预览卡，确认值只有 `action + resolution_id`；
 - 方舟严格 JSON Schema、未知字段拒绝、错误正文和 Key 不外泄；
 - 旧数据库迁移、旧结构化入口和全仓回归。

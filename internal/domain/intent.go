@@ -2,7 +2,7 @@ package domain
 
 import "time"
 
-const IntentPromptVersion = "investigation-intent-v1"
+const IntentPromptVersion = "investigation-intent-v2"
 
 type IntentKind string
 
@@ -51,6 +51,7 @@ type IntentDraft struct {
 	Service         string     `json:"service,omitempty"`
 	Environment     string     `json:"environment,omitempty"`
 	DurationSeconds int64      `json:"duration_seconds,omitempty"`
+	TraceID         string     `json:"trace_id,omitempty"`
 	Confidence      float64    `json:"confidence"`
 }
 
@@ -70,29 +71,32 @@ type IntentProviderResult struct {
 // IntentResolution is the durable confirmation preview. Physical resources
 // and provider diagnostics are intentionally absent.
 type IntentResolution struct {
-	ID                string                 `json:"id"`
-	Principal         Principal              `json:"-"`
-	SourceMessageID   string                 `json:"-"`
-	Problem           ProblemStatement       `json:"problem"`
-	Status            IntentResolutionStatus `json:"status"`
-	Intent            IntentKind             `json:"intent"`
-	Service           string                 `json:"service,omitempty"`
-	Environment       string                 `json:"environment,omitempty"`
-	DurationSeconds   int64                  `json:"duration_seconds,omitempty"`
-	TemplateID        string                 `json:"template_id,omitempty"`
-	Confidence        float64                `json:"confidence"`
-	Provider          string                 `json:"provider"`
-	Model             string                 `json:"model"`
-	RequestID         string                 `json:"request_id,omitempty"`
-	PromptVersion     string                 `json:"prompt_version"`
-	PromptFingerprint string                 `json:"prompt_fingerprint"`
-	InputTokens       int64                  `json:"input_tokens"`
-	OutputTokens      int64                  `json:"output_tokens"`
-	TotalTokens       int64                  `json:"total_tokens"`
-	LatencyMillis     int64                  `json:"latency_millis"`
-	ReasonCode        string                 `json:"reason_code,omitempty"`
-	CreatedAt         time.Time              `json:"created_at"`
-	ExpiresAt         time.Time              `json:"expires_at"`
-	ConfirmedAt       time.Time              `json:"confirmed_at,omitempty"`
-	InvestigationID   string                 `json:"investigation_id,omitempty"`
+	ID                 string                 `json:"id"`
+	Principal          Principal              `json:"-"`
+	SourceMessageID    string                 `json:"-"`
+	Problem            ProblemStatement       `json:"problem"`
+	Status             IntentResolutionStatus `json:"status"`
+	Intent             IntentKind             `json:"intent"`
+	Service            string                 `json:"service,omitempty"`
+	Environment        string                 `json:"environment,omitempty"`
+	DurationSeconds    int64                  `json:"duration_seconds,omitempty"`
+	TraceID            string                 `json:"-"`
+	TraceIDFingerprint string                 `json:"trace_id_fingerprint,omitempty"`
+	TraceIDHint        string                 `json:"trace_id_hint,omitempty"`
+	TemplateID         string                 `json:"template_id,omitempty"`
+	Confidence         float64                `json:"confidence"`
+	Provider           string                 `json:"provider"`
+	Model              string                 `json:"model"`
+	RequestID          string                 `json:"request_id,omitempty"`
+	PromptVersion      string                 `json:"prompt_version"`
+	PromptFingerprint  string                 `json:"prompt_fingerprint"`
+	InputTokens        int64                  `json:"input_tokens"`
+	OutputTokens       int64                  `json:"output_tokens"`
+	TotalTokens        int64                  `json:"total_tokens"`
+	LatencyMillis      int64                  `json:"latency_millis"`
+	ReasonCode         string                 `json:"reason_code,omitempty"`
+	CreatedAt          time.Time              `json:"created_at"`
+	ExpiresAt          time.Time              `json:"expires_at"`
+	ConfirmedAt        time.Time              `json:"confirmed_at,omitempty"`
+	InvestigationID    string                 `json:"investigation_id,omitempty"`
 }

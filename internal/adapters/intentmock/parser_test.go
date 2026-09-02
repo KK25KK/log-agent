@@ -43,7 +43,7 @@ func TestParserNeverDowngradesTraceToErrorSpike(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Draft.Intent != domain.IntentUnknown {
+	if result.Draft.Intent != domain.IntentTraceSearch || result.Draft.TraceID != "abc12345" {
 		t.Fatalf("trace request was downgraded: %#v", result.Draft)
 	}
 }

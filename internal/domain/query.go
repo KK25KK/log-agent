@@ -115,6 +115,7 @@ type IndexField struct {
 type IndexSchema struct {
 	Fingerprint string                `json:"fingerprint"`
 	Fields      map[string]IndexField `json:"fields"`
+	FullText    bool                  `json:"full_text"`
 	FetchedAt   time.Time             `json:"fetched_at"`
 }
 

@@ -2,8 +2,8 @@
 
 | Metadata | Value |
 | --- | --- |
-| Version | 1.9 |
-| Status | Governed natural-language intake Stage 1 is implemented and offline-validated; only explicit confirmation can create an existing count-only investigation. Multi-Logstore Trace, code evidence, production intent quality, real knowledge/metric connectors, M4-C infrastructure, and real gray rollout remain pending |
+| Version | 2.0 |
+| Status | Governed natural-language intake and DAM TraceID multi-Logstore Stage 2 are implemented and offline-validated. Real eight-member Trace smoke, code evidence, production intent quality, real knowledge/metric connectors, M4-C infrastructure, and real gray rollout remain pending |
 | Date | 2026-09-02 |
 
 ## 1. Overview
@@ -14,12 +14,12 @@ Eino is an orchestration adapter, not the business system of record. Investigati
 
 ## 2. Goal
 
-Users can either submit the strict investigation command or describe a suspected error spike in natural language. Natural language is parsed only into a logical, ACL-filtered preview; the system creates an investigation only after explicit confirmation. It then resolves that logical scope to an administrator-managed SLS resource, applies authorization and query budgets before any cloud request, and produces a report whose facts reference explicit evidence.
+Users can either submit the strict investigation command or describe a suspected error spike or TraceID lookup in natural language. Natural language is parsed only into a logical, ACL-filtered preview; the system creates an investigation only after explicit confirmation. It then resolves that logical scope to an administrator-managed SLS resource or Trace resource group, applies authorization and query budgets before any cloud request, and produces a report whose facts reference explicit evidence.
 
 ## 3. Scope
 
 - Feishu direct messages and group mentions through a replaceable inbound adapter.
-- A governed natural-language intake path for the closed `error_spike` intent. It exposes only principal-authorized logical service/environment/template capabilities, persists a redacted resolution before confirmation, and never accepts physical SLS coordinates or raw query text.
+- A governed natural-language intake path for the closed `error_spike` and `trace_search` intents. It exposes only principal-authorized logical service/environment/template capabilities, persists a redacted resolution before confirmation, and never accepts physical SLS coordinates or raw query text.
 - A two-step `resolve -> confirm` contract. Parsing or previewing never creates an investigation or issues an SLS request; confirmation rechecks identity, ACL, expiry, status, and template binding before reusing the existing durable Intake transaction.
 - An independent intent-parser request/Token quota ledger and a guarded Volcengine Ark parser adapter. Intent parsing is isolated from the report summarizer and has its own model, prompt, timeout, input/output and cost controls.
 - A credential-free local Feishu mock that exercises normalized intake and durable delivery semantics without importing the Feishu SDK.
@@ -28,7 +28,9 @@ Users can either submit the strict investigation command or describe a suspected
 - An Eino graph for deterministic planning, query, verification, and reporting.
 - An administrator-managed service/environment to SLS resource catalog.
 - Default-deny principal-to-resource authorization.
-- Two fixed, versioned query templates: dimensional `error_analysis_v2` and count-only `error_count_v1`; callers cannot provide raw SQL or SPL.
+- Three fixed, versioned query templates: dimensional `error_analysis_v2`, count-only `error_count_v1`, and bounded `trace_search_v1`; callers cannot provide raw SQL or SPL.
+- An administrator-owned Trace resource-group catalog that maps one authorized logical scope to a primary member and a bounded set of Logstore members with explicit field capabilities.
+- A dedicated Trace engine that queries the primary member first, then the remaining members with bounded concurrency, and builds a stable redacted cross-member timeline.
 - Preflight time-window, call-count, row-count, timeout, and concurrency budgets.
 - A post-query processed-byte budget used as the initial cost guardrail.
 - Index Schema validation before executing analytical queries.
@@ -43,7 +45,7 @@ Users can either submit the strict investigation command or describe a suspected
 - A minimal durable delivery queue so the Feishu and worker processes can exchange card updates without sharing memory.
 - Append-only query audit events for denied, started, succeeded, incomplete, and failed attempts.
 - In-flight cancellation, renewable leases, lease-safe state transitions, and structured output.
-- Durable `sls.current` and `sls.baseline` checkpoints for normalized aggregate results.
+- Durable `sls.current` and `sls.baseline` checkpoints for normalized aggregate results, plus one lease-fenced Trace checkpoint per configured member.
 - Fail-closed recovery when a metered SLS read has an unknown external outcome.
 - A versioned synthetic golden evaluation set that runs the real deterministic graph over fixture-backed Mock SLS and Mock change data.
 - Offline quality gates for expected outcome, exact Finding and Recommendation labels, conclusive-finding safety, the same production Worker output validator, QuerySpec-to-Evidence binding, evidence-reference coverage, cause-verdict agreement, fixed query budget, and processed-byte cost proxy.
@@ -62,12 +64,12 @@ Users can either submit the strict investigation command or describe a suspected
 
 - Arbitrary model-generated SQL or SPL.
 - Treating a natural-language interpretation as permission to query. The model cannot create a job, choose a physical resource, bypass confirmation, or silently downgrade an unsupported Trace request to count-only analysis.
-- Claiming support for free-form root-cause questions, TraceID lookup, eight-Logstore timelines, repository analysis, or code-based fixes from the Stage 1 intake implementation.
+- Claiming support for free-form root-cause questions, repository analysis, or code-based fixes from the Stage 2 Trace timeline implementation.
 - User-selected Endpoint, Project, LogStore, field name, or unregistered query template. The command may request only a closed template ID already bound to the resolved operator-owned resource version.
 - Multi-Agent orchestration, DeepAgent, or Supervisor patterns.
 - SLS write operations, alert mutation, or automatic remediation.
 - Token-by-token Feishu streaming cards or high-risk approval actions.
-- Raw-log samples in Feishu or model context.
+- Unredacted raw-log samples in Feishu or model context. The Trace path may display only the Gateway's closed, length-bounded and redacted event projection.
 - Claiming that absence from a bounded Top-K result proves historical absence.
 - Exactly-once notification delivery, blind dead-letter replay, or an unbounded delivery retry loop.
 - Model-generated facts, confidence, authorization, queries, or root-cause verdicts. The required LLM stage may only summarize governed evidence and must fall back to the deterministic report when unavailable or invalid.
@@ -81,7 +83,7 @@ Users can either submit the strict investigation command or describe a suspected
 - Provider exactly-once query execution; SLS does not accept an application idempotency key.
 - Treating a correlated release, configuration change, error pattern, or instance as a confirmed root cause.
 - SLS version-distribution or first-seen-time queries in the first M3 slice; M3 reuses the existing M2 query budget.
-- Live release-platform, configuration-center, CMDB, Trace, metric, error-code, SOP, or service-topology connectors.
+- Live release-platform, configuration-center, CMDB, distributed-tracing-platform, metric, error-code, SOP, or service-topology connectors. The SLS TraceID path is a governed log lookup, not a live tracing connector.
 - Raw spans, Trace IDs, span names, metric labels, arbitrary attributes, or model-generated causal statements in the Mock-first cross-signal timeline.
 - Generated or automatically executed SOPs; arbitrary URLs, commands, scripts, write operations, or knowledge content supplied by the user or model.
 - Claiming that synthetic fixtures are historical incidents, expert labels, production accuracy, or permission to start a real gray rollout.
@@ -123,6 +125,16 @@ Feishu card.action.trigger
     -> requester authorization
     -> view evidence | cancel | expand window | rerun | rerun_with_cost_ack
     -> durable state transition or derived investigation
+
+Confirmed trace_search_v1 request
+    -> RoutingEngine -> TraceEngine
+    -> Trace Resource Catalog + principal ACL
+    -> primary Logstore member first
+    -> remaining members with maximum concurrency 2
+    -> per-member Schema validation + STARTED/terminal audit + Checkpoint
+    -> fixed exact Trace/environment expression through Alibaba CLI
+    -> closed event projection + TraceID/credential/PII/URL redaction
+    -> stable cross-member timeline + complete/zero-hit/partial report
 
 Versioned synthetic evaluation dataset
     -> strict fixture and label validation
@@ -182,10 +194,13 @@ The registered templates in this version are:
 
 - `error_analysis_v2` / `error-analysis-v2`: four bounded, read-only aggregate requests for each observation: count before, Top 5 configured error dimensions, Top 5 configured instance dimensions, and count after. Its resource owns distinct `error_field` and `instance_field` values, both indexed text fields with statistics enabled.
 - `error_count_v1` / `error-count-v1`: two bounded, read-only aggregate requests for each observation: count before and count after using only fixed scope selectors plus the separate error selector. It requires no analytical dimension, returns at most two aggregate rows, never reads `msg`, and never claims an error type, instance distribution, release cause, database cause, or unified event timeline.
+- `trace_search_v1` / `trace-search-v1`: one bounded, exact TraceID log lookup per administrator-configured member. The primary member is executed first and all other members use at most two concurrent workers. Each member returns at most 50 closed-projection events and the report at most 500 events. It never accepts user/model query text, physical resources, or field names; it does not itself claim a root cause.
 
 Every resource binds exactly one registered template version. The optional command template argument selects only a closed template ID; it must match the resolved resource version. Omitting the argument preserves backward compatibility by selecting `error_analysis_v2`. Users and models cannot submit provider query strings.
 
-For either template, unequal boundary counts make the observation `Incomplete`. For count-only results `PatternLimit` and `InstanceLimit` are zero, dimensional bucket collections remain empty and non-exhaustive, and renderers must display those dimensions as `本模板不适用` rather than as an empty exhaustive result.
+For either aggregate template, unequal boundary counts make the observation `Incomplete`. For count-only results `PatternLimit` and `InstanceLimit` are zero, dimensional bucket collections remain empty and non-exhaustive, and renderers must display those dimensions as `本模板不适用` rather than as an empty exhaustive result.
+
+The Trace Resource Catalog is separate from the aggregate Resource Catalog. One unique `(service, environment)` maps to one group with 1-16 members, exactly one primary member, fixed physical coordinates, fixed Trace/environment query modes, and a closed set of projected fields. The model sees only an authorized logical `trace_search` capability. Raw TraceID is required in the durable Job request for asynchronous exact lookup, but Evidence and user-facing projections contain only its fingerprint or bounded hint; log events replace it before persistence.
 
 Top-K is an intentional template result, not provider truncation. Pattern and instance shares are derived locally from aggregate counts. A current pattern absent from the baseline Top 5 is only a candidate-new pattern unless the baseline buckets account for the complete baseline error count and neither compared label was redacted. Only then may the report call it confirmed new relative to the selected baseline window.
 
@@ -202,9 +217,13 @@ The query gateway must perform these checks before a log query:
 
 Unknown, unauthorized, invalid-schema, or preflight-over-budget requests fail closed without calling the query API.
 
+The Trace gateway additionally limits the request window to 30 minutes, validates TraceID against `[A-Za-z0-9._:-]{8,256}`, limits each member to 50 events and the whole investigation to 500 events, enforces a global processed-byte proxy, and retries only an explicit `Incomplete` result at most once. Event time must fall inside the requested window. Credentials, TraceID, email, IPv4 and URL query/fragment data are redacted before a Trace event becomes Evidence.
+
 ### Persistence boundary
 
 SQLite validates local durability, deduplication, leases, restart behavior, and query audit semantics. Production persistence remains behind application-owned interfaces and will use the organization's approved relational database.
+
+SQLite schema version 2 stores one Trace query step per `(investigation_id, member_id)` and append-only Trace audit records. A reclaimed `STARTED` Trace step has an unknown paid-read outcome and is never automatically executed again; the investigation transitions to `NEEDS_REVIEW` through the existing Worker contract.
 
 The minimal Feishu delivery queue is also persisted in SQLite. Business-state commits enqueue deterministic delivery events transactionally. A separate delivery worker claims them with a lease and updates one investigation card. The initial reply uses a stable Feishu UUID; repeated card patches are content-idempotent. This is at-least-once local delivery, not an exactly-once guarantee.
 
@@ -222,7 +241,7 @@ High-risk approval is a separate closed state machine: `PENDING -> APPROVED | RE
 2. The application validates length and Unicode, redacts common credentials and personal identifiers, blocks obvious instruction/query injection patterns, and persists a `PARSING` resolution keyed by `(app_id, tenant_key, source_message_id)`.
 3. The Resource Catalog returns only the current principal's logical capabilities. Endpoint, Project, LogStore, fields, selectors, SQL, and SPL never enter the parser input or preview.
 4. Under an independent fixed-window quota, the selected Mock or Volcengine parser returns strict JSON for a closed intent, logical service/environment, duration, and confidence. The application validates every field again.
-5. Only `error_spike + error_count_v1`, a complete authorized scope, an allowed duration, and policy confidence can become `RESOLVED`. Unsupported Trace requests are `REJECTED`; missing/low-confidence input is `INCOMPLETE`; unsafe or invalid provider output fails closed.
+5. Only `error_spike + error_count_v1` or `trace_search + trace_search_v1`, a complete authorized scope, an allowed duration, and policy confidence can become `RESOLVED`. Trace resolution additionally requires a safe TraceID and a window no greater than 30 minutes. Missing/low-confidence input is `INCOMPLETE`; unsafe, unauthorized, or invalid provider output fails closed.
 6. The UI/card displays the redacted user description as unverified text and shows the proposed logical plan. No investigation, query, report, or delivery lifecycle event is created yet.
 7. Confirmation sends only the durable resolution ID. The application derives identity from the current adapter, loads the resolution, verifies ownership, expiry, ACL and template again, and then calls the existing `Intake` with a server-built request.
 8. Duplicate resolution and duplicate confirmation are idempotent. A changed message under the same source-message ID conflicts rather than replacing the prior interpretation.
@@ -250,6 +269,19 @@ High-risk approval is a separate closed state machine: `PENDING -> APPROVED | RE
 10. The report references every evidence item used by its findings.
 11. The worker persists evidence and report and marks the job succeeded.
 12. The same transaction appends a terminal Feishu delivery event.
+
+### Execute a TraceID investigation
+
+1. `RoutingEngine` accepts only a confirmed request whose template is `trace_search_v1` and whose raw TraceID is present in the durable Job.
+2. Trace Gateway resolves exactly one administrator-owned resource group, checks principal ACL, window/grace and global budgets, and computes governance and TraceID fingerprints.
+3. TraceEngine prepares a lease-fenced member Checkpoint and executes the configured primary member before scheduling any other member.
+4. Remaining members run through a fixed worker pool whose concurrency cannot exceed two.
+5. For each member, the Gateway validates the configured index fields, records `STARTED`, and calls only the fixed exact Trace/environment lookup owned by the Alibaba CLI adapter.
+6. Only an explicit Provider `Incomplete` may be retried once. Timeout, transport failure, process interruption, or unknown output does not trigger an automatic retry.
+7. Returned rows are projected to configured time/level/operation/message fields; TraceID, credentials, email, IPv4 and URL query/fragment content are redacted and lengths are bounded before persistence.
+8. Each member becomes `COMPLETE`, `ZERO_HIT`, or an explicit incomplete status. Events are sorted by event time, member ID and stable event ID.
+9. All-complete members with events produce `trace_evidence_found`; all-complete zero-hit members produce `trace_zero_hit`; any incomplete member produces the non-conclusive `trace_evidence_partial` outcome.
+10. The Trace-only report does not run change-cause, metric/Trace aggregate, Runbook or LLM-summary enrichments. It establishes runtime log evidence for the later anchor/code stages but does not itself claim a root cause.
 
 ### Deliver Feishu progress and results
 
@@ -640,12 +672,27 @@ M5-C feedback uses a store separate from both the production investigation Store
 - [x] Mock mode remains the zero-network default. Real SLS and real Ark are enabled only by the existing explicit environment configuration and are reported separately from Feishu validation.
 - [x] Passing the local Web acceptance proves the Agent application chain and local interaction loop. It does not prove `im.message.receive_v1`, Feishu OpenID/TenantKey, Reply/Patch OpenAPI, visual card rendering, `card.action.trigger`, or Feishu permission scope.
 
+### Stage 2 DAM TraceID multi-Logstore timeline
+
+- [x] Natural-language resolution supports only the authorized `trace_search + trace_search_v1` pair, requires a safe TraceID and explicit confirmation, and never exposes physical resources or query text to the parser.
+- [x] A strict administrator-owned catalog maps one logical DAM scope to eight members with one primary member and per-member field/query capabilities.
+- [x] The primary member executes before the remaining fixed worker pool, whose maximum observed and configured concurrency is two.
+- [x] Per-member and global event limits are 50 and 500; the window is at most 30 minutes; processed-byte, timeout and explicit-Incomplete retry budgets fail closed.
+- [x] Each member has a lease-fenced durable Checkpoint and STARTED/terminal audit pair. Reclaiming an unresolved STARTED step yields `NEEDS_REVIEW` rather than another automatic paid read.
+- [x] TraceID, credential shapes, email, IPv4 and URL query/fragment data are redacted before an event becomes Evidence; user-facing projections contain no physical Logstore names.
+- [x] Worker validation binds every timeline member and event exactly once to Evidence, recomputes totals and status, and rejects aggregate claims or unapproved enrichments in a Trace-only report.
+- [x] Local Web and Feishu render bounded logical-member and redacted-event projections.
+- [x] Full offline tests and Mock `trace-smoke` pass with eight members, eight checkpoints, sixteen STARTED/terminal audit events, and zero external-network calls.
+- [x] Real `trace-check` validates all eight configured DAM members with zero log reads, including six field-index members and two full-text-only members.
+- [ ] Real `trace-smoke` against representative TraceIDs, actual returned message fields, usage metadata, zero-hit behavior, and calibrated budgets remains required before claiming real multi-Logstore query readiness.
+
 ## 10. Open deployment inputs
 
 - Production module path and repository namespace.
 - Production relational database and migration tooling.
 - Pilot Feishu app, tenant, users, and groups.
 - Pilot SLS endpoint, Project, LogStore, indexed scope/error selectors, error dimension, and instance dimension.
+- Approved DAM Trace resource-group membership, per-member Trace/environment/message/time fields, real zero-hit behavior, representative TraceIDs, and calibrated event/byte budgets.
 - Approved RAM role and resource-level read-only policy.
 - Organization-specific sensitive-value redaction patterns.
 - Approved owner/change metadata classification and the production change-system connector contract.

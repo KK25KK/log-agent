@@ -14,7 +14,7 @@ import (
 const (
 	Provider = "intent_mock"
 	Model    = "deterministic_v1"
-	prompt   = "classify only error_spike or unknown from an allowlisted logical capability"
+	prompt   = "classify only error_spike, trace_search, or unknown from an allowlisted logical capability"
 )
 
 type Parser struct{}
@@ -33,7 +33,16 @@ func (p *Parser) Parse(ctx context.Context, input domain.IntentProviderInput) (d
 	started := time.Now()
 	draft := domain.IntentDraft{Intent: domain.IntentUnknown, Confidence: 1}
 	problem := strings.ToLower(input.Problem)
-	if !mentionsTrace(problem) && mentionsErrorTrend(problem) {
+	if mentionsTrace(problem) {
+		draft = domain.IntentDraft{Intent: domain.IntentTraceSearch, DurationSeconds: parseDuration(problem), TraceID: parseTraceID(input.Problem), Confidence: 0.95}
+		if draft.DurationSeconds == 0 {
+			draft.DurationSeconds = int64((10 * time.Minute) / time.Second)
+		}
+		if capability, ok := selectCapabilityForIntent(problem, input.Capabilities, domain.IntentTraceSearch); ok {
+			draft.Service = capability.Service
+			draft.Environment = capability.Environment
+		}
+	} else if mentionsErrorTrend(problem) {
 		draft = domain.IntentDraft{Intent: domain.IntentErrorSpike, DurationSeconds: parseDuration(problem), Confidence: 0.95}
 		if capability, ok := selectCapability(problem, input.Capabilities); ok {
 			draft.Service = capability.Service
@@ -59,8 +68,12 @@ func mentionsErrorTrend(problem string) bool {
 }
 
 func selectCapability(problem string, capabilities []domain.InvestigationCapability) (domain.InvestigationCapability, bool) {
+	return selectCapabilityForIntent(problem, capabilities, domain.IntentErrorSpike)
+}
+
+func selectCapabilityForIntent(problem string, capabilities []domain.InvestigationCapability, intent domain.IntentKind) (domain.InvestigationCapability, bool) {
 	for _, capability := range capabilities {
-		if capability.Intent != domain.IntentErrorSpike || capability.TemplateID != domain.ErrorCountTemplateID {
+		if capability.Intent != intent {
 			continue
 		}
 		if serviceMentioned(problem, capability.Service) && environmentMentioned(problem, capability.Environment) {
@@ -68,6 +81,19 @@ func selectCapability(problem string, capabilities []domain.InvestigationCapabil
 		}
 	}
 	return domain.InvestigationCapability{}, false
+}
+
+func parseTraceID(problem string) string {
+	fields := strings.FieldsFunc(problem, func(character rune) bool {
+		return !(character >= 'a' && character <= 'z') && !(character >= 'A' && character <= 'Z') &&
+			!(character >= '0' && character <= '9') && !strings.ContainsRune("._:-", character)
+	})
+	for _, field := range fields {
+		if len(field) >= 8 && len(field) <= 256 && (strings.ContainsAny(field, "0123456789") || len(field) >= 16) {
+			return field
+		}
+	}
+	return ""
 }
 
 func serviceMentioned(problem, service string) bool {

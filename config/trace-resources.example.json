@@ -1,0 +1,133 @@
+{
+  "version": "2026-09-02.dam-trace.1",
+  "groups": [
+    {
+      "id": "dam-trace-test",
+      "service": "dam-server",
+      "environment": "test",
+      "template_version": "trace-search-v1",
+      "primary_member_id": "dam-server",
+      "members": [
+        {
+          "id": "dam-server",
+          "endpoint": "https://cn-shanghai.log.aliyuncs.com",
+          "project": "tech-center-sha",
+          "logstore": "2016-hyper-dam-file",
+          "trace_mode": "FULLTEXT",
+          "environment_mode": "FIELD",
+          "environment_field": "env",
+          "message_field": "msg",
+          "level_field": "level",
+          "event_time_field": "__time__",
+          "nanosecond_time_field": "__time_ns_part__"
+        },
+        {
+          "id": "dam-consume",
+          "endpoint": "https://cn-shanghai.log.aliyuncs.com",
+          "project": "tech-center-sha",
+          "logstore": "2160-hyper-dam-consume-file",
+          "trace_mode": "FULLTEXT",
+          "environment_mode": "FIELD",
+          "environment_field": "env",
+          "message_field": "msg",
+          "level_field": "level",
+          "event_time_field": "__time__",
+          "nanosecond_time_field": "__time_ns_part__"
+        },
+        {
+          "id": "dam-consume-fast",
+          "endpoint": "https://cn-shanghai.log.aliyuncs.com",
+          "project": "tech-center-sha",
+          "logstore": "2264-hyper-dam-consume-fast-file",
+          "trace_mode": "FULLTEXT",
+          "environment_mode": "FIELD",
+          "environment_field": "env",
+          "message_field": "msg",
+          "level_field": "level",
+          "event_time_field": "__time__",
+          "nanosecond_time_field": "__time_ns_part__"
+        },
+        {
+          "id": "dam-cron",
+          "endpoint": "https://cn-shanghai.log.aliyuncs.com",
+          "project": "tech-center-sha",
+          "logstore": "2280-hyper-dam-cron-file",
+          "trace_mode": "FULLTEXT",
+          "environment_mode": "FIELD",
+          "environment_field": "env",
+          "message_field": "msg",
+          "level_field": "level",
+          "event_time_field": "__time__",
+          "nanosecond_time_field": "__time_ns_part__"
+        },
+        {
+          "id": "dam-consume-audio",
+          "endpoint": "https://cn-shanghai.log.aliyuncs.com",
+          "project": "tech-center-sha",
+          "logstore": "2541-hyper-dam-consume-audio-file",
+          "trace_mode": "FULLTEXT",
+          "environment_mode": "FIELD",
+          "environment_field": "env",
+          "message_field": "msg",
+          "level_field": "level",
+          "event_time_field": "__time__",
+          "nanosecond_time_field": "__time_ns_part__"
+        },
+        {
+          "id": "dam-consume-2d",
+          "endpoint": "https://cn-shanghai.log.aliyuncs.com",
+          "project": "tech-center-sha",
+          "logstore": "2739-hyper-dam-consume-2d-file",
+          "trace_mode": "FULLTEXT",
+          "environment_mode": "FIELD",
+          "environment_field": "env",
+          "message_field": "msg",
+          "level_field": "level",
+          "event_time_field": "__time__",
+          "nanosecond_time_field": "__time_ns_part__"
+        },
+        {
+          "id": "dam-consume-video",
+          "endpoint": "https://cn-shanghai.log.aliyuncs.com",
+          "project": "tech-center-sha",
+          "logstore": "2904-hyper-dam-consume-video-file",
+          "trace_mode": "FULLTEXT",
+          "environment_mode": "FULLTEXT",
+          "message_field": "__raw__",
+          "event_time_field": "__time__",
+          "nanosecond_time_field": "__time_ns_part__"
+        },
+        {
+          "id": "dam-consume-ingest",
+          "endpoint": "https://cn-shanghai.log.aliyuncs.com",
+          "project": "tech-center-sha",
+          "logstore": "2931-hyper-dam-consume-ingest-file",
+          "trace_mode": "FULLTEXT",
+          "environment_mode": "FULLTEXT",
+          "message_field": "__raw__",
+          "event_time_field": "__time__",
+          "nanosecond_time_field": "__time_ns_part__"
+        }
+      ]
+    }
+  ],
+  "bindings": [
+    {
+      "principal": {
+        "app_id": "local-web",
+        "tenant_key": "local-pilot",
+        "user_id": "operator"
+      },
+      "group_ids": ["dam-trace-test"]
+    },
+    {
+      "principal": {
+        "app_id": "replace-with-feishu-app-id",
+        "tenant_key": "replace-with-feishu-tenant-key",
+        "user_id": "replace-with-feishu-open-id"
+      },
+      "group_ids": ["dam-trace-test"]
+    }
+  ]
+}
+

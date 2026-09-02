@@ -1,13 +1,15 @@
 # Log Agent
 
-这是一个用 Go 开发的“证据驱动”日志调查 Agent。M0～M3、M3-B 跨信号时间线 Mock、受治理 SOP 人工核查 Mock、M4-A/M4-B、M5-A、M5-B/B1～B3、M5-C 的 Mock Reviewer/离线灰度演练、证据约束的 LLM 摘要，以及第一阶段受治理自然语言接单已经完成主体代码。自然语言只生成 ACL 过滤后的逻辑调查预览，必须由用户确认后才复用原有 Intake 创建任务，不能让模型直接生成或执行 SLS 查询。2026-09-01 已通过 DAM 真实 SLS + 火山方舟摘要的本地 Web 联合运行；自然语言解析当前完成 Mock 全链路和方舟协议测试，真实 `intent-smoke`、多 Logstore Trace、代码证据、真实飞书与生产审批仍待完成。
+这是一个用 Go 开发的“证据驱动”日志调查 Agent。除原有错误趋势、证据治理、恢复、评测和 LLM 摘要能力外，现已完成受治理自然语言接单，以及 DAM TraceID 8 Logstore 脱敏时间线的主体代码和 Mock 验收。自然语言只生成 ACL 过滤后的逻辑调查预览，必须由用户确认后才创建任务，不能让模型直接生成或执行 SLS 查询。2026-09-01 已通过 DAM 单 Logstore 真实 SLS + 火山方舟摘要的本地 Web 联合运行；2026-09-02 新的 8 Logstore Schema 检查已 8/8 READY，真实 TraceID Smoke、代码证据、真实飞书与生产审批仍待验收。
 
 ```text
 飞书消息或本地 Web 问题描述
   -> 自然语言意图解析（可选）
   -> ACL 过滤后的逻辑预览 + 用户确认
   -> 幂等接单与 SQLite 任务
-  -> Worker + Eino 固定 Graph
+  -> Worker + 路由引擎
+       -> 错误趋势：Eino 固定 Graph
+       -> TraceID：主成员优先的受治理 TraceEngine
   -> 受控查询网关
        -> 资源目录 + ACL
        -> 查询预算 + Schema 校验
@@ -33,14 +35,24 @@ Eino 只负责流程编排，不负责业务状态、权限、幂等、审计和
 
 ### 受治理自然语言接单（第一阶段）
 
-- 普通文本可解析为关闭的 `error_spike` 意图，只允许选择当前 Principal 已授权的逻辑服务、环境和 `error_count_v1` 模板。
+- 普通文本可解析为关闭的 `error_spike` 或 `trace_search` 意图，只允许选择当前 Principal 已授权的逻辑服务、环境和固定模板。
 - 解析前校验并脱敏问题描述；模型看不到 Endpoint、Project、Logstore、字段、SQL、SPL、身份或凭据。
 - `resolve -> preview -> confirm` 两阶段持久化：预览不创建任务、不访问 SLS，确认时再次校验身份、ACL、过期时间与模板绑定。
 - 意图解析和报告摘要使用不同端口、Prompt、模型配置、超时与 SQLite 请求/Token 额度，互不挤占。
 - 本地 Web 已提供自然语言输入、预览与确认；飞书普通文本和确认卡代码已接入，严格 `/investigate` 命令继续兼容。
-- 当前只支持“某服务某环境某时间窗错误是否增加”。TraceID、8 库时间线、错误锚点、部署 Commit 和代码证据仍按后续阶段实现。
+- `error_spike` 进入原有 `error_count_v1`；`trace_search` 必须提供安全 TraceID，确认后进入 `trace_search_v1`。错误锚点、部署 Commit 和代码证据仍按后续阶段实现。
 
 完整合同和命令见 [`docs/governed-natural-language-intake.md`](docs/governed-natural-language-intake.md)。
+
+### DAM TraceID 多 Logstore 时间线（第二阶段）
+
+- 管理员目录把 `dam-server/test` 映射到 8 个固定 Logstore；用户和模型只能看到逻辑 Capability。
+- 主 Server 成员先查，其余成员并发不超过 2；单成员 50 条、全局 500 条、窗口最大 30 分钟、默认最多一次明确 `Incomplete` 重试。
+- 每个成员独立做 Schema 校验、查询审计和租约 Checkpoint；外部结果不明进入 `NEEDS_REVIEW`，不会自动重复付费查询。
+- Gateway 在持久化前替换 TraceID并脱敏凭据、邮箱、IP 和 URL 查询参数；报告按事件时间稳定排序。
+- 本地 Web 和飞书卡片代码均可展示逻辑成员状态和有界脱敏时间线。真实 8 库 Schema 检查已通过且日志读取为 0；真实 TraceID Smoke 待运行。
+
+完整实现、配置和验收边界见 [`docs/traceid-multi-logstore-timeline.md`](docs/traceid-multi-logstore-timeline.md)。
 
 ### 调查骨架
 
@@ -324,6 +336,29 @@ go run ./cmd/logagent intent-smoke "帮我看 DAM 测试环境最近半小时错
 
 `intent-check` 不联网；`intent-smoke` 只解析并保存预览，不确认、不查 SLS。配置、状态和安全边界见 [`docs/governed-natural-language-intake.md`](docs/governed-natural-language-intake.md)。
 
+## 配置 DAM TraceID 查询
+
+完全离线验证：
+
+```powershell
+$env:LOG_AGENT_TRACE_MODE = "mock"
+$env:LOG_AGENT_INTENT_MODE = "mock"
+go run ./cmd/logagent trace-smoke dam-server test 10m trace-12345678
+```
+
+真实试点先复制并核对 8 成员目录，再分别执行零日志读取的 Schema 检查和显式真实 Smoke：
+
+```powershell
+Copy-Item .\config\trace-resources.example.json .\config\trace-resources.json
+$env:LOG_AGENT_TRACE_MODE = "aliyun"
+$env:LOG_AGENT_TRACE_CATALOG = ".\config\trace-resources.json"
+$env:LOG_AGENT_SLS_MODE = "aliyun"
+go run ./cmd/logagent trace-check
+go run ./cmd/logagent trace-smoke dam-server test 10m <trace-id>
+```
+
+2026-09-02 已真实执行 `trace-check`，8/8 成员为 `READY` 且 `log_reads=0`；当前仓库没有记录新的真实 `trace-smoke` 成功结果。详见 [`docs/traceid-multi-logstore-timeline.md`](docs/traceid-multi-logstore-timeline.md)。
+
 ## 配置报告摘要
 
 本地与试点前默认使用完全离线 Mock：
@@ -561,6 +596,7 @@ M3-B 跨信号切片另通过全仓测试、静态检查和重点包 30 轮验�
 cmd/logagent                          进程组装与诊断命令
 internal/application                 接单、调查 Worker、查询 Checkpoint、卡片 Delivery 和动作控制用例
 internal/application/query           ACL、预算、Schema、审计与脱敏网关
+internal/application/trace           Trace 资源组、预算、Schema、审计与事件脱敏网关
 internal/domain                      领域数据、资源、查询、原因假设、证据账本、Agent 事件与版本清单模型
 internal/ports                       Store、Engine、QueryGateway、SLSBackend、ChangeSource、OperationalSignalSource、RunbookSource、ReportSummarizer、AgentObserver 接口
 internal/adapters/eino               唯一允许导入 Eino 的包
@@ -568,6 +604,8 @@ internal/adapters/feishu             唯一允许导入飞书 SDK 的包
 internal/adapters/feishumock         离线飞书收件与卡片投递模拟，不导入 SDK
 internal/adapters/aliyuncli           唯一允许调用阿里云 CLI/SLS 插件的包
 internal/adapters/resourcecatalog     JSON 资源目录与静态 ACL
+internal/adapters/traceresourcecatalog Trace 多成员 JSON 目录与静态 ACL
+internal/adapters/tracemock           8 成员 Trace 查询离线 Mock
 internal/adapters/changecatalog       M3 版本化发布/配置变更目录
 internal/adapters/signalmock          M3-B 指标/Trace 聚合离线 Mock
 internal/adapters/runbookmock         受治理 SOP 人工核查离线 Mock，不访问知识平台
@@ -603,7 +641,7 @@ internal/application/runbook.go       Worker 后处理的 SOP 查询、引用派
 - 查询仅返回聚合，不返回原始日志。通用敏感信息识别不可能完全可靠，生产前仍需按企业字段规范补充脱敏模式。
 - Schema 缓存过期后刷新失败会 fail closed，不会无限使用旧 Schema。
 - SQLite 继续用于本地技术验证；卡片发送只有分类后的有限本地重试，不承诺 exactly-once。M4-B 已提供安全死信重放、本地租户额度/成本代理熔断和审批状态合同；多实例卡片全局顺序、生产数据库、组织级全局配额、真实 DLQ RBAC 与审批执行仍在 M4-C。
-- SQLite 技术预览已使用 `PRAGMA user_version=1` 和事务内幂等建表迁移；仍没有独立迁移 CLI、降级工具或生产备份恢复方案，升级已有数据库前必须备份。
+- SQLite 技术预览已使用 `PRAGMA user_version=2` 和事务内幂等建表迁移；仍没有独立迁移 CLI、降级工具或生产备份恢复方案，升级已有数据库前必须备份。
 - M3 Change Catalog 是启动时加载的静态文件，不是已接通的发布平台、配置中心或 CMDB；关联候选、权重和阈值尚未经过企业历史故障集校准。
 - M3-B 已用 Mock 聚合跑通指标/Trace 时间线，但没有真实 ARMS/CMS/Prometheus/OTel 连接器、原始 Trace 下钻或拓扑；相关性不会被表述成已确认根因。
 - 受治理 SOP 已有严格 Evidence/请求窗口绑定、Mock Source、可信来源标记、独立 5 秒超时、可信服务时钟、Worker 双重校验、持久化投影和带 Mock 标题的飞书纯文本展示，但没有真实 `RunbookSource`、企业内容、审批/失效、租户授权、审计或检索质量验收。它只供人工核查，不提供 URL、命令、按钮或自动处置。

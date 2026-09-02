@@ -85,13 +85,14 @@ func (w *Worker) RunOne(ctx context.Context) (bool, error) {
 	if runErr == nil {
 		runErr = validateEngineOutput(job, evidence, report)
 	}
-	if runErr == nil && w.runbook != nil {
+	isTraceInvestigation := job.Request.TemplateID == domain.TraceSearchTemplateID
+	if runErr == nil && w.runbook != nil && !isTraceInvestigation {
 		report, runErr = w.runbook.Enrich(runCtx, evidence, report)
 		if runErr == nil {
 			runErr = validateEngineOutput(job, evidence, report)
 		}
 	}
-	if runErr == nil && w.summary != nil {
+	if runErr == nil && w.summary != nil && !isTraceInvestigation {
 		report = w.summary.Enrich(runCtx, job.Request.Requester, evidence, report)
 		runErr = validateEngineOutput(job, evidence, report)
 	}
@@ -220,6 +221,10 @@ func ValidateEngineOutput(investigationID string, evidence []domain.Evidence, re
 			if err := validateCountEvidence(item); err != nil {
 				return fmt.Errorf("engine returned invalid count-only evidence %q: %w", item.ID, err)
 			}
+		} else if item.TemplateID == domain.TraceSearchTemplateID {
+			if err := validateTraceEvidence(item); err != nil {
+				return fmt.Errorf("engine returned invalid Trace evidence %q: %w", item.ID, err)
+			}
 		} else if item.TemplateID != "" {
 			return fmt.Errorf("engine returned unknown evidence template %q", item.TemplateID)
 		}
@@ -266,6 +271,9 @@ func ValidateEngineOutput(investigationID string, evidence []domain.Evidence, re
 	}
 	if err := validateIncidentTimeline(report.IncidentTimeline, knownEvidence, report.CauseAnalysis); err != nil {
 		return fmt.Errorf("engine returned invalid incident timeline: %w", err)
+	}
+	if err := validateTraceInvestigation(report.TraceInvestigation, knownEvidence, report); err != nil {
+		return fmt.Errorf("engine returned invalid Trace investigation: %w", err)
 	}
 	if report.Summary != nil {
 		if err := ValidateReportSummary(report, *report.Summary); err != nil {
@@ -719,6 +727,9 @@ func invalidFiniteRange(value, minimum, maximum float64) bool {
 }
 
 func validateAnalysisEvidence(item domain.Evidence) error {
+	if item.TraceMember != nil {
+		return errors.New("analysis evidence contains a Trace member projection")
+	}
 	if item.APICalls != domain.ErrorAnalysisAPICalls || item.PatternLimit != domain.ErrorAnalysisPatternLimit || item.InstanceLimit != domain.ErrorAnalysisInstanceLimit {
 		return errors.New("fixed template call or bucket limits do not match")
 	}
@@ -743,6 +754,9 @@ func validateAnalysisEvidence(item domain.Evidence) error {
 }
 
 func validateCountEvidence(item domain.Evidence) error {
+	if item.TraceMember != nil {
+		return errors.New("count-only evidence contains a Trace member projection")
+	}
 	if item.APICalls != domain.ErrorCountAPICalls || item.PatternLimit != 0 || item.InstanceLimit != 0 {
 		return errors.New("count-only call or bucket limits do not match")
 	}

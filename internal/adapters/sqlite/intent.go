@@ -72,11 +72,13 @@ func (s *Store) CompleteIntentResolution(ctx context.Context, resolution domain.
 	result, err := s.db.ExecContext(ctx, `
 UPDATE intent_resolutions
 SET status = ?, intent = ?, service = ?, environment = ?, duration_seconds = ?, template_id = ?, confidence = ?,
+    trace_id = ?, trace_id_fingerprint = ?, trace_id_hint = ?,
     provider = ?, model = ?, request_id = ?, prompt_version = ?, prompt_fingerprint = ?,
     input_tokens = ?, output_tokens = ?, total_tokens = ?, latency_millis = ?, reason_code = ?
 WHERE id = ? AND app_id = ? AND tenant_key = ? AND user_id = ? AND status = ?`,
 		resolution.Status, resolution.Intent, resolution.Service, resolution.Environment, resolution.DurationSeconds,
-		resolution.TemplateID, resolution.Confidence, resolution.Provider, resolution.Model, resolution.RequestID,
+		resolution.TemplateID, resolution.Confidence, resolution.TraceID, resolution.TraceIDFingerprint, resolution.TraceIDHint,
+		resolution.Provider, resolution.Model, resolution.RequestID,
 		resolution.PromptVersion, resolution.PromptFingerprint, resolution.InputTokens, resolution.OutputTokens,
 		resolution.TotalTokens, resolution.LatencyMillis, resolution.ReasonCode,
 		resolution.ID, resolution.Principal.AppID, resolution.Principal.TenantKey, resolution.Principal.UserID,
@@ -169,7 +171,7 @@ SELECT `+intentResolutionColumns+` FROM intent_resolutions WHERE id = ?`, resolu
 const intentResolutionColumns = `
 id, app_id, tenant_key, user_id, source_message_id,
 problem_text, problem_fingerprint, problem_redacted,
-status, intent, service, environment, duration_seconds, template_id, confidence,
+status, intent, service, environment, duration_seconds, trace_id, trace_id_fingerprint, trace_id_hint, template_id, confidence,
 provider, model, request_id, prompt_version, prompt_fingerprint,
 input_tokens, output_tokens, total_tokens, latency_millis, reason_code,
 created_at, expires_at, confirmed_at, COALESCE(investigation_id, '')`
@@ -182,7 +184,8 @@ func scanIntentResolution(row intentRowScanner) (domain.IntentResolution, error)
 		&resolution.ID, &resolution.Principal.AppID, &resolution.Principal.TenantKey, &resolution.Principal.UserID,
 		&resolution.SourceMessageID, &resolution.Problem.Text, &resolution.Problem.Fingerprint, &redacted,
 		&resolution.Status, &resolution.Intent, &resolution.Service, &resolution.Environment,
-		&resolution.DurationSeconds, &resolution.TemplateID, &resolution.Confidence,
+		&resolution.DurationSeconds, &resolution.TraceID, &resolution.TraceIDFingerprint, &resolution.TraceIDHint,
+		&resolution.TemplateID, &resolution.Confidence,
 		&resolution.Provider, &resolution.Model, &resolution.RequestID, &resolution.PromptVersion,
 		&resolution.PromptFingerprint, &resolution.InputTokens, &resolution.OutputTokens,
 		&resolution.TotalTokens, &resolution.LatencyMillis, &resolution.ReasonCode,
