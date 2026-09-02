@@ -1,6 +1,6 @@
 # Log Agent
 
-这是一个用 Go 开发的“证据驱动”日志调查 Agent。除原有错误趋势、证据治理、恢复、评测和 LLM 摘要能力外，现已完成受治理自然语言接单，以及 DAM TraceID 8 Logstore 脱敏时间线的主体代码和 Mock 验收。自然语言只生成 ACL 过滤后的逻辑调查预览，必须由用户确认后才创建任务，不能让模型直接生成或执行 SLS 查询。2026-09-01 已通过 DAM 单 Logstore 真实 SLS + 火山方舟摘要的本地 Web 联合运行；2026-09-02 新的 8 Logstore Schema 检查已 8/8 READY，真实 TraceID Smoke、代码证据、真实飞书与生产审批仍待验收。
+这是一个用 Go 开发的“证据驱动”日志调查 Agent。除原有错误趋势、证据治理、恢复、评测和 LLM 摘要能力外，现已完成受治理自然语言接单、DAM TraceID 8 Logstore 脱敏时间线，以及从时间线提取有界运行时错误锚点的前三阶段主体代码和离线验收。自然语言只生成 ACL 过滤后的逻辑调查预览，必须由用户确认后才创建任务，不能让模型直接生成或执行 SLS 查询。2026-09-01 已通过 DAM 单 Logstore 真实 SLS + 火山方舟摘要的本地 Web 联合运行；2026-09-02 新的 8 Logstore Schema 检查已 8/8 READY，真实 TraceID Smoke、部署版本/代码证据、真实飞书与生产审批仍待验收。
 
 ```text
 飞书消息或本地 Web 问题描述
@@ -53,6 +53,15 @@ Eino 只负责流程编排，不负责业务状态、权限、幂等、审计和
 - 本地 Web 和飞书卡片代码均可展示逻辑成员状态和有界脱敏时间线。真实 8 库 Schema 检查已通过且日志读取为 0；真实 TraceID Smoke 待运行。
 
 完整实现、配置和验收边界见 [`docs/traceid-multi-logstore-timeline.md`](docs/traceid-multi-logstore-timeline.md)。
+
+### 运行时错误锚点（第三阶段）
+
+- 从已经脱敏并通过窗口校验的 Trace 事件中确定性提取错误文本/类型、HTTP 路由、函数符号及 Go/Java/Python 堆栈帧，不访问代码库或外部系统。
+- 路径规范化为安全的仓库相对路径；秘密/Vendor/生成目录和危险值被拒绝，每事件最多 4 个、全调查最多 64 个。
+- 每个锚点绑定来源事件与逻辑成员，ID 和内容指纹可重算；Worker 校验事件、Evidence 和全局集合精确一致。
+- 本地 Web 与飞书有界展示并固定声明“锚点只用于定位，不代表根因”。真实 DAM 锚点质量仍需代表性 TraceID 验收。
+
+完整合同与验收边界见 [`docs/runtime-error-anchors.md`](docs/runtime-error-anchors.md)。
 
 ### 调查骨架
 

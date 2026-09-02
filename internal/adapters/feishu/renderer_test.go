@@ -60,8 +60,13 @@ func TestRendererShowsBoundedGovernedTraceTimelineWithoutRawTraceID(t *testing.T
 	item.Report.RunbookGuidance = nil
 	item.Report.TraceInvestigation = &domain.TraceInvestigation{
 		Status: domain.TraceInvestigationComplete, Complete: true, TraceIDFingerprint: strings.Repeat("a", 64),
-		Members:       []domain.TraceMemberSummary{{MemberID: "dam-server", Status: domain.TraceMemberComplete, EventCount: 1, APICalls: 1}},
-		Events:        []domain.TraceEvent{{MemberID: "dam-server", EventTime: time.Now().UTC(), Level: "error", Message: "[TRACE_ID] processing failed"}},
+		Members: []domain.TraceMemberSummary{{MemberID: "dam-server", Status: domain.TraceMemberComplete, EventCount: 1, APICalls: 1}},
+		Events:  []domain.TraceEvent{{MemberID: "dam-server", EventTime: time.Now().UTC(), Level: "error", Message: "[TRACE_ID] processing failed"}},
+		AnchorSet: &domain.RuntimeAnchorSet{
+			Version: domain.RuntimeAnchorVersion, Status: domain.RuntimeAnchorsComplete, SourceEventCount: 1,
+			AnchoredEventCount: 1, Limit: domain.RuntimeAnchorGlobalLimit,
+			Anchors: []domain.RuntimeAnchor{{Kind: domain.RuntimeAnchorStackFrame, File: "internal/payment/client.go", Line: 87, Symbol: "example.com/dam/internal/payment.(*Client).Charge"}},
+		},
 		TotalAPICalls: 1, TotalProcessedBytes: 128,
 	}
 	card, err := renderActionCard(domain.ActionResult{View: domain.ActionViewEvidenceCard, Investigation: item})
@@ -73,7 +78,8 @@ func TestRendererShowsBoundedGovernedTraceTimelineWithoutRawTraceID(t *testing.T
 		t.Fatal(err)
 	}
 	value := string(encoded)
-	if !strings.Contains(value, "Trace 调查证据") || !strings.Contains(value, "dam-server") || !strings.Contains(value, "TRACE") {
+	if !strings.Contains(value, "Trace 调查证据") || !strings.Contains(value, "dam-server") || !strings.Contains(value, "TRACE") ||
+		!strings.Contains(value, "检索锚点") || !strings.Contains(value, "internal/payment/client.go:87") || !strings.Contains(value, "不代表根因") {
 		t.Fatalf("Trace evidence was not rendered: %s", value)
 	}
 	if strings.Contains(value, "trace-12345678") {

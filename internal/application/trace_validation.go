@@ -3,8 +3,10 @@ package application
 import (
 	"errors"
 	"fmt"
+	"reflect"
 	"sort"
 
+	"logagent/internal/application/anchors"
 	"logagent/internal/domain"
 )
 
@@ -44,6 +46,22 @@ func validateTraceEvidence(item domain.Evidence) error {
 		}
 		if _, duplicate := seenEvents[event.ID]; duplicate {
 			return errors.New("Trace member contains duplicate event IDs")
+		}
+		if len(event.Anchors) > domain.RuntimeAnchorPerEventLimit {
+			return errors.New("Trace event exceeds its runtime-anchor limit")
+		}
+		seenAnchors := make(map[string]struct{}, len(event.Anchors))
+		for _, anchor := range event.Anchors {
+			if anchor.EventID != event.ID || anchor.MemberID != event.MemberID {
+				return errors.New("runtime anchor does not bind to its Trace event")
+			}
+			if err := anchors.Validate(anchor); err != nil {
+				return err
+			}
+			if _, duplicate := seenAnchors[anchor.ID]; duplicate {
+				return errors.New("Trace event contains duplicate runtime anchors")
+			}
+			seenAnchors[anchor.ID] = struct{}{}
 		}
 		seenEvents[event.ID] = struct{}{}
 	}
@@ -86,7 +104,7 @@ func validateTraceInvestigation(trace *domain.TraceInvestigation, evidence map[s
 	if report.CauseAnalysis != nil || report.IncidentTimeline != nil || report.RunbookGuidance != nil || report.Summary != nil {
 		return errors.New("Trace-only report contains an unapproved enrichment")
 	}
-	eventIDs := make(map[string]struct{})
+	eventsByID := make(map[string]domain.TraceEvent)
 	memberIDs := make(map[string]struct{}, len(trace.Members))
 	var totalCalls int
 	var totalRows, totalBytes int64
@@ -109,20 +127,27 @@ func validateTraceInvestigation(trace *domain.TraceInvestigation, evidence map[s
 		allComplete = allComplete && item.Complete && !item.Truncated
 		allZero = allZero && item.TraceMember.ZeroHit
 		for _, event := range item.TraceMember.Events {
-			eventIDs[event.ID] = struct{}{}
+			if _, duplicate := eventsByID[event.ID]; duplicate {
+				return errors.New("Trace Evidence contains duplicate event IDs")
+			}
+			eventsByID[event.ID] = event
 		}
 	}
 	if trace.TotalAPICalls != totalCalls || trace.TotalProcessedRows != totalRows || trace.TotalProcessedBytes != totalBytes ||
 		trace.Complete != allComplete {
 		return errors.New("Trace investigation totals are inconsistent")
 	}
-	if len(eventIDs) != len(trace.Events) {
+	if len(eventsByID) != len(trace.Events) {
 		return errors.New("Trace timeline does not cover member events exactly once")
 	}
 	for _, event := range trace.Events {
-		if _, exists := eventIDs[event.ID]; !exists {
+		stored, exists := eventsByID[event.ID]
+		if !exists || !reflect.DeepEqual(stored, event) {
 			return errors.New("Trace timeline references an unknown event")
 		}
+	}
+	if err := validateRuntimeAnchorSet(trace.AnchorSet, trace.Events, trace.Complete); err != nil {
+		return err
 	}
 	switch trace.Status {
 	case domain.TraceInvestigationComplete:
@@ -153,6 +178,55 @@ func validateTraceInvestigation(trace *domain.TraceInvestigation, evidence map[s
 		return trace.Events[left].ID < trace.Events[right].ID
 	}) {
 		return errors.New("Trace timeline order is unstable")
+	}
+	return nil
+}
+
+func validateRuntimeAnchorSet(set *domain.RuntimeAnchorSet, events []domain.TraceEvent, traceComplete bool) error {
+	if set == nil || set.Version != domain.RuntimeAnchorVersion || set.SourceEventCount != len(events) ||
+		set.Limit != domain.RuntimeAnchorGlobalLimit || set.DroppedCount < 0 || len(set.Anchors) > set.Limit {
+		return errors.New("runtime-anchor set envelope is invalid")
+	}
+	fromEvents := make(map[string]domain.RuntimeAnchor)
+	anchoredEvents := 0
+	for _, event := range events {
+		if len(event.Anchors) > 0 {
+			anchoredEvents++
+		}
+		for _, anchor := range event.Anchors {
+			if _, duplicate := fromEvents[anchor.ID]; duplicate {
+				return errors.New("runtime-anchor set contains a duplicate source anchor")
+			}
+			fromEvents[anchor.ID] = anchor
+		}
+	}
+	if set.AnchoredEventCount != anchoredEvents || len(set.Anchors) != len(fromEvents) {
+		return errors.New("runtime-anchor set totals are inconsistent")
+	}
+	seenFingerprints := make(map[string]struct{}, len(set.Anchors))
+	for index, anchor := range set.Anchors {
+		if stored, exists := fromEvents[anchor.ID]; !exists || !reflect.DeepEqual(stored, anchor) {
+			return errors.New("runtime-anchor set does not match Trace events")
+		}
+		if _, duplicate := seenFingerprints[anchor.Fingerprint]; duplicate {
+			return errors.New("runtime-anchor set contains duplicate content")
+		}
+		seenFingerprints[anchor.Fingerprint] = struct{}{}
+		if index > 0 {
+			previous := set.Anchors[index-1]
+			if previous.Kind > anchor.Kind || (previous.Kind == anchor.Kind && previous.Fingerprint > anchor.Fingerprint) {
+				return errors.New("runtime-anchor set order is unstable")
+			}
+		}
+	}
+	expected := domain.RuntimeAnchorsComplete
+	if !traceComplete || set.DroppedCount > 0 {
+		expected = domain.RuntimeAnchorsPartial
+	} else if len(set.Anchors) == 0 {
+		expected = domain.RuntimeAnchorsNone
+	}
+	if set.Status != expected {
+		return errors.New("runtime-anchor set status is inconsistent")
 	}
 	return nil
 }

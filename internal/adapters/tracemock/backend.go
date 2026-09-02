@@ -73,7 +73,7 @@ func (b *Backend) SearchTrace(ctx context.Context, query domain.ApprovedTraceQue
 	} else if query.Member.ID == "dam-consume-fast" {
 		events = append(events, domain.TraceBackendEvent{
 			EventTimeRaw: query.Spec.StartTime.Add(2 * time.Second).Format(time.RFC3339Nano), Level: "error", Operation: "consume",
-			Message: "processing failed: payment timeout for 10.0.0.1",
+			Message: "processing failed: payment timeout for 10.0.0.1\nexample.com/dam/internal/payment.(*Client).Charge\n\t/app/internal/payment/client.go:87 +0x1",
 		})
 	}
 	return domain.TraceBackendResult{

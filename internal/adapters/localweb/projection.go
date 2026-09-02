@@ -46,6 +46,7 @@ type TraceInvestigationView struct {
 	EventsTruncated     bool                            `json:"events_truncated"`
 	Members             []domain.TraceMemberSummary     `json:"members"`
 	Events              []domain.TraceEvent             `json:"events"`
+	AnchorSet           *domain.RuntimeAnchorSet        `json:"anchor_set,omitempty"`
 	TotalAPICalls       int                             `json:"total_api_calls"`
 	TotalProcessedRows  int64                           `json:"total_processed_rows"`
 	TotalProcessedBytes int64                           `json:"total_processed_bytes"`
@@ -174,6 +175,11 @@ func projectReport(report domain.Report) *ReportView {
 			Events:        append([]domain.TraceEvent(nil), trace.Events[:eventLimit]...),
 			TotalAPICalls: trace.TotalAPICalls, TotalProcessedRows: trace.TotalProcessedRows,
 			TotalProcessedBytes: trace.TotalProcessedBytes,
+		}
+		if trace.AnchorSet != nil {
+			copySet := *trace.AnchorSet
+			copySet.Anchors = append([]domain.RuntimeAnchor(nil), trace.AnchorSet.Anchors...)
+			view.Trace.AnchorSet = &copySet
 		}
 	}
 	if report.CauseAnalysis != nil {

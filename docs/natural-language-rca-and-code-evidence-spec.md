@@ -2,8 +2,8 @@
 
 | 元数据 | 值 |
 | --- | --- |
-| Version | `0.1-draft` |
-| Status | `DRAFT` |
+| Version | `0.3` |
+| Status | `ACTIVE_INCREMENTS` |
 | Date | `2026-09-02` |
 | Parent Spec | [`spec.md`](spec.md) |
 
@@ -162,7 +162,7 @@ flowchart TD
 | `trace_search` | service、environment、time/window、trace_id | `trace_search_v1` | `INCOMPLETE_INTENT` |
 | `unknown` | 无 | 不执行工具 | 返回可支持范围 |
 
-第一版只开放 `error_spike` 与 `unknown`。`trace_search` 必须等跨库 Trace 证据能力通过第二阶段验收后开放；`keyword_search` 在字段合同、脱敏和预算验收完成前不进入关闭集合。
+当前已开放 `error_spike`、`trace_search` 与 `unknown`。`trace_search` 已通过第二阶段离线验收及真实 8 库零日志读取 Schema 检查，但代表性真实 TraceID 查询仍待验收；`keyword_search` 在字段合同、脱敏和预算验收完成前不进入关闭集合。
 
 意图解析生命周期使用关闭状态：`PARSING / RESOLVED / UNKNOWN / INCOMPLETE / REJECTED / FALLBACK / OUTCOME_UNKNOWN`。`PARSING` 只表示持久化解析占位；进程在 Provider 调用后失联时不得自动再次调用。只有未过期、属于原 Principal 的 `RESOLVED` 可以确认，确认操作以 Resolution ID 幂等绑定唯一调查。
 
@@ -331,12 +331,13 @@ Trace 只保存调用状态、计数、耗时、指纹和安全原因码，不�
 - [x] LLM 不能提交 SPL、物理资源、仓库路径、Commit 或执行动作；
 - [x] `unknown`、低置信度和未授权意图产生零 SLS/代码调用；
 - [x] 既有结构化命令和 `error_count_v1` 行为无回归；
-- [ ] TraceID 查询按主库优先、并发 2、每库 50、全局 500 的预算执行；
-- [ ] 8 个成员的成功、零命中、失败和截断状态可独立审计；
-- [ ] Trace 时间线只使用脱敏归一化事件，不向用户暴露物理资源；
+- [x] TraceID 查询按主库优先、并发 2、每库 50、全局 500 的预算执行；
+- [x] 8 个成员的成功、零命中、失败和截断状态可独立审计；
+- [x] Trace 时间线只使用脱敏归一化事件，不向用户暴露物理资源；
+- [x] 脱敏事件可确定性提取五类有界运行时锚点，且锚点完整性可由 Worker 重算；
 - [ ] 代码调查前必须获得可信完整部署 Commit；
 - [ ] Code Provider 只访问允许仓库、Commit、路径和固定能力；
-- [ ] 代码、日志、TraceID、Prompt 和凭据不进入 Agent Trace；
+- [x] 当前 Trace 链路中的代码正文、原始日志、TraceID、Prompt 和凭据不进入 Agent Trace；
 - [ ] 候选原因同时展示支持证据、反证、数据缺口和限制；
 - [ ] 系统不会仅凭代码、Diff 或时间相关输出确认根因；
 - [ ] 修复建议为 `HUMAN_REVIEW_ONLY`，不存在自动修改或生产操作；
@@ -349,7 +350,7 @@ Trace 只保存调用状态、计数、耗时、指纹和安全原因码，不�
 以下决策在本规格中已经固定：
 
 1. 自然语言生成结构化意图，不生成 SPL；
-2. 首个自然语言版本只开放 `error_spike` 与 `unknown`；
+2. 自然语言当前开放 `error_spike`、`trace_search` 与 `unknown`，深挖必须有合法 TraceID；
 3. TraceID 是进入跨库和代码调查的首个深挖入口；
 4. Trace 证据使用独立端口，不污染现有聚合查询合同；
 5. 部署 Commit 未确认时禁止代码检索；

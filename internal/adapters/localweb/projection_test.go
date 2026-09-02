@@ -15,9 +15,12 @@ func TestProjectReportExposesOnlyGovernedTraceProjection(t *testing.T) {
 		Members:       []domain.TraceMemberSummary{{MemberID: "dam-server", Status: domain.TraceMemberComplete, EventCount: 1}},
 		Events:        []domain.TraceEvent{{ID: "event", MemberID: "dam-server", EventTime: now, Message: "[TRACE_ID] failed", MessageFingerprint: strings.Repeat("b", 64)}},
 		TotalAPICalls: 1, TotalProcessedRows: 1, TotalProcessedBytes: 100,
+		AnchorSet: &domain.RuntimeAnchorSet{Version: domain.RuntimeAnchorVersion, Status: domain.RuntimeAnchorsComplete,
+			Anchors: []domain.RuntimeAnchor{{ID: "anchor", Kind: domain.RuntimeAnchorRoute, Value: "GET /dam/job"}}},
 	}}
 	view := projectReport(report)
-	if view.Trace == nil || view.Trace.TotalEvents != 1 || len(view.Trace.Events) != 1 || view.Trace.Events[0].Message != "[TRACE_ID] failed" {
+	if view.Trace == nil || view.Trace.TotalEvents != 1 || len(view.Trace.Events) != 1 || view.Trace.Events[0].Message != "[TRACE_ID] failed" ||
+		view.Trace.AnchorSet == nil || len(view.Trace.AnchorSet.Anchors) != 1 {
 		t.Fatalf("unexpected Trace projection: %#v", view.Trace)
 	}
 }

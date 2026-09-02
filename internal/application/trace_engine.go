@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"logagent/internal/application/anchors"
 	"logagent/internal/domain"
 	"logagent/internal/fingerprint"
 	"logagent/internal/ids"
@@ -185,12 +186,26 @@ func (e *TraceEngine) buildTraceReport(investigationID string, plan domain.Trace
 		return nil, domain.Report{}, errors.New("Trace result does not cover every configured member")
 	}
 	results = applyGlobalTraceBudget(results, plan.GlobalLimit, plan.MaxProcessedBytes)
+	allRuntimeEvidenceComplete := true
+	flatEvents := make([]domain.TraceEvent, 0)
+	for _, result := range results {
+		allRuntimeEvidenceComplete = allRuntimeEvidenceComplete && result.Complete && !result.Truncated
+		flatEvents = append(flatEvents, result.Events...)
+	}
+	enrichedEvents, anchorSet := anchors.Extract(flatEvents, allRuntimeEvidenceComplete)
+	cursor := 0
+	for index := range results {
+		count := len(results[index].Events)
+		results[index].Events = cloneTraceEvents(enrichedEvents[cursor : cursor+count])
+		cursor += count
+	}
 	evidence := make([]domain.Evidence, 0, len(results))
 	timeline := domain.TraceInvestigation{
 		GroupID: plan.Group.ID, TemplateID: domain.TraceSearchTemplateID, TemplateVersion: domain.TraceSearchTemplateVersion,
 		PolicyVersion: domain.TracePolicyVersion, GovernanceFingerprint: plan.GovernanceFingerprint,
 		TraceIDFingerprint: plan.TraceIDFingerprint, StartTime: plan.Spec.StartTime, EndTime: plan.Spec.EndTime,
 		Members: make([]domain.TraceMemberSummary, 0, len(results)), Events: make([]domain.TraceEvent, 0),
+		AnchorSet: &anchorSet,
 	}
 	allComplete, allZero := true, true
 	evidenceIDs := make([]string, 0, len(results))
@@ -335,7 +350,11 @@ func cloneTraceMemberResult(result domain.TraceMemberResult) domain.TraceMemberR
 }
 
 func cloneTraceEvents(events []domain.TraceEvent) []domain.TraceEvent {
-	return append([]domain.TraceEvent(nil), events...)
+	result := append([]domain.TraceEvent(nil), events...)
+	for index := range result {
+		result[index].Anchors = append([]domain.RuntimeAnchor(nil), result[index].Anchors...)
+	}
+	return result
 }
 
 type RoutingEngine struct {

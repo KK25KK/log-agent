@@ -144,6 +144,7 @@ type TraceEvent struct {
 	Message            string           `json:"message"`
 	MessageFingerprint string           `json:"message_fingerprint"`
 	Redacted           bool             `json:"redacted"`
+	Anchors            []RuntimeAnchor  `json:"anchors,omitempty"`
 }
 
 type TraceMemberResult struct {
@@ -196,6 +197,7 @@ type TraceInvestigation struct {
 	EndTime               time.Time                `json:"end_time"`
 	Members               []TraceMemberSummary     `json:"members"`
 	Events                []TraceEvent             `json:"events"`
+	AnchorSet             *RuntimeAnchorSet        `json:"anchor_set,omitempty"`
 	TotalAPICalls         int                      `json:"total_api_calls"`
 	TotalProcessedRows    int64                    `json:"total_processed_rows"`
 	TotalProcessedBytes   int64                    `json:"total_processed_bytes"`

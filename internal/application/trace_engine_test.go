@@ -69,7 +69,8 @@ func TestTraceWorkerBuildsEightMemberTimelinePrimaryFirstWithinConcurrencyBudget
 		t.Fatalf("Trace investigation did not succeed: %#v", item)
 	}
 	trace := item.Report.TraceInvestigation
-	if trace.Status != domain.TraceInvestigationComplete || len(trace.Members) != 8 || len(trace.Events) != 2 || len(item.Report.Evidence) != 8 {
+	if trace.Status != domain.TraceInvestigationComplete || len(trace.Members) != 8 || len(trace.Events) != 2 || len(item.Report.Evidence) != 8 ||
+		trace.AnchorSet == nil || trace.AnchorSet.Status != domain.RuntimeAnchorsComplete || len(trace.AnchorSet.Anchors) < 4 {
 		t.Fatalf("unexpected Trace report: %#v", trace)
 	}
 	if !trace.Events[0].EventTime.Before(trace.Events[1].EventTime) {

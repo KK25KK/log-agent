@@ -25,6 +25,7 @@ const (
 	maxAISummaryNotes        = 2
 	maxTraceMembers          = 8
 	maxTraceEvents           = 12
+	maxRuntimeAnchors        = 8
 	maxAggregateItems        = 5
 	maxStatementRunes        = 480
 	maxAggregateRunes        = 96
@@ -428,6 +429,10 @@ func appendTraceSummary(elements []any, trace *domain.TraceInvestigation) []any 
 		safeMarkdown(string(trace.Status), maxIdentifierRunes), len(trace.Members), len(trace.Events),
 		trace.TotalAPICalls, formatBytes(trace.TotalProcessedBytes), safeMarkdown(shortFingerprint(trace.TraceIDFingerprint), maxIdentifierRunes),
 	)
+	if trace.AnchorSet != nil {
+		content += fmt.Sprintf("\n\n检索锚点：%s｜%d 个（只用于定位，不代表根因）",
+			safeMarkdown(string(trace.AnchorSet.Status), maxIdentifierRunes), len(trace.AnchorSet.Anchors))
+	}
 	return append(elements, markdown(content))
 }
 
@@ -467,7 +472,34 @@ func appendTraceEvidence(elements []any, trace *domain.TraceInvestigation) []any
 	if len(trace.Events) > len(events) {
 		elements = append(elements, markdown(fmt.Sprintf("其余 %d 条脱敏事件未在卡片中展示。", len(trace.Events)-len(events))))
 	}
+	if trace.AnchorSet != nil {
+		anchors := trace.AnchorSet.Anchors
+		if len(anchors) > maxRuntimeAnchors {
+			anchors = anchors[:maxRuntimeAnchors]
+		}
+		for index, anchor := range anchors {
+			elements = append(elements, markdown(fmt.Sprintf(
+				"**检索锚点 %d · %s：** %s",
+				index+1, safeMarkdown(string(anchor.Kind), maxIdentifierRunes), safeMarkdown(formatRuntimeAnchor(anchor), maxStatementRunes),
+			)))
+		}
+		elements = append(elements, markdown("运行时锚点只用于后续精确代码检索，不代表根因。"))
+	}
 	return elements
+}
+
+func formatRuntimeAnchor(anchor domain.RuntimeAnchor) string {
+	if anchor.File != "" {
+		value := fmt.Sprintf("%s:%d", anchor.File, anchor.Line)
+		if anchor.Symbol != "" {
+			value += " · " + anchor.Symbol
+		}
+		return value
+	}
+	if anchor.Symbol != "" {
+		return anchor.Symbol
+	}
+	return anchor.Value
 }
 
 func shortFingerprint(value string) string {

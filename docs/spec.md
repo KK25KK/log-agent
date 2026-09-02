@@ -31,6 +31,7 @@ Users can either submit the strict investigation command or describe a suspected
 - Three fixed, versioned query templates: dimensional `error_analysis_v2`, count-only `error_count_v1`, and bounded `trace_search_v1`; callers cannot provide raw SQL or SPL.
 - An administrator-owned Trace resource-group catalog that maps one authorized logical scope to a primary member and a bounded set of Logstore members with explicit field capabilities.
 - A dedicated Trace engine that queries the primary member first, then the remaining members with bounded concurrency, and builds a stable redacted cross-member timeline.
+- Deterministic runtime-anchor extraction over already-redacted Trace events. It emits only bounded error text/type, route, symbol, and stack-frame anchors for later exact code lookup.
 - Preflight time-window, call-count, row-count, timeout, and concurrency budgets.
 - A post-query processed-byte budget used as the initial cost guardrail.
 - Index Schema validation before executing analytical queries.
@@ -82,6 +83,7 @@ Users can either submit the strict investigation command or describe a suspected
 - Automatic retry of a paid query whose external outcome is unknown.
 - Provider exactly-once query execution; SLS does not accept an application idempotency key.
 - Treating a correlated release, configuration change, error pattern, or instance as a confirmed root cause.
+- Treating a runtime anchor, stack frame, function name, or error string as proof of execution cause. Anchors are search keys only.
 - SLS version-distribution or first-seen-time queries in the first M3 slice; M3 reuses the existing M2 query budget.
 - Live release-platform, configuration-center, CMDB, distributed-tracing-platform, metric, error-code, SOP, or service-topology connectors. The SLS TraceID path is a governed log lookup, not a live tracing connector.
 - Raw spans, Trace IDs, span names, metric labels, arbitrary attributes, or model-generated causal statements in the Mock-first cross-signal timeline.
@@ -202,6 +204,10 @@ For either aggregate template, unequal boundary counts make the observation `Inc
 
 The Trace Resource Catalog is separate from the aggregate Resource Catalog. One unique `(service, environment)` maps to one group with 1-16 members, exactly one primary member, fixed physical coordinates, fixed Trace/environment query modes, and a closed set of projected fields. The model sees only an authorized logical `trace_search` capability. Raw TraceID is required in the durable Job request for asynchronous exact lookup, but Evidence and user-facing projections contain only its fingerprint or bounded hint; log events replace it before persistence.
 
+### Runtime-anchor boundary
+
+Runtime anchors use `runtime-anchor-v1` and the closed kinds `ERROR_TEXT`, `ERROR_TYPE`, `ROUTE`, `SYMBOL`, and `STACK_FRAME`. Extraction runs only after Trace event redaction, has no external calls, emits at most four anchors per event and 64 per investigation, and deduplicates by canonical kind/value/file/line/symbol identity. Stack paths must be repository-relative safe paths; absolute paths, traversal, secret-file patterns, generated/vendor paths, redaction placeholders, and overly generic strings are rejected. Every anchor binds one existing member/event ID and carries a content fingerprint. `COMPLETE`, `PARTIAL`, and `NO_ANCHORS` describe extraction coverage only and never imply causal confidence.
+
 Top-K is an intentional template result, not provider truncation. Pattern and instance shares are derived locally from aggregate counts. A current pattern absent from the baseline Top 5 is only a candidate-new pattern unless the baseline buckets account for the complete baseline error count and neither compared label was redacted. Only then may the report call it confirmed new relative to the selected baseline window.
 
 ### Policy boundary
@@ -279,9 +285,10 @@ High-risk approval is a separate closed state machine: `PENDING -> APPROVED | RE
 5. For each member, the Gateway validates the configured index fields, records `STARTED`, and calls only the fixed exact Trace/environment lookup owned by the Alibaba CLI adapter.
 6. Only an explicit Provider `Incomplete` may be retried once. Timeout, transport failure, process interruption, or unknown output does not trigger an automatic retry.
 7. Returned rows are projected to configured time/level/operation/message fields; TraceID, credentials, email, IPv4 and URL query/fragment content are redacted and lengths are bounded before persistence.
-8. Each member becomes `COMPLETE`, `ZERO_HIT`, or an explicit incomplete status. Events are sorted by event time, member ID and stable event ID.
-9. All-complete members with events produce `trace_evidence_found`; all-complete zero-hit members produce `trace_zero_hit`; any incomplete member produces the non-conclusive `trace_evidence_partial` outcome.
-10. The Trace-only report does not run change-cause, metric/Trace aggregate, Runbook or LLM-summary enrichments. It establishes runtime log evidence for the later anchor/code stages but does not itself claim a root cause.
+8. A deterministic extractor derives only closed, bounded anchors from the already-redacted event projection; it cannot inspect arbitrary log fields or invoke another Provider.
+9. Each member becomes `COMPLETE`, `ZERO_HIT`, or an explicit incomplete status. Events and anchors are sorted by stable closed keys.
+10. All-complete members with events produce `trace_evidence_found`; all-complete zero-hit members produce `trace_zero_hit`; any incomplete member produces the non-conclusive `trace_evidence_partial` outcome.
+11. The Trace-only report does not run change-cause, metric/Trace aggregate, Runbook or LLM-summary enrichments. Runtime anchors are search keys, not root-cause findings.
 
 ### Deliver Feishu progress and results
 
