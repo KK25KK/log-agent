@@ -69,6 +69,12 @@ func TestRendererShowsBoundedGovernedTraceTimelineWithoutRawTraceID(t *testing.T
 		},
 		TotalAPICalls: 1, TotalProcessedBytes: 128,
 	}
+	item.Report.CodeInvestigation = &domain.CodeInvestigation{
+		Version: domain.CodeEvidenceVersion, Status: domain.CodeInvestigationComplete, Complete: true,
+		Deployment:  &domain.DeploymentEvidence{Status: domain.DeploymentComplete, RepositoryID: "dam", CommitSHA: strings.Repeat("c", 40)},
+		Matches:     []domain.CodeMatch{{AnchorID: "anchor-safe", File: "internal/payment/client.go", MatchLine: 87, Snippet: "private source must stay local", ChangedSincePrevious: true}},
+		DiffChecked: true, ChangedFiles: []string{"internal/payment/client.go"},
+	}
 	card, err := renderActionCard(domain.ActionResult{View: domain.ActionViewEvidenceCard, Investigation: item})
 	if err != nil {
 		t.Fatal(err)
@@ -84,6 +90,9 @@ func TestRendererShowsBoundedGovernedTraceTimelineWithoutRawTraceID(t *testing.T
 	}
 	if strings.Contains(value, "trace-12345678") {
 		t.Fatalf("raw TraceID leaked into card: %s", value)
+	}
+	if !strings.Contains(value, "代码证据") || !strings.Contains(value, "dam") || !strings.Contains(value, "与上一部署版本有文件变更") || strings.Contains(value, "private source must stay local") {
+		t.Fatalf("code evidence projection is invalid: %s", value)
 	}
 }
 

@@ -25,6 +25,7 @@ type Config struct {
 	Intent            IntentConfig
 	IntentQuota       IntentQuotaConfig
 	Trace             TraceConfig
+	Code              CodeConfig
 	SmokePrincipal    SmokePrincipal
 	Web               WebConfig
 }
@@ -122,6 +123,14 @@ type TraceConfig struct {
 	RetryIncomplete   int
 }
 
+type CodeConfig struct {
+	Mode             string
+	CatalogPath      string
+	GitPath          string
+	Timeout          time.Duration
+	MaxCommandOutput int
+}
+
 type SmokePrincipal struct {
 	AppID     string
 	TenantKey string
@@ -160,6 +169,10 @@ func Load() (Config, error) {
 			Mode:        valueOrDefault("LOG_AGENT_TRACE_MODE", "disabled"),
 			CatalogPath: valueOrDefault("LOG_AGENT_TRACE_CATALOG", "./config/trace-resources.json"),
 		},
+		Code: CodeConfig{
+			Mode: valueOrDefault("LOG_AGENT_CODE_MODE", "disabled"), CatalogPath: valueOrDefault("LOG_AGENT_CODE_CATALOG", "./config/code-resources.json"),
+			GitPath: valueOrDefault("LOG_AGENT_GIT_PATH", "git"),
+		},
 		SmokePrincipal: SmokePrincipal{
 			AppID:     os.Getenv("LOG_AGENT_SMOKE_APP_ID"),
 			TenantKey: os.Getenv("LOG_AGENT_SMOKE_TENANT_KEY"),
@@ -185,6 +198,9 @@ func Load() (Config, error) {
 	}
 	if config.Trace.Mode != "disabled" && config.Trace.Mode != "mock" && config.Trace.Mode != "aliyun" {
 		return Config{}, fmt.Errorf("LOG_AGENT_TRACE_MODE must be disabled, mock, or aliyun")
+	}
+	if config.Code.Mode != "disabled" && config.Code.Mode != "localgit" {
+		return Config{}, fmt.Errorf("LOG_AGENT_CODE_MODE must be disabled or localgit")
 	}
 	var err error
 	config.WorkerPoll, err = durationOrDefault("LOG_AGENT_POLL_INTERVAL", time.Second)
@@ -301,6 +317,17 @@ func Load() (Config, error) {
 	config.Trace.RetryIncomplete, err = nonNegativeIntOrDefault("LOG_AGENT_TRACE_RETRY_INCOMPLETE", 1)
 	if err != nil || config.Trace.RetryIncomplete < 0 || config.Trace.RetryIncomplete > 1 {
 		return Config{}, fmt.Errorf("LOG_AGENT_TRACE_RETRY_INCOMPLETE must be 0 or 1")
+	}
+	config.Code.Timeout, err = durationOrDefault("LOG_AGENT_CODE_TIMEOUT", 8*time.Second)
+	if err != nil || config.Code.Timeout <= 0 || config.Code.Timeout > 30*time.Second {
+		return Config{}, fmt.Errorf("LOG_AGENT_CODE_TIMEOUT must be between 1ns and 30s")
+	}
+	config.Code.MaxCommandOutput, err = intOrDefault("LOG_AGENT_GIT_MAX_OUTPUT_BYTES", 512*1024)
+	if err != nil || config.Code.MaxCommandOutput < 64*1024 || config.Code.MaxCommandOutput > 4*1024*1024 {
+		return Config{}, fmt.Errorf("LOG_AGENT_GIT_MAX_OUTPUT_BYTES must be between 65536 and 4194304")
+	}
+	if config.Code.Mode == "localgit" && (config.Code.CatalogPath == "" || config.Code.GitPath == "") {
+		return Config{}, fmt.Errorf("LOG_AGENT_CODE_CATALOG and LOG_AGENT_GIT_PATH are required in localgit mode")
 	}
 	config.Quota.Window, err = durationOrDefault("LOG_AGENT_TENANT_QUOTA_WINDOW", time.Hour)
 	if err != nil {

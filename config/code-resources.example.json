@@ -1,0 +1,29 @@
+{
+  "version": "dam-code-catalog-v1",
+  "deployments": [
+    {
+      "service": "dam-server",
+      "environment": "test",
+      "repository_id": "dam",
+      "commit_sha": "REPLACE_WITH_40_TO_64_LOWERCASE_HEX_DEPLOYED_COMMIT",
+      "previous_commit_sha": "REPLACE_WITH_TRUSTED_PREVIOUS_DEPLOYED_COMMIT_OR_REMOVE_FIELD",
+      "artifact_digest": "REPLACE_WITH_IMAGE_OR_ARTIFACT_DIGEST_IF_AVAILABLE",
+      "deployed_at": "2026-09-02T00:00:00Z"
+    }
+  ],
+  "repositories": [
+    {
+      "id": "dam",
+      "root_path": "D:/code/dam",
+      "allowed_paths": [
+        "cmd",
+        "internal",
+        "pkg"
+      ],
+      "forbidden_paths": [
+        "config/secrets",
+        "deploy/credentials"
+      ]
+    }
+  ]
+}

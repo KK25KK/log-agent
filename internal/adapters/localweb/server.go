@@ -57,6 +57,7 @@ type Options struct {
 	SLSMode        string
 	LLMMode        string
 	IntentMode     string
+	CodeMode       string
 }
 
 type ServerOption func(*Server) error
@@ -88,6 +89,9 @@ type Server struct {
 func NewServer(options Options, store investigationStore, intake accepter, actions actionHandler, sender *Sender, serverOptions ...ServerOption) (*Server, error) {
 	if options.IntentMode == "" {
 		options.IntentMode = "disabled"
+	}
+	if options.CodeMode == "" {
+		options.CodeMode = "disabled"
 	}
 	if err := ValidateLoopbackAddress(options.Address); err != nil {
 		return nil, err
@@ -200,7 +204,7 @@ func (s *Server) handleJS(writer http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) handleMeta(writer http.ResponseWriter, _ *http.Request) {
 	writeJSON(writer, http.StatusOK, map[string]any{
-		"sls_mode": s.options.SLSMode, "llm_mode": s.options.LLMMode, "intent_mode": s.options.IntentMode,
+		"sls_mode": s.options.SLSMode, "llm_mode": s.options.LLMMode, "intent_mode": s.options.IntentMode, "code_mode": s.options.CodeMode,
 		"feishu_mode": "mock", "identity_source": "server_fixed",
 		"warning": "本页验证 Agent 应用链路，不代表真实飞书链路已验收。",
 	})

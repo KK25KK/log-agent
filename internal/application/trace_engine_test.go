@@ -15,6 +15,23 @@ import (
 	"logagent/internal/domain"
 )
 
+type traceDeploymentSource struct{ deployment domain.DeploymentEvidence }
+
+func (source traceDeploymentSource) ResolveDeployment(context.Context, domain.DeploymentQuery) (domain.DeploymentEvidence, error) {
+	return source.deployment, nil
+}
+
+type traceCodeProvider struct{ calls int }
+
+func (provider *traceCodeProvider) SearchCode(_ context.Context, request domain.CodeSearchRequest) (domain.CodeSearchResult, error) {
+	provider.calls++
+	return domain.CodeSearchResult{
+		Version: domain.CodeEvidenceVersion, PolicyVersion: domain.CodeSearchPolicyVersion,
+		RepositoryID: request.RepositoryID, CommitSHA: request.CommitSHA, Complete: true,
+		AnchorsSearched: len(request.Anchors), CommandsRun: 2,
+	}, nil
+}
+
 func TestTraceWorkerBuildsEightMemberTimelinePrimaryFirstWithinConcurrencyBudget(t *testing.T) {
 	ctx := context.Background()
 	now := time.Unix(1788330010, 0).UTC()
@@ -54,7 +71,24 @@ func TestTraceWorkerBuildsEightMemberTimelinePrimaryFirstWithinConcurrencyBudget
 	if err != nil {
 		t.Fatal(err)
 	}
-	worker, err := application.NewWorker(store, engine, "trace-worker", time.Minute, application.WithWorkerClock(func() time.Time { return now }))
+	deployment := domain.DeploymentEvidence{
+		Version: domain.DeploymentEvidenceVersion, Status: domain.DeploymentComplete,
+		Service: group.Service, Environment: group.Environment, RepositoryID: "dam", CommitSHA: strings.Repeat("a", 40),
+		DeployedAt: end.Add(-time.Hour), SourceVersion: "catalog-v1",
+	}
+	deployment.Fingerprint, _ = domain.DeploymentEvidenceFingerprint(deployment)
+	codeProvider := &traceCodeProvider{}
+	codeService, err := application.NewCodeEvidenceService(
+		traceDeploymentSource{deployment: deployment}, codeProvider, time.Second,
+		application.WithCodeEvidenceClock(func() time.Time { return now }),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker, err := application.NewWorker(
+		store, engine, "trace-worker", time.Minute,
+		application.WithWorkerClock(func() time.Time { return now }), application.WithWorkerCodeEvidence(codeService),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,6 +101,9 @@ func TestTraceWorkerBuildsEightMemberTimelinePrimaryFirstWithinConcurrencyBudget
 	}
 	if item.Status != domain.StatusSucceeded || item.Report == nil || item.Report.TraceInvestigation == nil {
 		t.Fatalf("Trace investigation did not succeed: %#v", item)
+	}
+	if codeProvider.calls != 1 || item.Report.CodeInvestigation == nil || item.Report.CodeInvestigation.Status != domain.CodeInvestigationNoMatch {
+		t.Fatalf("governed code evidence did not traverse the Worker: calls=%d value=%#v", codeProvider.calls, item.Report.CodeInvestigation)
 	}
 	trace := item.Report.TraceInvestigation
 	if trace.Status != domain.TraceInvestigationComplete || len(trace.Members) != 8 || len(trace.Events) != 2 || len(item.Report.Evidence) != 8 ||

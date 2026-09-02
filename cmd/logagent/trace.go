@@ -147,7 +147,15 @@ func runTraceSmoke(loaded config.Config, service, environment, rawWindow, traceI
 	if err != nil {
 		return err
 	}
-	worker, err := application.NewWorker(store, engine, "trace-smoke-worker", time.Minute)
+	workerOptions := make([]application.WorkerOption, 0, 1)
+	codeEvidence, err := buildCodeEvidenceService(loaded)
+	if err != nil {
+		return err
+	}
+	if codeEvidence != nil {
+		workerOptions = append(workerOptions, application.WithWorkerCodeEvidence(codeEvidence))
+	}
+	worker, err := application.NewWorker(store, engine, "trace-smoke-worker", time.Minute, workerOptions...)
 	if err != nil {
 		return err
 	}

@@ -15,6 +15,9 @@ func TestLoadDefaultsToOfflineMock(t *testing.T) {
 	t.Setenv("LOG_AGENT_ARK_MODEL", "")
 	t.Setenv("LOG_AGENT_INTENT_MODE", "")
 	t.Setenv("LOG_AGENT_INTENT_MODEL", "")
+	t.Setenv("LOG_AGENT_CODE_MODE", "")
+	t.Setenv("LOG_AGENT_CODE_CATALOG", "")
+	t.Setenv("LOG_AGENT_GIT_PATH", "")
 	config, err := Load()
 	if err != nil {
 		t.Fatal(err)
@@ -48,6 +51,9 @@ func TestLoadDefaultsToOfflineMock(t *testing.T) {
 		config.Trace.GlobalLimit != 500 || config.Trace.MaxConcurrency != 2 || config.Trace.RetryIncomplete != 1 {
 		t.Fatalf("unexpected Trace defaults: %#v", config.Trace)
 	}
+	if config.Code.Mode != "disabled" || config.Code.Timeout != 8*time.Second || config.Code.MaxCommandOutput != 512*1024 || config.Code.GitPath != "git" {
+		t.Fatalf("unexpected code evidence defaults: %#v", config.Code)
+	}
 	if config.Quota.Window != time.Hour || config.Quota.MaxObservations != 100 || config.Quota.MaxAPICalls != 400 ||
 		config.Quota.ReservedBytesPerObservation != config.SLS.MaxProcessedBytes || config.Quota.MaxProcessedBytes <= config.Quota.ReservedBytesPerObservation {
 		t.Fatalf("unexpected tenant quota defaults: %#v", config.Quota)
@@ -67,6 +73,18 @@ func TestLoadAcceptsDisabledTraceRetryAndRejectsUnsafeTraceBudgets(t *testing.T)
 	t.Setenv("LOG_AGENT_TRACE_MAX_CONCURRENT", "3")
 	if _, err := Load(); err == nil {
 		t.Fatal("want Trace concurrency budget error")
+	}
+}
+
+func TestLoadRejectsUnsafeCodeEvidenceConfiguration(t *testing.T) {
+	t.Setenv("LOG_AGENT_CODE_MODE", "shell")
+	if _, err := Load(); err == nil {
+		t.Fatal("want unsupported code mode error")
+	}
+	t.Setenv("LOG_AGENT_CODE_MODE", "localgit")
+	t.Setenv("LOG_AGENT_GIT_MAX_OUTPUT_BYTES", "1024")
+	if _, err := Load(); err == nil {
+		t.Fatal("want unsafe Git output limit error")
 	}
 }
 

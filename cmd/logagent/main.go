@@ -33,7 +33,7 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: logagent <evaluate|summary-evaluate|replay|replay-compare|feedback-seed|rollout-rehearse|delivery-dlq-list|delivery-dlq-replay|mock-e2e|demo|worker|feishu|web|sls-check|sls-smoke|trace-check|trace-smoke|llm-check|llm-smoke|intent-check|intent-smoke>")
+		return errors.New("usage: logagent <evaluate|summary-evaluate|replay|replay-compare|feedback-seed|rollout-rehearse|delivery-dlq-list|delivery-dlq-replay|mock-e2e|demo|worker|feishu|web|sls-check|sls-smoke|trace-check|trace-smoke|code-check|llm-check|llm-smoke|intent-check|intent-smoke>")
 	}
 	switch args[0] {
 	case "evaluate":
@@ -165,6 +165,19 @@ func run(args []string) error {
 			return err
 		}
 		return runTraceSmoke(loaded, args[1], args[2], args[3], args[4])
+	case "code-check":
+		if len(args) != 3 && len(args) != 4 {
+			return errors.New("usage: logagent code-check <service> <environment> [RFC3339-time]")
+		}
+		loaded, err := config.Load()
+		if err != nil {
+			return err
+		}
+		rawAt := ""
+		if len(args) == 4 {
+			rawAt = args[3]
+		}
+		return runCodeCheck(loaded, args[1], args[2], rawAt)
 	default:
 		return fmt.Errorf("unknown command %q; see logagent usage", args[0])
 	}
@@ -310,7 +323,14 @@ func buildInvestigationWorker(ctx context.Context, config config.Config, store *
 	if err != nil {
 		return nil, err
 	}
-	options := make([]application.WorkerOption, 0, 2)
+	options := make([]application.WorkerOption, 0, 3)
+	codeEvidence, err := buildCodeEvidenceService(config)
+	if err != nil {
+		return nil, err
+	}
+	if codeEvidence != nil {
+		options = append(options, application.WithWorkerCodeEvidence(codeEvidence))
+	}
 	if config.SLS.Mode == "mock" {
 		runbook, runbookErr := application.NewRunbookService(
 			runbookmock.New(), runbookmock.NewCatalog(), domain.RunbookGuidanceSourceSyntheticMock,

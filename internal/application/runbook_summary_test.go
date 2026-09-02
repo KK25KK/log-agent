@@ -71,3 +71,20 @@ func TestSummaryInputExcludesRunbookGuidance(t *testing.T) {
 		t.Fatal("summary degradation changed the independent runbook projection")
 	}
 }
+
+func TestSummaryInputExcludesCodeEvidence(t *testing.T) {
+	_, report := summaryFixture()
+	const sentinel = "PRIVATECODESENTINELMUSTNOTREACHMODEL"
+	report.CodeInvestigation = &domain.CodeInvestigation{
+		Version: domain.CodeEvidenceVersion, Status: domain.CodeInvestigationComplete, Complete: true,
+		Deployment: &domain.DeploymentEvidence{RepositoryID: "dam", CommitSHA: strings.Repeat("a", 40)},
+		Matches:    []domain.CodeMatch{{File: "internal/private.go", Snippet: sentinel}},
+	}
+	payload, err := json.Marshal(BuildSummaryInput(report))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(payload), sentinel) || strings.Contains(string(payload), "internal/private.go") || strings.Contains(string(payload), "commit_sha") {
+		t.Fatalf("code evidence crossed the LLM input boundary: %s", payload)
+	}
+}

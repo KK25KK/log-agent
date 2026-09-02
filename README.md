@@ -1,6 +1,6 @@
 # Log Agent
 
-这是一个用 Go 开发的“证据驱动”日志调查 Agent。除原有错误趋势、证据治理、恢复、评测和 LLM 摘要能力外，现已完成受治理自然语言接单、DAM TraceID 8 Logstore 脱敏时间线，以及从时间线提取有界运行时错误锚点的前三阶段主体代码和离线验收。自然语言只生成 ACL 过滤后的逻辑调查预览，必须由用户确认后才创建任务，不能让模型直接生成或执行 SLS 查询。2026-09-01 已通过 DAM 单 Logstore 真实 SLS + 火山方舟摘要的本地 Web 联合运行；2026-09-02 新的 8 Logstore Schema 检查已 8/8 READY，真实 TraceID Smoke、部署版本/代码证据、真实飞书与生产审批仍待验收。
+这是一个用 Go 开发的“证据驱动”日志调查 Agent。除原有错误趋势、证据治理、恢复、评测和 LLM 摘要能力外，现已完成受治理自然语言接单、DAM TraceID 8 Logstore 脱敏时间线、运行时错误锚点，以及可信部署 Commit + 本地 Git 只读代码证据的前四阶段主体代码和离线验收。自然语言只生成 ACL 过滤后的逻辑调查预览，必须由用户确认后才创建任务，不能让模型直接生成或执行 SLS 查询。2026-09-01 已通过 DAM 单 Logstore 真实 SLS + 火山方舟摘要的本地 Web 联合运行；2026-09-02 新的 8 Logstore Schema 检查已 8/8 READY，真实 TraceID/代码联合 Smoke、联合根因候选、真实飞书与生产审批仍待验收。
 
 ```text
 飞书消息或本地 Web 问题描述
@@ -10,6 +10,9 @@
   -> Worker + 路由引擎
        -> 错误趋势：Eino 固定 Graph
        -> TraceID：主成员优先的受治理 TraceEngine
+            -> 脱敏时间线与运行时锚点
+            -> 事故时间部署 Commit
+            -> 目标 Commit 的有界本地 Git 证据
   -> 受控查询网关
        -> 资源目录 + ACL
        -> 查询预算 + Schema 校验
@@ -62,6 +65,15 @@ Eino 只负责流程编排，不负责业务状态、权限、幂等、审计和
 - 本地 Web 与飞书有界展示并固定声明“锚点只用于定位，不代表根因”。真实 DAM 锚点质量仍需代表性 TraceID 验收。
 
 完整合同与验收边界见 [`docs/runtime-error-anchors.md`](docs/runtime-error-anchors.md)。
+
+### 可信部署版本与代码证据（第四阶段）
+
+- 管理员目录按逻辑服务、环境和事故时间解析唯一实际部署 Commit；缺失或重叠时停止，禁止回退到 `HEAD`、默认分支或当前工作区。
+- Provider-neutral 部署/代码端口与本地 Git 适配器已实现；固定 Git 参数只读目标 Commit、Blob 和可信前后部署变更文件列表，不开放 Shell 或任意 Git 参数。
+- 最多消费 16 个锚点、返回 16 个匹配、读取 8 个文件/480 行/64 KiB；仓库路径、命令数、超时和单命令输出均有上限。
+- 代码片段在持久化前检查强凭据并脱敏邮箱/IP；代码正文不进入方舟或飞书卡片。临时 Git 双 Commit 离线验收已通过，真实 DAM 部署目录待接。
+
+完整合同、配置和命令见 [`docs/deployment-and-code-evidence.md`](docs/deployment-and-code-evidence.md)。
 
 ### 调查骨架
 
@@ -367,6 +379,21 @@ go run ./cmd/logagent trace-smoke dam-server test 10m <trace-id>
 ```
 
 2026-09-02 已真实执行 `trace-check`，8/8 成员为 `READY` 且 `log_reads=0`；当前仓库没有记录新的真实 `trace-smoke` 成功结果。详见 [`docs/traceid-multi-logstore-timeline.md`](docs/traceid-multi-logstore-timeline.md)。
+
+## 配置部署 Commit 与本地代码证据
+
+代码读取默认关闭。只有部署系统能够提供事故时间对应的完整 Commit 后才启用：
+
+```powershell
+Copy-Item .\config\code-resources.example.json .\config\code-resources.json
+# 把占位符替换为部署平台确认的 Commit/时间，并核对批准仓库和路径
+$env:LOG_AGENT_CODE_MODE = "localgit"
+$env:LOG_AGENT_CODE_CATALOG = ".\config\code-resources.json"
+$env:LOG_AGENT_GIT_PATH = "git"
+go run ./cmd/logagent code-check dam-server test
+```
+
+`code-check` 只核对目录、Git 顶层和 Commit 对象，`code_reads=0`；启用后的完整 `trace-smoke`、`web` 或 Worker 才会消费安全锚点并读取目标 Commit 的有界代码上下文。不要用本地 `HEAD` 冒充部署版本。详见 [`docs/deployment-and-code-evidence.md`](docs/deployment-and-code-evidence.md)。
 
 ## 配置报告摘要
 

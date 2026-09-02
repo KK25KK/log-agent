@@ -20,6 +20,7 @@ type Worker struct {
 	now           func() time.Time
 	runbook       *RunbookService
 	summary       *SummaryService
+	codeEvidence  *CodeEvidenceService
 }
 
 type WorkerOption func(*Worker)
@@ -36,6 +37,14 @@ func WithWorkerClock(now func() time.Time) WorkerOption {
 func WithWorkerSummary(service *SummaryService) WorkerOption {
 	return func(worker *Worker) {
 		worker.summary = service
+	}
+}
+
+// WithWorkerCodeEvidence enables the governed post-Trace deployment and local
+// code evidence stage. It remains outside the Eino graph and LLM summary.
+func WithWorkerCodeEvidence(service *CodeEvidenceService) WorkerOption {
+	return func(worker *Worker) {
+		worker.codeEvidence = service
 	}
 }
 
@@ -82,10 +91,17 @@ func (w *Worker) RunOne(ctx context.Context) (bool, error) {
 	if runErr == nil && report.RunbookGuidance != nil {
 		runErr = errors.New("investigation engine returned runbook guidance before governed post-processing")
 	}
+	if runErr == nil && report.CodeInvestigation != nil {
+		runErr = errors.New("investigation engine returned code evidence before governed post-processing")
+	}
 	if runErr == nil {
 		runErr = validateEngineOutput(job, evidence, report)
 	}
 	isTraceInvestigation := job.Request.TemplateID == domain.TraceSearchTemplateID
+	if runErr == nil && w.codeEvidence != nil && isTraceInvestigation {
+		report = w.codeEvidence.Enrich(runCtx, job.Request, report)
+		runErr = validateEngineOutput(job, evidence, report)
+	}
 	if runErr == nil && w.runbook != nil && !isTraceInvestigation {
 		report, runErr = w.runbook.Enrich(runCtx, evidence, report)
 		if runErr == nil {
@@ -274,6 +290,9 @@ func ValidateEngineOutput(investigationID string, evidence []domain.Evidence, re
 	}
 	if err := validateTraceInvestigation(report.TraceInvestigation, knownEvidence, report); err != nil {
 		return fmt.Errorf("engine returned invalid Trace investigation: %w", err)
+	}
+	if err := validateCodeInvestigation(report.CodeInvestigation, report.TraceInvestigation); err != nil {
+		return fmt.Errorf("engine returned invalid code investigation: %w", err)
 	}
 	if report.Summary != nil {
 		if err := ValidateReportSummary(report, *report.Summary); err != nil {

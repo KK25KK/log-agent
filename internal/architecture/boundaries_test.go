@@ -14,11 +14,11 @@ func TestFrameworkImportsStayInsideAdapters(t *testing.T) {
 	root := filepath.Clean(filepath.Join("..", ".."))
 	rules := []struct {
 		prefix  string
-		allowed string
+		allowed []string
 	}{
-		{prefix: "github.com/cloudwego/eino", allowed: filepath.Join("internal", "adapters", "eino")},
-		{prefix: "github.com/larksuite/oapi-sdk-go", allowed: filepath.Join("internal", "adapters", "feishu")},
-		{prefix: "os/exec", allowed: filepath.Join("internal", "adapters", "aliyuncli")},
+		{prefix: "github.com/cloudwego/eino", allowed: []string{filepath.Join("internal", "adapters", "eino")}},
+		{prefix: "github.com/larksuite/oapi-sdk-go", allowed: []string{filepath.Join("internal", "adapters", "feishu")}},
+		{prefix: "os/exec", allowed: []string{filepath.Join("internal", "adapters", "aliyuncli"), filepath.Join("internal", "adapters", "gitcode")}},
 	}
 
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
@@ -42,8 +42,8 @@ func TestFrameworkImportsStayInsideAdapters(t *testing.T) {
 				return err
 			}
 			for _, rule := range rules {
-				if strings.HasPrefix(value, rule.prefix) && !pathWithin(relative, rule.allowed) {
-					t.Errorf("%s imports %s outside %s", relative, value, rule.allowed)
+				if strings.HasPrefix(value, rule.prefix) && !pathWithinAny(relative, rule.allowed) {
+					t.Errorf("%s imports %s outside %v", relative, value, rule.allowed)
 				}
 			}
 		}
@@ -52,6 +52,15 @@ func TestFrameworkImportsStayInsideAdapters(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+}
+
+func pathWithinAny(path string, directories []string) bool {
+	for _, directory := range directories {
+		if pathWithin(path, directory) {
+			return true
+		}
+	}
+	return false
 }
 
 func pathWithin(path, directory string) bool {

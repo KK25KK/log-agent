@@ -187,6 +187,7 @@ type Report struct {
 	CauseAnalysis      *CauseAnalysis      `json:"cause_analysis,omitempty"`
 	IncidentTimeline   *IncidentTimeline   `json:"incident_timeline,omitempty"`
 	TraceInvestigation *TraceInvestigation `json:"trace_investigation,omitempty"`
+	CodeInvestigation  *CodeInvestigation  `json:"code_investigation,omitempty"`
 	RunbookGuidance    *RunbookGuidance    `json:"runbook_guidance,omitempty"`
 	Summary            *ReportSummary      `json:"summary,omitempty"`
 	GeneratedAt        time.Time           `json:"generated_at"`

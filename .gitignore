@@ -1,6 +1,7 @@
 .env
 config/sls-resources.json
 config/change-catalog.json
+config/code-resources.json
 bin/
 *.exe
 data/

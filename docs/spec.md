@@ -2,8 +2,8 @@
 
 | Metadata | Value |
 | --- | --- |
-| Version | 2.0 |
-| Status | Governed natural-language intake and DAM TraceID multi-Logstore Stage 2 are implemented and offline-validated. Real eight-member Trace smoke, code evidence, production intent quality, real knowledge/metric connectors, M4-C infrastructure, and real gray rollout remain pending |
+| Version | 2.2 |
+| Status | Governed natural-language intake, DAM TraceID timeline, runtime anchors, and local immutable-Commit code evidence are implemented and offline-validated. Real eight-member Trace/code smoke, joint RCA, production intent quality, real knowledge/metric connectors, M4-C infrastructure, and real gray rollout remain pending |
 | Date | 2026-09-02 |
 
 ## 1. Overview
@@ -32,6 +32,7 @@ Users can either submit the strict investigation command or describe a suspected
 - An administrator-owned Trace resource-group catalog that maps one authorized logical scope to a primary member and a bounded set of Logstore members with explicit field capabilities.
 - A dedicated Trace engine that queries the primary member first, then the remaining members with bounded concurrency, and builds a stable redacted cross-member timeline.
 - Deterministic runtime-anchor extraction over already-redacted Trace events. It emits only bounded error text/type, route, symbol, and stack-frame anchors for later exact code lookup.
+- A trusted deployment-version source and bounded code-evidence boundary. The first adapter reads only administrator-approved local Git repositories at the unique immutable Commit active for the investigated time.
 - Preflight time-window, call-count, row-count, timeout, and concurrency budgets.
 - A post-query processed-byte budget used as the initial cost guardrail.
 - Index Schema validation before executing analytical queries.
@@ -65,7 +66,7 @@ Users can either submit the strict investigation command or describe a suspected
 
 - Arbitrary model-generated SQL or SPL.
 - Treating a natural-language interpretation as permission to query. The model cannot create a job, choose a physical resource, bypass confirmation, or silently downgrade an unsupported Trace request to count-only analysis.
-- Claiming support for free-form root-cause questions, repository analysis, or code-based fixes from the Stage 2 Trace timeline implementation.
+- Claiming a confirmed root cause or code-based fix from a Trace timeline, runtime anchor, code match, or changed-file overlap.
 - User-selected Endpoint, Project, LogStore, field name, or unregistered query template. The command may request only a closed template ID already bound to the resolved operator-owned resource version.
 - Multi-Agent orchestration, DeepAgent, or Supervisor patterns.
 - SLS write operations, alert mutation, or automatic remediation.
@@ -208,6 +209,14 @@ The Trace Resource Catalog is separate from the aggregate Resource Catalog. One 
 
 Runtime anchors use `runtime-anchor-v1` and the closed kinds `ERROR_TEXT`, `ERROR_TYPE`, `ROUTE`, `SYMBOL`, and `STACK_FRAME`. Extraction runs only after Trace event redaction, has no external calls, emits at most four anchors per event and 64 per investigation, and deduplicates by canonical kind/value/file/line/symbol identity. Stack paths must be repository-relative safe paths; absolute paths, traversal, secret-file patterns, generated/vendor paths, redaction placeholders, and overly generic strings are rejected. Every anchor binds one existing member/event ID and carries a content fingerprint. `COMPLETE`, `PARTIAL`, and `NO_ANCHORS` describe extraction coverage only and never imply causal confidence.
 
+### Deployment and code-evidence boundary
+
+`deployment-evidence-v1` resolves the unique deployment record active at the investigation end time. A complete record contains an administrator-owned Repository ID and a full lowercase 40-64 character Commit SHA; optional previous SHA and artifact digest must come from the same trusted directory. Zero matches are `UNAVAILABLE`, overlapping records are `CONFLICT`, and neither state may fall back to a branch, `HEAD`, a latest Commit, or working-tree content.
+
+`code-evidence-v1` runs only for a complete Trace investigation with safe anchors. It consumes at most 16 anchors and returns at most 16 matches from eight `.go/.java/.py` files, 480 lines, and 64 KiB of snippets. The local Git adapter has no Shell capability: it uses fixed argument arrays for repository-root/Commit checks, exact fixed-string grep, immutable Blob reads, and an optional trusted previous/current changed-file list. Repository roots and allow/deny paths come only from strict administrator JSON. Secret-like paths and credential-bearing snippets are rejected; email and IPv4 content is redacted before persistence.
+
+Every code match binds an existing runtime Anchor ID, Repository ID, deployment Commit, safe file/line, Git Blob, query fingerprint, and content fingerprint. Worker validation recomputes these relationships before persistence. Code snippets are excluded from the existing LLM summary and Feishu cards; Web is loopback-only. `COMPLETE/NO_MATCH/PARTIAL/SKIPPED/UNAVAILABLE` describe collection state, not causal confidence. Local immutable Git reads have no remote side effect or metered outcome and may rerun after a Worker crash; any future network repository adapter must add durable audit, unknown-outcome handling, and provider-specific Checkpoints.
+
 Top-K is an intentional template result, not provider truncation. Pattern and instance shares are derived locally from aggregate counts. A current pattern absent from the baseline Top 5 is only a candidate-new pattern unless the baseline buckets account for the complete baseline error count and neither compared label was redacted. Only then may the report call it confirmed new relative to the selected baseline window.
 
 ### Policy boundary
@@ -288,7 +297,8 @@ High-risk approval is a separate closed state machine: `PENDING -> APPROVED | RE
 8. A deterministic extractor derives only closed, bounded anchors from the already-redacted event projection; it cannot inspect arbitrary log fields or invoke another Provider.
 9. Each member becomes `COMPLETE`, `ZERO_HIT`, or an explicit incomplete status. Events and anchors are sorted by stable closed keys.
 10. All-complete members with events produce `trace_evidence_found`; all-complete zero-hit members produce `trace_zero_hit`; any incomplete member produces the non-conclusive `trace_evidence_partial` outcome.
-11. The Trace-only report does not run change-cause, metric/Trace aggregate, Runbook or LLM-summary enrichments. Runtime anchors are search keys, not root-cause findings.
+11. When code evidence is enabled, the post-engine Worker first resolves the unique deployment Commit and then performs bounded local-Git lookup; missing/conflicting deployment data causes zero code reads.
+12. The Trace-only report does not run the older change-cause, metric/Trace aggregate, Runbook or LLM-summary enrichments. Runtime/code evidence remains human-review-only and is not a root-cause finding.
 
 ### Deliver Feishu progress and results
 

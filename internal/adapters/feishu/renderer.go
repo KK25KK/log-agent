@@ -26,6 +26,7 @@ const (
 	maxTraceMembers          = 8
 	maxTraceEvents           = 12
 	maxRuntimeAnchors        = 8
+	maxCodeMatches           = 4
 	maxAggregateItems        = 5
 	maxStatementRunes        = 480
 	maxAggregateRunes        = 96
@@ -223,6 +224,7 @@ func renderReportCard(investigation domain.Investigation) cardDocument {
 	elements = append(elements, cardDivider{Tag: "hr"})
 	elements = append(elements, markdown("**调查结果：** "+safeMarkdown(report.Outcome, maxAggregateRunes)))
 	elements = appendTraceSummary(elements, report.TraceInvestigation)
+	elements = appendCodeSummary(elements, report.CodeInvestigation)
 	elements = appendReportSummary(elements, report.Summary)
 	for index, finding := range boundedFindings(report.Findings) {
 		conclusion := "非确定性"
@@ -364,6 +366,7 @@ func renderEvidenceCard(investigation domain.Investigation) (cardDocument, error
 	elements = append(elements, cardDivider{Tag: "hr"})
 	if investigation.Report.TraceInvestigation != nil {
 		elements = appendTraceEvidence(elements, investigation.Report.TraceInvestigation)
+		elements = appendCodeEvidence(elements, investigation.Report.CodeInvestigation)
 		elements = append(elements, buttonRow(investigation.ID,
 			buttonSpec{label: "返回报告", action: domain.ActionViewReport, style: "primary"},
 			buttonSpec{label: "扩大时间窗", action: domain.ActionExpandWindow},
@@ -418,6 +421,50 @@ func renderEvidenceCard(investigation domain.Investigation) (cardDocument, error
 		buttonSpec{label: "重新运行", action: domain.ActionRerun},
 	))
 	return newCard("日志调查证据", "blue", elements), nil
+}
+
+func appendCodeSummary(elements []any, code *domain.CodeInvestigation) []any {
+	if code == nil {
+		return elements
+	}
+	content := fmt.Sprintf("**代码证据：** %s", safeMarkdown(string(code.Status), maxIdentifierRunes))
+	if code.Deployment != nil && code.Deployment.Status == domain.DeploymentComplete {
+		commit := code.Deployment.CommitSHA
+		if len(commit) > 12 {
+			commit = commit[:12]
+		}
+		content += fmt.Sprintf("｜%s @ %s｜命中 %d", safeMarkdown(code.Deployment.RepositoryID, maxIdentifierRunes), safeMarkdown(commit, maxIdentifierRunes), len(code.Matches))
+	} else if code.ReasonCode != "" {
+		content += "｜" + safeMarkdown(code.ReasonCode, maxIdentifierRunes)
+	}
+	content += "\n\n仅只读实际部署 Commit；代码路径不代表运行时已执行，也不构成根因。"
+	return append(elements, markdown(content))
+}
+
+func appendCodeEvidence(elements []any, code *domain.CodeInvestigation) []any {
+	if code == nil {
+		return elements
+	}
+	elements = append(elements, cardDivider{Tag: "hr"})
+	elements = appendCodeSummary(elements, code)
+	matches := code.Matches
+	if len(matches) > maxCodeMatches {
+		matches = matches[:maxCodeMatches]
+	}
+	for index, match := range matches {
+		change := ""
+		if match.ChangedSincePrevious {
+			change = "｜与上一部署版本有文件变更"
+		}
+		elements = append(elements, markdown(fmt.Sprintf(
+			"**代码位置 %d：** %s:%d%s\n\n来源锚点：%s",
+			index+1, safeMarkdown(match.File, maxStatementRunes), match.MatchLine, change, safeMarkdown(match.AnchorID, maxIdentifierRunes),
+		)))
+	}
+	if code.DiffChecked {
+		elements = append(elements, markdown(fmt.Sprintf("已只读比较可信部署版本，允许范围内有 %d 个变更文件；重叠仅表示相关，不证明因果。", len(code.ChangedFiles))))
+	}
+	return elements
 }
 
 func appendTraceSummary(elements []any, trace *domain.TraceInvestigation) []any {

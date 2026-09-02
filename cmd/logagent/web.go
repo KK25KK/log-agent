@@ -64,7 +64,7 @@ func runWeb(loaded config.Config) error {
 			AppID: loaded.Web.AppID, TenantKey: loaded.Web.TenantKey, UserID: loaded.Web.UserID,
 		},
 		ChatID: loaded.Web.ChatID, IngestionGrace: loaded.SLS.IngestionGrace, MaxWindow: loaded.SLS.MaxWindow,
-		SLSMode: loaded.SLS.Mode, LLMMode: loaded.LLM.Mode, IntentMode: loaded.Intent.Mode,
+		SLSMode: loaded.SLS.Mode, LLMMode: loaded.LLM.Mode, IntentMode: loaded.Intent.Mode, CodeMode: loaded.Code.Mode,
 	}, store, intake, actions, sender, webOptions...)
 	if err != nil {
 		return err
@@ -82,8 +82,8 @@ func runWeb(loaded config.Config) error {
 	go func() { errorsChannel <- httpServer.ListenAndServe() }()
 
 	log.Printf(
-		"local Web console listening on http://%s (database=%s, sls=%s, llm=%s, feishu=mock)",
-		loaded.Web.Address, loaded.Web.DatabasePath, loaded.SLS.Mode, loaded.LLM.Mode,
+		"local Web console listening on http://%s (database=%s, sls=%s, llm=%s, code=%s, feishu=mock)",
+		loaded.Web.Address, loaded.Web.DatabasePath, loaded.SLS.Mode, loaded.LLM.Mode, loaded.Code.Mode,
 	)
 	runErr := <-errorsChannel
 	cancel()

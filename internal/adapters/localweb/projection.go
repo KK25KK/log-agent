@@ -63,6 +63,7 @@ type ReportView struct {
 	TimelineItems   []domain.IncidentTimelineItem `json:"timeline_items,omitempty"`
 	RunbookGuidance *domain.RunbookGuidance       `json:"runbook_guidance,omitempty"`
 	Trace           *TraceInvestigationView       `json:"trace,omitempty"`
+	Code            *domain.CodeInvestigation     `json:"code,omitempty"`
 	Summary         *SummaryView                  `json:"summary,omitempty"`
 	GeneratedAt     time.Time                     `json:"generated_at"`
 }
@@ -185,6 +186,17 @@ func projectReport(report domain.Report) *ReportView {
 	if report.CauseAnalysis != nil {
 		view.CauseStatus = report.CauseAnalysis.Status
 		view.CauseHypotheses = append([]domain.CauseHypothesis(nil), report.CauseAnalysis.Hypotheses...)
+	}
+	if report.CodeInvestigation != nil {
+		copyCode := *report.CodeInvestigation
+		copyCode.Matches = append([]domain.CodeMatch(nil), report.CodeInvestigation.Matches...)
+		copyCode.ChangedFiles = append([]string(nil), report.CodeInvestigation.ChangedFiles...)
+		copyCode.Limitations = append([]string(nil), report.CodeInvestigation.Limitations...)
+		if report.CodeInvestigation.Deployment != nil {
+			copyDeployment := *report.CodeInvestigation.Deployment
+			copyCode.Deployment = &copyDeployment
+		}
+		view.Code = &copyCode
 	}
 	if report.IncidentTimeline != nil {
 		view.TimelineStatus = report.IncidentTimeline.Status

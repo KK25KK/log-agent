@@ -116,6 +116,24 @@ type RunbookSource interface {
 	Lookup(ctx context.Context, query domain.RunbookQuery) (domain.RunbookSet, error)
 }
 
+// DeploymentVersionSource resolves the immutable code version that was
+// actually active for a logical service/environment at an investigated time.
+type DeploymentVersionSource interface {
+	ResolveDeployment(ctx context.Context, query domain.DeploymentQuery) (domain.DeploymentEvidence, error)
+}
+
+// CodeRepositoryCatalog owns administrator-approved repository roots and path
+// boundaries. Physical roots never come from users, logs, or a model.
+type CodeRepositoryCatalog interface {
+	ResolveCodeRepository(ctx context.Context, repositoryID string) (domain.CodeRepository, error)
+}
+
+// CodeEvidenceProvider performs only bounded, read-only lookup at the exact
+// immutable Commit supplied by a trusted DeploymentVersionSource.
+type CodeEvidenceProvider interface {
+	SearchCode(ctx context.Context, request domain.CodeSearchRequest) (domain.CodeSearchResult, error)
+}
+
 // ResourceCatalog resolves logical scope and owns default-deny ACL bindings.
 type ResourceCatalog interface {
 	Resolve(ctx context.Context, service, environment string) (domain.LogResource, error)
