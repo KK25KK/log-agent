@@ -57,12 +57,14 @@ func (p Principal) Key() string {
 
 // InvestigationRequest is the normalized scope accepted by the application.
 type InvestigationRequest struct {
-	Service     string    `json:"service"`
-	Environment string    `json:"environment"`
-	TemplateID  string    `json:"template_id,omitempty"`
-	StartTime   time.Time `json:"start_time"`
-	EndTime     time.Time `json:"end_time"`
-	Requester   Principal `json:"requester"`
+	Service            string            `json:"service"`
+	Environment        string            `json:"environment"`
+	TemplateID         string            `json:"template_id,omitempty"`
+	StartTime          time.Time         `json:"start_time"`
+	EndTime            time.Time         `json:"end_time"`
+	Requester          Principal         `json:"requester"`
+	Problem            *ProblemStatement `json:"problem,omitempty"`
+	IntentResolutionID string            `json:"intent_resolution_id,omitempty"`
 }
 
 // QuerySpec is the auditable, typed request sent to an SLS executor.

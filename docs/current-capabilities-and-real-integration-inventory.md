@@ -2,9 +2,9 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 盘点日期 | 2026-09-01 |
-| 代码基线 | 当前仓库工作树（受治理 SOP 人工核查主体代码已加入） |
-| 当前结论 | 主体业务链、治理、证据、恢复、M4-B 本地可靠性治理、评测、回放、Mock Reviewer 反馈、非行动性灰度演练、LLM 摘要与额度、Mock 指标/Trace 时间线和 Mock SOP 人工核查已经实现；真实方舟独立 Smoke 与 DAM count-only Worker 联合 E2E 已通过，但真实样本质量/费用/留存与真实飞书 E2E、真实可观测源、真实 `RunbookSource` 与内容治理、M4-C 生产基础设施和真实试点仍需分别验收 |
+| 盘点日期 | 2026-09-02 |
+| 代码基线 | 当前仓库工作树（受治理自然语言接单第一阶段已加入） |
+| 当前结论 | 原有主体业务链、治理、证据、恢复、评测、摘要与 Mock 增强保持不变；新增自然语言 `resolve -> preview -> confirm` 接单、独立意图额度和方舟解析适配器。Mock 垂直链路与协议测试已通过，真实 intent smoke、DAM 8 库 Trace、代码证据、真实飞书和生产治理仍待完成 |
 | 数据边界 | 当前自动化路径使用合成日志、合成飞书身份、合成变更、合成指标/Trace 聚合、确定性 Mock SOP 和合成标签，不代表真实生产效果或企业知识内容 |
 | 验证边界 | 第二轮严格门禁及两个 fail-closed 边界落地后的最终工作树已完成 `gofmt`、全仓测试、`go vet`、重点包乱序 20 轮、仓库链接/diff、`mock-e2e`、`demo`、两类评测与快照/replay/比较/反馈/灰度演练总检；Runbook 为 1 次调用/1 项/3 步，SLS 为 2 次观察/8 次 Provider 调用/0 次外部网络，安全复查未发现 P0–P3。race 因 `CGO_ENABLED=0` 且无 GCC 未执行 |
 
@@ -71,6 +71,7 @@ flowchart LR
 | 功能 | 当前状态 | 怎么实现 | 主要源码 | 已达到的效果 |
 | --- | --- | --- | --- | --- |
 | 严格调查命令 | 已完成 | 解析 `/investigate <service> <environment> <duration>`，生成受控时间窗 | `internal/command`、`internal/adapters/feishu/receiver.go` | 用户不能直接提交 Project、LogStore、SQL 或 SPL |
+| 受治理自然语言接单 | 主体代码与离线验收完成 | 问题先脱敏并只在 ACL 逻辑 Capability 中解析；持久化预览后必须确认，确认时复核身份/ACL/过期与模板 | `internal/application/intent.go`、`internal/adapters/volcark/intent.go`、`internal/adapters/localweb` | Mock 垂直链路已跑通；不会直接执行模型查询，真实 intent smoke 与真实飞书视觉待验收 |
 | 飞书消息接收 | 代码已具备，待真实联调 | 官方飞书 Go SDK WebSocket 接收消息和卡片回调，入口只做标准化与持久化 | `internal/adapters/feishu/receiver.go` | 真实应用接入后可从单聊或群聊命令创建调查 |
 | 入站幂等 | 已完成 | `(app_id, tenant_key, message_id)` 唯一接单，调查与 Job 在同一事务创建 | `internal/application/intake.go`、`internal/adapters/sqlite/store.go` | 飞书重复投递不会产生重复调查 |
 | 调查任务状态机 | 已完成 | `QUEUED -> RUNNING -> SUCCEEDED/FAILED/CANCELLED/NEEDS_REVIEW` | `internal/application/worker.go`、`internal/adapters/sqlite/store.go` | 调查过程可恢复、可审计，不靠内存保存状态 |
@@ -119,12 +120,13 @@ flowchart LR
 | Reviewer 反馈与灰度策略 | `feedback-seed` + 固定策略 | 两名虚拟 Reviewer、Verdict/Reason、quorum 与演练阈值 | 严格快照引用、append-only 纠正、B3 对比和决策状态机 | 真实 Reviewer 身份、UI、团队策略和生产动作未实现 |
 | Agent Trace 后端 | 内存 `BoundedRecorder` + 本地回放文件 | 生产 Trace Collector、检索、保留和告警 | Span 合同、版本指纹、完整性检查 | 真实 OTel/AgentSight/可观测后端未实现 |
 | LLM Provider | `summarymock` 生成确定性引用摘要 | 火山方舟模型响应、Token 和时延 | Worker 前后校验、严格 JSON Schema/引用门禁、fallback、飞书渲染、独立 check/smoke | 方舟独立合成 Smoke 与 DAM count-only Worker 联合 E2E 已通过且 Key 不入库；Prompt/留存/成本、真实质量和真实飞书 E2E 仍待验收 |
+| 意图解析 Provider | `intentmock` 生成确定性逻辑计划 | 火山方舟对问题描述的结构化意图解析 | 脱敏、ACL Capability、持久化预览、显式确认、独立额度与 Intake 幂等 | `volcark` 协议测试已完成；真实 `intent-smoke` 尚未执行，且模型永远不能输出物理查询或直接创建任务 |
 
 ### 5.1 不是 Mock，但仍不能直接称为生产能力的部分
 
 | 部分 | 当前情况 | 为什么还不能称为生产就绪 |
 | --- | --- | --- |
-| SQLite | 是真实持久化实现，不是 Mock | 没有正式迁移工具、生产备份恢复、多实例全局配额和数据库故障转移验收 |
+| SQLite | 是真实持久化实现，不是 Mock | 已使用 `PRAGMA user_version=1` 和事务内幂等建表升级本地数据库；仍没有生产迁移工具、备份恢复、多实例全局配额和数据库故障转移验收 |
 | 静态 Resource Catalog | 是真实治理配置 | 尚未录入和验证公司的真实 SLS 资源、字段、RAM 权限与用户绑定 |
 | 静态 Change Catalog | 是可运行的管理员配置 | 不是实时发布平台/配置中心/CMDB，存在人工同步时效问题 |
 | 飞书 SDK / SLS CLI 适配器 | 是真实代码 | 没有仓库可公开保存的真实凭据、试点环境结果和真实网络故障演练 |

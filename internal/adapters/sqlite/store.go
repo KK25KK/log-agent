@@ -16,6 +16,8 @@ import (
 	"logagent/internal/ports"
 )
 
+const currentSchemaVersion = 1
+
 const schema = `
 CREATE TABLE IF NOT EXISTS investigations (
     id TEXT PRIMARY KEY,
@@ -239,6 +241,70 @@ CREATE TABLE IF NOT EXISTS approval_requests (
     FOREIGN KEY (investigation_id) REFERENCES investigations(id)
 );
 
+CREATE TABLE IF NOT EXISTS intent_resolutions (
+    id TEXT PRIMARY KEY,
+    app_id TEXT NOT NULL,
+    tenant_key TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    source_message_id TEXT NOT NULL,
+    problem_text TEXT NOT NULL,
+    problem_fingerprint TEXT NOT NULL,
+    problem_redacted INTEGER NOT NULL CHECK (problem_redacted IN (0, 1)),
+    status TEXT NOT NULL,
+    intent TEXT NOT NULL DEFAULT '',
+    service TEXT NOT NULL DEFAULT '',
+    environment TEXT NOT NULL DEFAULT '',
+    duration_seconds INTEGER NOT NULL DEFAULT 0,
+    template_id TEXT NOT NULL DEFAULT '',
+    confidence REAL NOT NULL DEFAULT 0,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    request_id TEXT NOT NULL DEFAULT '',
+    prompt_version TEXT NOT NULL,
+    prompt_fingerprint TEXT NOT NULL,
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    total_tokens INTEGER NOT NULL DEFAULT 0,
+    latency_millis INTEGER NOT NULL DEFAULT 0,
+    reason_code TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    confirmed_at INTEGER NOT NULL DEFAULT 0,
+    investigation_id TEXT,
+    UNIQUE (app_id, tenant_key, source_message_id),
+    FOREIGN KEY (investigation_id) REFERENCES investigations(id)
+);
+
+CREATE TABLE IF NOT EXISTS intent_quota_reservations (
+    usage_key TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL,
+    resolution_id TEXT NOT NULL,
+    prompt_version TEXT NOT NULL,
+    window_start INTEGER NOT NULL,
+    window_end INTEGER NOT NULL,
+    reserved_tokens INTEGER NOT NULL,
+    actual_input_tokens INTEGER NOT NULL DEFAULT 0,
+    actual_output_tokens INTEGER NOT NULL DEFAULT 0,
+    actual_total_tokens INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL,
+    reason_code TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    FOREIGN KEY (resolution_id) REFERENCES intent_resolutions(id)
+);
+
+CREATE TABLE IF NOT EXISTS intent_quota_events (
+    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    usage_key TEXT NOT NULL,
+    tenant_id TEXT NOT NULL,
+    outcome TEXT NOT NULL,
+    reason_code TEXT NOT NULL,
+    input_tokens INTEGER NOT NULL,
+    output_tokens INTEGER NOT NULL,
+    total_tokens INTEGER NOT NULL,
+    occurred_at INTEGER NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_jobs_claim
 ON jobs(status, lease_until, created_at);
 
@@ -278,6 +344,15 @@ ON summary_quota_events(tenant_id, occurred_at);
 
 CREATE INDEX IF NOT EXISTS idx_approval_status
 ON approval_requests(status, expires_at);
+
+CREATE INDEX IF NOT EXISTS idx_intent_resolution_expiry
+ON intent_resolutions(status, expires_at);
+
+CREATE INDEX IF NOT EXISTS idx_intent_quota_window
+ON intent_quota_reservations(tenant_id, window_start, window_end, status);
+
+CREATE INDEX IF NOT EXISTS idx_intent_quota_events_tenant
+ON intent_quota_events(tenant_id, occurred_at);
 `
 
 // Store is the SQLite technical-preview implementation of the durable contracts.
@@ -320,11 +395,41 @@ func Open(path string) (*Store, error) {
 			return nil, fmt.Errorf("enable sqlite WAL: %w", err)
 		}
 	}
-	if _, err := db.Exec(schema); err != nil {
+	if err := migrate(db); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("initialize sqlite schema: %w", err)
+		return nil, err
 	}
 	return &Store{db: db}, nil
+}
+
+func migrate(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin sqlite migration: %w", err)
+	}
+	defer tx.Rollback()
+	var version int
+	if err := tx.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+		return fmt.Errorf("read sqlite schema version: %w", err)
+	}
+	if version > currentSchemaVersion {
+		return fmt.Errorf("sqlite schema version %d is newer than supported version %d", version, currentSchemaVersion)
+	}
+	// The current schema is idempotent. Reapplying it also repairs databases
+	// whose version marker was written but whose CREATE IF NOT EXISTS objects
+	// were removed or came from an interrupted local development build.
+	if _, err := tx.Exec(schema); err != nil {
+		return fmt.Errorf("apply sqlite schema version %d: %w", currentSchemaVersion, err)
+	}
+	if version < currentSchemaVersion {
+		if _, err := tx.Exec("PRAGMA user_version = 1"); err != nil {
+			return fmt.Errorf("record sqlite schema version: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit sqlite migration: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) Close() error {

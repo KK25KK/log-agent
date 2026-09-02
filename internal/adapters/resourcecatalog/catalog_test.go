@@ -90,6 +90,29 @@ func TestCatalogResourcesReturnsDefensiveCopy(t *testing.T) {
 	}
 }
 
+func TestCatalogListsOnlyAllowedErrorCountIntentCapabilities(t *testing.T) {
+	config := validCatalog()
+	config.Resources[0].TemplateVersion = domain.ErrorCountTemplateVersion
+	config.Resources[0].ErrorField = ""
+	config.Resources[0].InstanceField = ""
+	catalog := loadTestCatalog(t, config)
+	principal := domain.Principal{AppID: "cli_test", TenantKey: "tenant_test", UserID: "ou_user"}
+
+	capabilities, err := catalog.ListAllowedCapabilities(context.Background(), principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(capabilities) != 1 || capabilities[0] != (domain.InvestigationCapability{
+		Service: "order-service", Environment: "prod", Intent: domain.IntentErrorSpike, TemplateID: domain.ErrorCountTemplateID,
+	}) {
+		t.Fatalf("unexpected capabilities: %#v", capabilities)
+	}
+	denied, err := catalog.ListAllowedCapabilities(context.Background(), domain.Principal{AppID: "other", TenantKey: "tenant_test", UserID: "ou_user"})
+	if err != nil || len(denied) != 0 {
+		t.Fatalf("denied principal received capabilities: %#v err=%v", denied, err)
+	}
+}
+
 func TestCatalogRejectsInvalidConfiguration(t *testing.T) {
 	tests := []struct {
 		name   string

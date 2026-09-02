@@ -1,9 +1,11 @@
 # Log Agent
 
-这是一个用 Go 开发的“证据驱动”日志调查 Agent。M0～M3、M3-B 跨信号时间线 Mock、受治理 SOP 人工核查 Mock、M4-A/M4-B、M5-A、M5-B/B1～B3、M5-C 的 Mock Reviewer/离线灰度演练，以及证据约束的 LLM 摘要、摘要安全评测和租户请求/Token 额度治理已经完成主体代码。2026-09-01 已用专用最小权限 Key 和 `doubao-seed-2-0-mini-260428` 通过独立方舟 Smoke，并通过本地 Web 完成一次 DAM 真实 SLS + 火山方舟真实 LLM 的同调查联合运行；这证明当前/基线只读计数、Worker/Eino、证据摘要和本地 Mock 投递能在一个真实应用事务中闭环。M4-C、真实可观测平台、真实企业知识源、真实飞书端到端、模型质量/费用/留存审批和 M5-C 真实灰度仍未完成，当前只能称为“具备试点条件”，不能称为日常可用或生产可用。
+这是一个用 Go 开发的“证据驱动”日志调查 Agent。M0～M3、M3-B 跨信号时间线 Mock、受治理 SOP 人工核查 Mock、M4-A/M4-B、M5-A、M5-B/B1～B3、M5-C 的 Mock Reviewer/离线灰度演练、证据约束的 LLM 摘要，以及第一阶段受治理自然语言接单已经完成主体代码。自然语言只生成 ACL 过滤后的逻辑调查预览，必须由用户确认后才复用原有 Intake 创建任务，不能让模型直接生成或执行 SLS 查询。2026-09-01 已通过 DAM 真实 SLS + 火山方舟摘要的本地 Web 联合运行；自然语言解析当前完成 Mock 全链路和方舟协议测试，真实 `intent-smoke`、多 Logstore Trace、代码证据、真实飞书与生产审批仍待完成。
 
 ```text
-飞书消息
+飞书消息或本地 Web 问题描述
+  -> 自然语言意图解析（可选）
+  -> ACL 过滤后的逻辑预览 + 用户确认
   -> 幂等接单与 SQLite 任务
   -> Worker + Eino 固定 Graph
   -> 受控查询网关
@@ -28,6 +30,17 @@
 Eino 只负责流程编排，不负责业务状态、权限、幂等、审计和证据判定。飞书与阿里云 SDK 也只存在于各自适配层，因此核心业务不会和外部框架绑死。
 
 ## 当前已经实现
+
+### 受治理自然语言接单（第一阶段）
+
+- 普通文本可解析为关闭的 `error_spike` 意图，只允许选择当前 Principal 已授权的逻辑服务、环境和 `error_count_v1` 模板。
+- 解析前校验并脱敏问题描述；模型看不到 Endpoint、Project、Logstore、字段、SQL、SPL、身份或凭据。
+- `resolve -> preview -> confirm` 两阶段持久化：预览不创建任务、不访问 SLS，确认时再次校验身份、ACL、过期时间与模板绑定。
+- 意图解析和报告摘要使用不同端口、Prompt、模型配置、超时与 SQLite 请求/Token 额度，互不挤占。
+- 本地 Web 已提供自然语言输入、预览与确认；飞书普通文本和确认卡代码已接入，严格 `/investigate` 命令继续兼容。
+- 当前只支持“某服务某环境某时间窗错误是否增加”。TraceID、8 库时间线、错误锚点、部署 Commit 和代码证据仍按后续阶段实现。
+
+完整合同和命令见 [`docs/governed-natural-language-intake.md`](docs/governed-natural-language-intake.md)。
 
 ### 调查骨架
 
@@ -288,6 +301,28 @@ $env:LOG_AGENT_CHANGE_CATALOG = ".\config\change-catalog.json"
 Catalog 中的 `resource_id` 必须与 `sls-resources.json` 的资源 ID 完全一致。当前只支持 `RELEASE` 和 `CONFIG`；每个事件必须提供起止时间、负责人、摘要、受影响实例列表和 `affected_instances_complete`。单个列表最多 20 个实例，一次调查最多读取 10 个重叠候选。
 
 不设置 `LOG_AGENT_CHANGE_CATALOG` 时 M3 原因增强明确显示为 `UNAVAILABLE`，M2 报告仍可正常完成。文件在 Worker 启动时严格校验并一次性加载，当前不支持热重载；完整字段和判定规则见 [`docs/m3-change-correlation-evidence.md`](docs/m3-change-correlation-evidence.md)。
+
+## 配置自然语言接单
+
+自然语言接单默认关闭。完全离线开发可显式启用确定性解析器：
+
+```powershell
+$env:LOG_AGENT_INTENT_MODE = "mock"
+go run ./cmd/logagent intent-check
+go run ./cmd/logagent web
+```
+
+真实火山方舟解析使用独立模型配置，不会复用报告摘要的额度账本：
+
+```powershell
+$env:LOG_AGENT_INTENT_MODE = "volcengine"
+$env:ARK_API_KEY = Read-Host "粘贴方舟 API Key" -MaskInput
+$env:LOG_AGENT_INTENT_MODEL = "<已开通的模型 ID>"
+go run ./cmd/logagent intent-check
+go run ./cmd/logagent intent-smoke "帮我看 DAM 测试环境最近半小时错误有没有增加"
+```
+
+`intent-check` 不联网；`intent-smoke` 只解析并保存预览，不确认、不查 SLS。配置、状态和安全边界见 [`docs/governed-natural-language-intake.md`](docs/governed-natural-language-intake.md)。
 
 ## 配置报告摘要
 
@@ -568,7 +603,7 @@ internal/application/runbook.go       Worker 后处理的 SOP 查询、引用派
 - 查询仅返回聚合，不返回原始日志。通用敏感信息识别不可能完全可靠，生产前仍需按企业字段规范补充脱敏模式。
 - Schema 缓存过期后刷新失败会 fail closed，不会无限使用旧 Schema。
 - SQLite 继续用于本地技术验证；卡片发送只有分类后的有限本地重试，不承诺 exactly-once。M4-B 已提供安全死信重放、本地租户额度/成本代理熔断和审批状态合同；多实例卡片全局顺序、生产数据库、组织级全局配额、真实 DLQ RBAC 与审批执行仍在 M4-C。
-- SQLite 技术预览当前没有 schema version、正式迁移和回滚工具；升级已有数据库前必须备份，本地试验环境可按阶段说明重建。
+- SQLite 技术预览已使用 `PRAGMA user_version=1` 和事务内幂等建表迁移；仍没有独立迁移 CLI、降级工具或生产备份恢复方案，升级已有数据库前必须备份。
 - M3 Change Catalog 是启动时加载的静态文件，不是已接通的发布平台、配置中心或 CMDB；关联候选、权重和阈值尚未经过企业历史故障集校准。
 - M3-B 已用 Mock 聚合跑通指标/Trace 时间线，但没有真实 ARMS/CMS/Prometheus/OTel 连接器、原始 Trace 下钻或拓扑；相关性不会被表述成已确认根因。
 - 受治理 SOP 已有严格 Evidence/请求窗口绑定、Mock Source、可信来源标记、独立 5 秒超时、可信服务时钟、Worker 双重校验、持久化投影和带 Mock 标题的飞书纯文本展示，但没有真实 `RunbookSource`、企业内容、审批/失效、租户授权、审计或检索质量验收。它只供人工核查，不提供 URL、命令、按钮或自动处置。

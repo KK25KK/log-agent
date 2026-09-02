@@ -29,6 +29,47 @@ type fakeActionHandler struct {
 	err     error
 }
 
+type fakeIntentReceiver struct {
+	inbound      domain.InboundMessage
+	problem      string
+	resolution   domain.IntentResolution
+	resolutionID string
+	principal    domain.Principal
+	chatID       string
+	resolveCalls int
+	confirmCalls int
+	err          error
+}
+
+type fakeIntentPreviewSender struct {
+	target     domain.InteractionTarget
+	resolution domain.IntentResolution
+	calls      int
+	err        error
+}
+
+func (fake *fakeIntentReceiver) Resolve(_ context.Context, inbound domain.InboundMessage, problem string) (domain.IntentResolution, bool, error) {
+	fake.resolveCalls++
+	fake.inbound = inbound
+	fake.problem = problem
+	return fake.resolution, true, fake.err
+}
+
+func (fake *fakeIntentReceiver) Confirm(_ context.Context, resolutionID string, principal domain.Principal, chatID string) (string, bool, error) {
+	fake.confirmCalls++
+	fake.resolutionID = resolutionID
+	fake.principal = principal
+	fake.chatID = chatID
+	return "inv_intent", true, fake.err
+}
+
+func (fake *fakeIntentPreviewSender) DeliverIntentPreview(_ context.Context, target domain.InteractionTarget, resolution domain.IntentResolution) (string, error) {
+	fake.calls++
+	fake.target = target
+	fake.resolution = resolution
+	return "om_preview", fake.err
+}
+
 func (blockingIntake) Accept(ctx context.Context, _ domain.InboundMessage, _ domain.InvestigationRequest) (string, bool, error) {
 	<-ctx.Done()
 	return "", false, ctx.Err()
@@ -166,6 +207,86 @@ func TestReceiverRequiresBotMentionInGroup(t *testing.T) {
 	}
 	if intake.calls != 1 {
 		t.Fatalf("mentioned group command was not accepted: calls=%d", intake.calls)
+	}
+}
+
+func TestReceiverTurnsNaturalLanguageIntoNonExecutingIntentPreview(t *testing.T) {
+	intake := &fakeIntake{}
+	intents := &fakeIntentReceiver{resolution: domain.IntentResolution{
+		ID: "intent_1234567890abcdef", Status: domain.IntentResolutionResolved, Intent: domain.IntentErrorSpike,
+		Service: "dam-server", Environment: "test", DurationSeconds: 1800, TemplateID: domain.ErrorCountTemplateID,
+		Problem: domain.ProblemStatement{Text: "测试环境错误增加", Fingerprint: strings.Repeat("a", 64)},
+	}}
+	preview := &fakeIntentPreviewSender{}
+	receiver, err := New("cli_test", "secret", intake, WithIntentResolution(intents, preview))
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := []byte(`{
+  "schema":"2.0",
+  "header":{"event_id":"event-natural","event_type":"im.message.receive_v1","app_id":"cli_test","tenant_key":"tenant-1","create_time":"1787049000000"},
+  "event":{"sender":{"sender_id":{"open_id":"ou_user"}},"message":{"message_id":"om_natural","chat_id":"oc_chat","chat_type":"p2p","message_type":"text","content":"{\"text\":\"帮我看 DAM 测试环境最近半小时错误有没有增加\"}"}}
+}`)
+	if _, err := receiver.dispatcher.Do(context.Background(), payload); err != nil {
+		t.Fatal(err)
+	}
+	if intake.calls != 0 || intents.resolveCalls != 1 || preview.calls != 1 {
+		t.Fatalf("natural-language preview crossed the intake boundary: intake=%d resolve=%d preview=%d", intake.calls, intents.resolveCalls, preview.calls)
+	}
+	if intents.inbound.UserID != "ou_user" || intents.inbound.TenantKey != "tenant-1" || preview.target.SourceMessageID != "om_natural" {
+		t.Fatalf("trusted envelope was not preserved: inbound=%#v target=%#v", intents.inbound, preview.target)
+	}
+	if intents.problem != "帮我看 DAM 测试环境最近半小时错误有没有增加" {
+		t.Fatalf("unexpected parsed problem: %q", intents.problem)
+	}
+}
+
+func TestReceiverStripsBotMentionBeforeResolvingGroupIntent(t *testing.T) {
+	intents := &fakeIntentReceiver{resolution: domain.IntentResolution{
+		ID: "intent_1234567890abcdef", Status: domain.IntentResolutionResolved, Intent: domain.IntentErrorSpike,
+	}}
+	preview := &fakeIntentPreviewSender{}
+	receiver, err := New("cli_test", "secret", &fakeIntake{}, WithIntentResolution(intents, preview))
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := []byte(`{
+  "schema":"2.0",
+  "header":{"event_id":"event-natural-group","event_type":"im.message.receive_v1","app_id":"cli_test","tenant_key":"tenant-1"},
+  "event":{"sender":{"sender_id":{"open_id":"ou_user"}},"message":{"message_id":"om_natural_group","chat_id":"oc_group","chat_type":"group","message_type":"text","content":"{\"text\":\"@_user_1 帮我看 DAM 测试环境最近半小时错误有没有增加\"}","mentions":[{"key":"@_user_1","id":{"open_id":"ou_bot"},"mentioned_type":"bot","name":"logagent"}]}}
+}`)
+	if _, err := receiver.dispatcher.Do(context.Background(), payload); err != nil {
+		t.Fatal(err)
+	}
+	if intents.resolveCalls != 1 || preview.calls != 1 {
+		t.Fatalf("mentioned group intent was not previewed: resolve=%d preview=%d", intents.resolveCalls, preview.calls)
+	}
+	if intents.problem != "帮我看 DAM 测试环境最近半小时错误有没有增加" || intents.inbound.Text != intents.problem {
+		t.Fatalf("bot mention leaked into problem: problem=%q inbound=%q", intents.problem, intents.inbound.Text)
+	}
+}
+
+func TestReceiverConfirmsIntentWithResolutionIDOnly(t *testing.T) {
+	intents := &fakeIntentReceiver{}
+	preview := &fakeIntentPreviewSender{}
+	receiver, err := New("cli_test", "secret", &fakeIntake{}, WithIntentResolution(intents, preview))
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := receiver.dispatcher.Do(context.Background(), cardActionPayload(`{"action":"confirm_intent","resolution_id":"intent_1234567890abcdef"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if intents.confirmCalls != 1 || intents.resolutionID != "intent_1234567890abcdef" || intents.chatID != "oc_chat" {
+		t.Fatalf("intent confirmation was not mapped: %#v", intents)
+	}
+	wantPrincipal := domain.Principal{AppID: "cli_test", TenantKey: "tenant-1", UserID: "ou_actor"}
+	if intents.principal != wantPrincipal {
+		t.Fatalf("unexpected confirmation principal: %#v", intents.principal)
+	}
+	callbackResponse := response.(*callback.CardActionTriggerResponse)
+	if callbackResponse.Toast == nil || callbackResponse.Toast.Type != "success" || callbackResponse.Card != nil {
+		t.Fatalf("unexpected confirmation response: %#v", callbackResponse)
 	}
 }
 

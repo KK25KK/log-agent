@@ -27,6 +27,15 @@ type accepter interface {
 	Accept(ctx context.Context, inbound domain.InboundMessage, request domain.InvestigationRequest) (string, bool, error)
 }
 
+type intentReceiver interface {
+	Resolve(ctx context.Context, inbound domain.InboundMessage, problem string) (domain.IntentResolution, bool, error)
+	Confirm(ctx context.Context, resolutionID string, principal domain.Principal, chatID string) (string, bool, error)
+}
+
+type intentPreviewSender interface {
+	DeliverIntentPreview(ctx context.Context, target domain.InteractionTarget, resolution domain.IntentResolution) (string, error)
+}
+
 // ActionHandler is implemented by the application action use case. SDK callback
 // types are translated before the application is invoked.
 type ActionHandler interface {
@@ -36,6 +45,8 @@ type ActionHandler interface {
 type receiverOptions struct {
 	actions        ActionHandler
 	ingestionGrace time.Duration
+	intents        intentReceiver
+	intentSender   intentPreviewSender
 }
 
 // Option configures optional Feishu capabilities without breaking the M0 New
@@ -62,11 +73,24 @@ func WithIngestionGrace(grace time.Duration) Option {
 	}
 }
 
+func WithIntentResolution(handler intentReceiver, sender intentPreviewSender) Option {
+	return func(options *receiverOptions) error {
+		if handler == nil || sender == nil {
+			return errors.New("Feishu intent handler and preview sender are required")
+		}
+		options.intents = handler
+		options.intentSender = sender
+		return nil
+	}
+}
+
 // Receiver maps im.message.receive_v1 events into durable application requests.
 type Receiver struct {
 	appID          string
 	intake         accepter
 	actions        ActionHandler
+	intents        intentReceiver
+	intentSender   intentPreviewSender
 	ingestionGrace time.Duration
 	now            func() time.Time
 	persistBudget  time.Duration
@@ -93,10 +117,11 @@ func New(appID, appSecret string, intake accepter, options ...Option) (*Receiver
 	}
 	receiver := &Receiver{
 		appID: appID, intake: intake, actions: configured.actions, ingestionGrace: configured.ingestionGrace,
+		intents: configured.intents, intentSender: configured.intentSender,
 		now: time.Now, persistBudget: persistTimeout,
 	}
 	receiver.dispatcher = dispatcher.NewEventDispatcher("", "").OnP2MessageReceiveV1(receiver.handleMessage)
-	if receiver.actions != nil {
+	if receiver.actions != nil || receiver.intents != nil {
 		receiver.dispatcher.OnP2CardActionTrigger(receiver.handleAction)
 	}
 	receiver.client = larkws.NewClient(
@@ -109,9 +134,36 @@ func New(appID, appSecret string, intake accepter, options ...Option) (*Receiver
 }
 
 func (r *Receiver) handleAction(ctx context.Context, event *callback.CardActionTriggerEvent) (*callback.CardActionTriggerResponse, error) {
+	if resolutionID, principal, chatID, ok := r.mapIntentConfirmation(event); ok {
+		if r.intents == nil {
+			return toastResponse("warning", "自然语言调查当前未启用。"), nil
+		}
+		confirmCtx, cancel := context.WithTimeout(ctx, r.persistBudget)
+		defer cancel()
+		_, created, err := r.intents.Confirm(confirmCtx, resolutionID, principal, chatID)
+		if err != nil {
+			switch {
+			case errors.Is(err, ports.ErrIntentForbidden):
+				return toastResponse("error", "你无权确认这项调查。"), nil
+			case errors.Is(err, ports.ErrIntentExpired):
+				return toastResponse("warning", "解析结果已过期，请重新描述问题。"), nil
+			case errors.Is(err, ports.ErrIntentInvalid):
+				return toastResponse("warning", "当前解析结果不能启动调查。"), nil
+			default:
+				return nil, fmt.Errorf("confirm Feishu intent resolution: %w", err)
+			}
+		}
+		if created {
+			return toastResponse("success", "已确认，调查任务已经创建。"), nil
+		}
+		return toastResponse("success", "该解析结果已经确认过。"), nil
+	}
 	command, permanentMessage, ok := r.mapAction(event)
 	if !ok {
 		return toastResponse("error", permanentMessage), nil
+	}
+	if r.actions == nil {
+		return toastResponse("warning", "调查卡片操作当前未启用。"), nil
 	}
 
 	actionCtx, cancel := context.WithTimeout(ctx, r.persistBudget)
@@ -145,6 +197,34 @@ func (r *Receiver) handleAction(ctx context.Context, event *callback.CardActionT
 		Toast: &callback.Toast{Type: "success", Content: actionSuccessMessage(command.Action, result)},
 		Card:  &callback.Card{Type: "card_json", Data: card},
 	}, nil
+}
+
+func (r *Receiver) mapIntentConfirmation(event *callback.CardActionTriggerEvent) (string, domain.Principal, string, bool) {
+	if event == nil || event.EventV2Base == nil || event.EventV2Base.Header == nil || event.Event == nil || event.Event.Action == nil ||
+		event.Event.Operator == nil || event.Event.Context == nil {
+		return "", domain.Principal{}, "", false
+	}
+	valueMap := event.Event.Action.Value
+	if len(valueMap) != 2 || valueMap["action"] != "confirm_intent" {
+		return "", domain.Principal{}, "", false
+	}
+	resolutionID, ok := valueMap["resolution_id"].(string)
+	if !ok || !strings.HasPrefix(resolutionID, "intent_") || len(resolutionID) > 128 {
+		return "", domain.Principal{}, "", false
+	}
+	header := event.EventV2Base.Header
+	appID := header.AppID
+	if appID == "" {
+		appID = r.appID
+	}
+	principal := domain.Principal{AppID: appID, TenantKey: header.TenantKey, UserID: event.Event.Operator.OpenID}
+	if appID != r.appID || !principal.Complete() || event.Event.Context.OpenChatID == "" {
+		return "", domain.Principal{}, "", false
+	}
+	if event.Event.Operator.TenantKey != nil && *event.Event.Operator.TenantKey != "" && *event.Event.Operator.TenantKey != header.TenantKey {
+		return "", domain.Principal{}, "", false
+	}
+	return resolutionID, principal, event.Event.Context.OpenChatID, true
 }
 
 func isMutatingAction(action domain.InvestigationAction) bool {
@@ -280,18 +360,15 @@ func (r *Receiver) handleMessage(ctx context.Context, event *larkim.P2MessageRec
 		return nil
 	}
 
-	text, ok := commandText(value(message.Content))
+	text, ok := messageText(value(message.Content))
 	if !ok {
 		return nil
 	}
-	now := messageTime(value(message.CreateTime), r.now().UTC())
-	request, err := command.ParseInvestigationWithGrace(text, now, r.ingestionGrace)
-	if err != nil {
-		// Invalid user commands are acknowledged to avoid a retry storm. A later
-		// milestone will reply with usage guidance through the outbound adapter.
+	text = stripBotMentions(text, message.Mentions)
+	if text == "" {
 		return nil
 	}
-
+	now := messageTime(value(message.CreateTime), r.now().UTC())
 	header := event.EventV2Base.Header
 	appID := header.AppID
 	if appID == "" {
@@ -310,27 +387,62 @@ func (r *Receiver) handleMessage(ctx context.Context, event *larkim.P2MessageRec
 	if inbound.TenantKey == "" || inbound.MessageID == "" {
 		return nil
 	}
-
-	persistCtx, cancel := context.WithTimeout(ctx, r.persistBudget)
-	defer cancel()
-	if _, _, err := r.intake.Accept(persistCtx, inbound, request); err != nil {
-		return fmt.Errorf("persist Feishu message %q: %w", inbound.MessageID, err)
+	if commandValue, commandOK := investigationCommand(text); commandOK {
+		request, err := command.ParseInvestigationWithGrace(commandValue, now, r.ingestionGrace)
+		if err != nil {
+			return nil
+		}
+		persistCtx, cancel := context.WithTimeout(ctx, r.persistBudget)
+		defer cancel()
+		if _, _, err := r.intake.Accept(persistCtx, inbound, request); err != nil {
+			return fmt.Errorf("persist Feishu message %q: %w", inbound.MessageID, err)
+		}
+		return nil
+	}
+	if r.intents == nil || r.intentSender == nil {
+		return nil
+	}
+	resolution, _, err := r.intents.Resolve(ctx, inbound, text)
+	if errors.Is(err, ports.ErrIntentInvalid) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("resolve Feishu intent %q: %w", inbound.MessageID, err)
+	}
+	_, err = r.intentSender.DeliverIntentPreview(ctx, domain.InteractionTarget{
+		AppID: inbound.AppID, TenantKey: inbound.TenantKey, ChatID: inbound.ChatID, SourceMessageID: inbound.MessageID,
+	}, resolution)
+	if err != nil {
+		return fmt.Errorf("deliver Feishu intent preview %q: %w", inbound.MessageID, err)
 	}
 	return nil
 }
 
-func commandText(content string) (string, bool) {
+func messageText(content string) (string, bool) {
 	var payload struct {
 		Text string `json:"text"`
 	}
 	if err := json.Unmarshal([]byte(content), &payload); err != nil {
 		return "", false
 	}
-	index := strings.Index(payload.Text, "/investigate")
+	text := strings.TrimSpace(payload.Text)
+	return text, text != ""
+}
+
+func commandText(content string) (string, bool) {
+	text, ok := messageText(content)
+	if !ok {
+		return "", false
+	}
+	return investigationCommand(text)
+}
+
+func investigationCommand(text string) (string, bool) {
+	index := strings.Index(text, "/investigate")
 	if index < 0 {
 		return "", false
 	}
-	return strings.TrimSpace(payload.Text[index:]), true
+	return strings.TrimSpace(text[index:]), true
 }
 
 func messageTime(raw string, fallback time.Time) time.Time {
@@ -355,6 +467,18 @@ func hasBotMention(mentions []*larkim.MentionEvent) bool {
 		}
 	}
 	return false
+}
+
+func stripBotMentions(text string, mentions []*larkim.MentionEvent) string {
+	for _, mention := range mentions {
+		if mention == nil || value(mention.MentionedType) != "bot" {
+			continue
+		}
+		if key := value(mention.Key); key != "" {
+			text = strings.ReplaceAll(text, key, " ")
+		}
+	}
+	return strings.TrimSpace(text)
 }
 
 func value(pointer *string) string {

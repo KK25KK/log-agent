@@ -5,6 +5,8 @@
 | 文档 | 作用 | 维护规则 |
 | --- | --- | --- |
 | [`spec.md`](spec.md) | 唯一当前技术与行为契约 | 行为代码变更前先更新 |
+| [`natural-language-rca-and-code-evidence-spec.md`](natural-language-rca-and-code-evidence-spec.md) | 自然语言、Trace、部署版本、代码证据与联合 RCA 的完整演进规格；当前仅自然语言接单切片落地 | 每项能力实现前保持合同先行，不能把未实现项写成当前能力 |
+| [`governed-natural-language-intake.md`](governed-natural-language-intake.md) | 自然语言问题解析、确认预览、方舟 Intent 适配器、额度和 SQLite 迁移的当前实现与边界 | Parser、状态、配置、入口或真实 Smoke 变化时同步更新 |
 | [`roadmap.md`](roadmap.md) | 当前阶段边界、完成状态和后续计划 | 只写可独立验收的阶段 |
 | [`development-process.md`](development-process.md) | 从 Mock-first 到 DAM 真实 SLS + 方舟联合验收的开发过程、关键决策、问题闭环和取舍 | 新阶段或真实验收完成后追加；不替代规范与路线图 |
 | [`local-mock-e2e.md`](local-mock-e2e.md) | 飞书、SLS、指标/Trace、受治理 SOP 与摘要 Mock 主链的运行、预期输出与边界 | Mock 行为变化或复跑验收时同步更新 |
@@ -52,6 +54,6 @@
 
 当前目录已经初始化为 Git 仓库并关联 `https://github.com/KK25KK/log-agent`。M0、M1 仍没有单独的历史 tag 或源码快照，不能倒造；从当前基线开始，阶段交付应通过 commit/tag 或 PR 记录可复现版本。
 
-SQLite 仍是技术预览存储，当前通过 `CREATE TABLE IF NOT EXISTS` 做增量建表，没有正式 schema version 和迁移/回滚工具。升级已有数据库前应备份；在生产存储迁移完成前，本地开发允许按阶段说明重建数据库。
+SQLite 仍是技术预览存储。自然语言接单开始使用事务迁移和 `PRAGMA user_version=1`，能够把既有 `user_version=0` 数据库升级到当前表结构，并拒绝未知的更高版本；但尚无独立迁移 CLI、降级工具、生产备份恢复和多实例数据库验收。升级已有数据库前仍应备份。
 
 `artifacts/` 是迁移前方案、Canvas、截图和中间产物，不是当前运行时规范，也不参与 Go 编译。

@@ -41,6 +41,13 @@ type actionHandler interface {
 	Handle(ctx context.Context, command domain.ActionCommand) (domain.ActionResult, error)
 }
 
+type intentHandler interface {
+	Resolve(ctx context.Context, inbound domain.InboundMessage, problem string) (domain.IntentResolution, bool, error)
+	Confirm(ctx context.Context, resolutionID string, principal domain.Principal, chatID string) (string, bool, error)
+	Get(ctx context.Context, resolutionID string, principal domain.Principal) (domain.IntentResolution, error)
+	Capabilities(ctx context.Context, principal domain.Principal) ([]domain.InvestigationCapability, error)
+}
+
 type Options struct {
 	Address        string
 	Principal      domain.Principal
@@ -49,6 +56,19 @@ type Options struct {
 	MaxWindow      time.Duration
 	SLSMode        string
 	LLMMode        string
+	IntentMode     string
+}
+
+type ServerOption func(*Server) error
+
+func WithIntentHandler(handler intentHandler) ServerOption {
+	return func(server *Server) error {
+		if handler == nil {
+			return errors.New("local Web intent handler is required")
+		}
+		server.intents = handler
+		return nil
+	}
 }
 
 // Server translates local HTTP requests into the same application contracts as
@@ -59,12 +79,16 @@ type Server struct {
 	intake  accepter
 	actions actionHandler
 	sender  *Sender
+	intents intentHandler
 	csrf    string
 	handler http.Handler
 	now     func() time.Time
 }
 
-func NewServer(options Options, store investigationStore, intake accepter, actions actionHandler, sender *Sender) (*Server, error) {
+func NewServer(options Options, store investigationStore, intake accepter, actions actionHandler, sender *Sender, serverOptions ...ServerOption) (*Server, error) {
+	if options.IntentMode == "" {
+		options.IntentMode = "disabled"
+	}
 	if err := ValidateLoopbackAddress(options.Address); err != nil {
 		return nil, err
 	}
@@ -87,6 +111,17 @@ func NewServer(options Options, store investigationStore, intake accepter, actio
 	server := &Server{
 		options: options, store: store, intake: intake, actions: actions,
 		sender: sender, csrf: token, now: time.Now,
+	}
+	for _, option := range serverOptions {
+		if option == nil {
+			return nil, errors.New("local Web server option is nil")
+		}
+		if err := option(server); err != nil {
+			return nil, err
+		}
+	}
+	if options.IntentMode != "disabled" && server.intents == nil {
+		return nil, errors.New("local Web intent handler is required when intent mode is enabled")
 	}
 	server.handler = server.routes()
 	return server, nil
@@ -117,6 +152,12 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /app.js", s.handleJS)
 	mux.HandleFunc("GET /favicon.ico", func(writer http.ResponseWriter, _ *http.Request) { writer.WriteHeader(http.StatusNoContent) })
 	mux.HandleFunc("GET /api/meta", s.handleMeta)
+	if s.intents != nil {
+		mux.HandleFunc("GET /api/capabilities", s.handleCapabilities)
+		mux.HandleFunc("POST /api/intents", s.handleResolveIntent)
+		mux.HandleFunc("GET /api/intents/{id}", s.handleGetIntent)
+		mux.HandleFunc("POST /api/intents/{id}/confirm", s.handleConfirmIntent)
+	}
 	mux.HandleFunc("POST /api/investigations", s.handleSubmit)
 	mux.HandleFunc("GET /api/investigations/{id}", s.handleGet)
 	mux.HandleFunc("POST /api/investigations/{id}/actions", s.handleAction)
@@ -159,10 +200,139 @@ func (s *Server) handleJS(writer http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) handleMeta(writer http.ResponseWriter, _ *http.Request) {
 	writeJSON(writer, http.StatusOK, map[string]any{
-		"sls_mode": s.options.SLSMode, "llm_mode": s.options.LLMMode,
+		"sls_mode": s.options.SLSMode, "llm_mode": s.options.LLMMode, "intent_mode": s.options.IntentMode,
 		"feishu_mode": "mock", "identity_source": "server_fixed",
 		"warning": "本页验证 Agent 应用链路，不代表真实飞书链路已验收。",
 	})
+}
+
+func (s *Server) handleCapabilities(writer http.ResponseWriter, request *http.Request) {
+	capabilities, err := s.intents.Capabilities(request.Context(), s.options.Principal)
+	if err != nil {
+		writeAPIError(writer, http.StatusInternalServerError, "capability_failed", "logical capabilities could not be loaded")
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{"capabilities": capabilities})
+}
+
+type resolveIntentRequest struct {
+	RequestID string `json:"request_id"`
+	Problem   string `json:"problem"`
+}
+
+func (s *Server) handleResolveIntent(writer http.ResponseWriter, request *http.Request) {
+	if !s.authorizeMutation(writer, request) {
+		return
+	}
+	var input resolveIntentRequest
+	if err := decodeStrictJSON(writer, request, &input); err != nil {
+		writeAPIError(writer, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	if !requestIDPattern.MatchString(input.RequestID) {
+		writeAPIError(writer, http.StatusBadRequest, "invalid_request_id", "request ID is invalid")
+		return
+	}
+	now := s.now().UTC()
+	messageID := "web-intent:" + input.RequestID
+	resolution, created, err := s.intents.Resolve(request.Context(), domain.InboundMessage{
+		AppID: s.options.Principal.AppID, TenantKey: s.options.Principal.TenantKey,
+		MessageID: messageID, ReplyToMessageID: messageID, ChatID: s.options.ChatID,
+		UserID: s.options.Principal.UserID, Text: input.Problem, ReceivedAt: now,
+	}, input.Problem)
+	if errors.Is(err, ports.ErrIntentInvalid) {
+		writeAPIError(writer, http.StatusBadRequest, "invalid_problem", "problem description is empty, unsafe, or exceeds the configured limit")
+		return
+	}
+	if err != nil {
+		writeAPIError(writer, http.StatusInternalServerError, "intent_failed", "problem description could not be parsed")
+		return
+	}
+	status := http.StatusOK
+	if created {
+		status = http.StatusCreated
+	}
+	writeJSON(writer, status, struct {
+		Created    bool                    `json:"created"`
+		Resolution domain.IntentResolution `json:"resolution"`
+	}{Created: created, Resolution: resolution})
+}
+
+func (s *Server) handleGetIntent(writer http.ResponseWriter, request *http.Request) {
+	resolutionID := request.PathValue("id")
+	if !validIntentResolutionID(resolutionID) {
+		writeAPIError(writer, http.StatusBadRequest, "invalid_id", "intent resolution ID is invalid")
+		return
+	}
+	resolution, err := s.intents.Get(request.Context(), resolutionID, s.options.Principal)
+	if errors.Is(err, ports.ErrNotFound) {
+		writeAPIError(writer, http.StatusNotFound, "not_found", "intent resolution was not found")
+		return
+	}
+	if errors.Is(err, ports.ErrIntentForbidden) {
+		writeAPIError(writer, http.StatusForbidden, "intent_forbidden", "intent resolution is not authorized")
+		return
+	}
+	if err != nil {
+		writeAPIError(writer, http.StatusInternalServerError, "intent_load_failed", "intent resolution could not be loaded")
+		return
+	}
+	writeJSON(writer, http.StatusOK, resolution)
+}
+
+type confirmIntentRequest struct {
+	RequestID string `json:"request_id"`
+}
+
+func (s *Server) handleConfirmIntent(writer http.ResponseWriter, request *http.Request) {
+	if !s.authorizeMutation(writer, request) {
+		return
+	}
+	var input confirmIntentRequest
+	if err := decodeStrictJSON(writer, request, &input); err != nil {
+		writeAPIError(writer, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	if !requestIDPattern.MatchString(input.RequestID) {
+		writeAPIError(writer, http.StatusBadRequest, "invalid_request_id", "request ID is invalid")
+		return
+	}
+	resolutionID := request.PathValue("id")
+	if !validIntentResolutionID(resolutionID) {
+		writeAPIError(writer, http.StatusBadRequest, "invalid_id", "intent resolution ID is invalid")
+		return
+	}
+	investigationID, created, err := s.intents.Confirm(request.Context(), resolutionID, s.options.Principal, s.options.ChatID)
+	switch {
+	case errors.Is(err, ports.ErrNotFound):
+		writeAPIError(writer, http.StatusNotFound, "not_found", "intent resolution was not found")
+		return
+	case errors.Is(err, ports.ErrIntentForbidden):
+		writeAPIError(writer, http.StatusForbidden, "intent_forbidden", "intent resolution is not authorized")
+		return
+	case errors.Is(err, ports.ErrIntentExpired):
+		writeAPIError(writer, http.StatusConflict, "intent_expired", "intent resolution has expired; parse the problem again")
+		return
+	case errors.Is(err, ports.ErrIntentInvalid):
+		writeAPIError(writer, http.StatusConflict, "intent_not_confirmable", "intent resolution is not safe to confirm")
+		return
+	case err != nil:
+		writeAPIError(writer, http.StatusInternalServerError, "intent_confirm_failed", "intent resolution could not be confirmed")
+		return
+	}
+	view, err := s.loadView(request.Context(), investigationID)
+	if err != nil {
+		writeAPIError(writer, http.StatusInternalServerError, "load_failed", "investigation was accepted but could not be loaded")
+		return
+	}
+	status := http.StatusOK
+	if created {
+		status = http.StatusCreated
+	}
+	writeJSON(writer, status, struct {
+		Created       bool              `json:"created"`
+		Investigation InvestigationView `json:"investigation"`
+	}{Created: created, Investigation: view})
 }
 
 type submitRequest struct {
@@ -346,6 +516,10 @@ func allowedAction(action domain.InvestigationAction) bool {
 
 func validInvestigationID(id string) bool {
 	return strings.HasPrefix(id, "inv_") && len(id) <= 128 && requestIDPattern.MatchString(id)
+}
+
+func validIntentResolutionID(id string) bool {
+	return strings.HasPrefix(id, "intent_") && len(id) <= 128 && requestIDPattern.MatchString(id)
 }
 
 func randomToken() (string, error) {

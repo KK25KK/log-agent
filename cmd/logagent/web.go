@@ -35,6 +35,10 @@ func runWeb(loaded config.Config) error {
 		return err
 	}
 	intake := application.NewIntake(store)
+	intentService, err := buildIntentResolutionService(loaded, store, intake)
+	if err != nil {
+		return err
+	}
 	actions, err := application.NewActionService(store, intake, loaded.SLS.MaxWindow)
 	if err != nil {
 		return err
@@ -50,14 +54,18 @@ func runWeb(loaded config.Config) error {
 	if err != nil {
 		return err
 	}
+	webOptions := []localweb.ServerOption{}
+	if intentService != nil {
+		webOptions = append(webOptions, localweb.WithIntentHandler(intentService))
+	}
 	webAdapter, err := localweb.NewServer(localweb.Options{
 		Address: loaded.Web.Address,
 		Principal: domain.Principal{
 			AppID: loaded.Web.AppID, TenantKey: loaded.Web.TenantKey, UserID: loaded.Web.UserID,
 		},
 		ChatID: loaded.Web.ChatID, IngestionGrace: loaded.SLS.IngestionGrace, MaxWindow: loaded.SLS.MaxWindow,
-		SLSMode: loaded.SLS.Mode, LLMMode: loaded.LLM.Mode,
-	}, store, intake, actions, sender)
+		SLSMode: loaded.SLS.Mode, LLMMode: loaded.LLM.Mode, IntentMode: loaded.Intent.Mode,
+	}, store, intake, actions, sender, webOptions...)
 	if err != nil {
 		return err
 	}

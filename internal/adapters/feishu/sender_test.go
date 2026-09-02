@@ -105,6 +105,37 @@ func TestSenderRepliesInteractiveReceiptWithStableUUID(t *testing.T) {
 	}
 }
 
+func TestSenderRepliesIntentPreviewWithBoundedConfirmationValue(t *testing.T) {
+	api := &fakeCardMessageClient{replyID: "om_preview"}
+	sender, err := newSender("cli_test", api)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolution := domain.IntentResolution{
+		ID: "intent_1234567890abcdef", Status: domain.IntentResolutionResolved, Intent: domain.IntentErrorSpike,
+		Service: "dam-server", Environment: "test", DurationSeconds: 1800, TemplateID: domain.ErrorCountTemplateID,
+		Confidence: 0.95, Problem: domain.ProblemStatement{Text: "测试环境错误是否增加", Fingerprint: strings.Repeat("a", 64)},
+	}
+	target := domain.InteractionTarget{AppID: "cli_test", TenantKey: "tenant", ChatID: "chat", SourceMessageID: "om_source"}
+	messageID, err := sender.DeliverIntentPreview(context.Background(), target, resolution)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if messageID != "om_preview" || api.replyCalls != 1 || !strings.HasPrefix(api.replyUUID, "lai_") {
+		t.Fatalf("unexpected preview delivery: id=%q calls=%d uuid=%q", messageID, api.replyCalls, api.replyUUID)
+	}
+	for _, required := range []string{"用户描述（未验证）", "确认并调查", `"action":"confirm_intent"`, `"resolution_id":"intent_1234567890abcdef"`} {
+		if !strings.Contains(api.replyContent, required) {
+			t.Fatalf("preview card missing %q: %s", required, api.replyContent)
+		}
+	}
+	for _, forbidden := range []string{"project", "logstore", "query", "spl"} {
+		if strings.Contains(strings.ToLower(api.replyContent), forbidden) {
+			t.Fatalf("preview card leaked %q: %s", forbidden, api.replyContent)
+		}
+	}
+}
+
 func TestSenderPatchesExistingCard(t *testing.T) {
 	api := &fakeCardMessageClient{}
 	sender, err := newSender("cli_test", api)

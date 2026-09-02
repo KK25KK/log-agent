@@ -79,6 +79,23 @@ func (s *Sender) Deliver(ctx context.Context, delivery domain.DeliveryJob) (stri
 	return s.patch(ctx, delivery.Target.CardMessageID, content)
 }
 
+// DeliverIntentPreview replies with a non-executing confirmation card. It is
+// intentionally separate from durable investigation lifecycle delivery.
+func (s *Sender) DeliverIntentPreview(ctx context.Context, target domain.InteractionTarget, resolution domain.IntentResolution) (string, error) {
+	if target.AppID == "" || target.AppID != s.appID || target.TenantKey == "" || target.ChatID == "" || target.SourceMessageID == "" {
+		return "", ports.NewOperationError(domain.FailurePermanent, "feishu_intent_target_invalid", nil)
+	}
+	card, err := renderIntentPreviewCard(resolution)
+	if err != nil {
+		return "", ports.NewOperationError(domain.FailurePermanent, "feishu_intent_card_invalid", err)
+	}
+	content, err := marshalCard(card)
+	if err != nil {
+		return "", ports.NewOperationError(domain.FailurePermanent, "feishu_intent_card_encode_failed", err)
+	}
+	return s.messages.ReplyCard(ctx, target.SourceMessageID, content, intentPreviewUUID(target, resolution.ID))
+}
+
 func (s *Sender) validateDelivery(delivery domain.DeliveryJob) error {
 	if delivery.Investigation.ID == "" {
 		return errors.New("deliver Feishu card: investigation ID is required")
@@ -166,6 +183,13 @@ func receiptUUID(delivery domain.DeliveryJob) string {
 			delivery.Investigation.ID,
 	))
 	return "la_" + hex.EncodeToString(digest[:16])
+}
+
+func intentPreviewUUID(target domain.InteractionTarget, resolutionID string) string {
+	digest := sha256.Sum256([]byte(
+		target.AppID + "\x00" + target.TenantKey + "\x00" + target.SourceMessageID + "\x00" + resolutionID,
+	))
+	return "lai_" + hex.EncodeToString(digest[:16])
 }
 
 func safeTransportError(ctx context.Context, operation string, err error) error {

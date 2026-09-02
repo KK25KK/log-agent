@@ -25,11 +25,12 @@ flowchart LR
 | --- | --- | --- |
 | `web` 单进程装配 | `cmd/logagent/web.go` | 同时运行 HTTP、调查 Worker 和 Delivery Worker |
 | 复用正式 Worker | `cmd/logagent/main.go` 的 `buildInvestigationWorker` | Web 和独立 `worker` 使用相同 Eino/SLS/LLM 装配 |
-| 本地 HTTP 入口 | `internal/adapters/localweb/server.go` | 严格接收 service/environment/duration/template，不接收身份或物理资源 |
+| 本地 HTTP 入口 | `internal/adapters/localweb/server.go` | 可接收有界问题描述或严格 service/environment/duration/template；均不接收身份或物理资源 |
 | 安全报告投影 | `internal/adapters/localweb/projection.go` | 展示治理后的 Finding、Evidence、摘要和增强状态，隐藏请求者与物理查询元数据 |
 | 本地页面 | `internal/adapters/localweb/assets.go` | 提交、轮询状态、报告、Evidence 和动作按钮 |
 | Mock 投递边界 | `internal/adapters/localweb/sender.go` | 仍经过持久化 Delivery 队列、租约、顺序和卡片重绑，不调用飞书 API |
 | 持久化交互查询 | `internal/adapters/sqlite/delivery.go` | ActionService 从 SQLite 读取服务端绑定的本地卡片目标 |
+| 自然语言预览 | `internal/application/intent.go`、`internal/adapters/localweb/server.go` | 只解析 ACL 允许的逻辑范围；确认前不创建调查、不访问 SLS |
 
 飞书代码 `internal/adapters/feishu` 与 `internal/adapters/feishumock` 均保留，不由 Web 包导入，也没有被弱化。
 
@@ -40,6 +41,7 @@ flowchart LR
 ```powershell
 $env:LOG_AGENT_SLS_MODE = "mock"
 $env:LOG_AGENT_LLM_MODE = "mock"
+$env:LOG_AGENT_INTENT_MODE = "mock"
 $env:LOG_AGENT_WEB_ADDR = "127.0.0.1:8080"
 $env:LOG_AGENT_WEB_DB_PATH = ".\data\web-pilot.db"
 go run ./cmd/logagent web
@@ -51,7 +53,21 @@ go run ./cmd/logagent web
 http://127.0.0.1:8080
 ```
 
-使用默认 `order-service / prod / 30m / error_analysis_v2`。预期状态依次经过 `QUEUED`、`RUNNING`、`SUCCEEDED`，页面出现两份 Evidence 和 `MOCK` 摘要。页面按钮调用现有 `ActionService`，不是前端直接改数据库状态。
+页面不再硬编码 `order-service / prod`。它从固定服务端身份可访问的逻辑 Capability 中填充结构化表单。可以先输入“帮我看 DAM 测试环境最近半小时错误有没有增加”，点击“解析问题”，确认预览中的服务、环境、窗口和模板，再点击“确认并开始调查”。确认前数据库中没有 Investigation/Job，SLS 调用数为 0；确认后预期状态依次经过 `QUEUED`、`RUNNING`、`SUCCEEDED`，页面出现两份 Evidence 和 `MOCK` 摘要。
+
+若想跳过自然语言解析，仍可直接使用同页结构化表单提交。两种入口最终复用同一个 `Intake`、Worker 和 ActionService。
+
+自然语言方舟解析只做单独联调，不需要 SLS 或飞书：
+
+```powershell
+$env:LOG_AGENT_INTENT_MODE = "volcengine"
+$env:ARK_API_KEY = Read-Host "粘贴方舟 API Key" -MaskInput
+$env:LOG_AGENT_INTENT_MODEL = "<已开通的模型 ID>"
+go run ./cmd/logagent intent-check
+go run ./cmd/logagent intent-smoke "帮我看 DAM 测试环境最近半小时错误有没有增加"
+```
+
+`intent-check` 网络调用为 0；`intent-smoke` 只调用一次意图模型，保存受治理解析记录，不确认、不访问 SLS、不调用摘要模型。当前仓库仅完成协议和 Mock 链路验证，不能把未执行的真实 `intent-smoke` 说成已通过。
 
 ## 第二步：配置 DAM 真实 SLS 身份
 

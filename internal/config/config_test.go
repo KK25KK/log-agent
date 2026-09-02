@@ -13,6 +13,8 @@ func TestLoadDefaultsToOfflineMock(t *testing.T) {
 	t.Setenv("LOG_AGENT_LLM_MODE", "")
 	t.Setenv("ARK_API_KEY", "")
 	t.Setenv("LOG_AGENT_ARK_MODEL", "")
+	t.Setenv("LOG_AGENT_INTENT_MODE", "")
+	t.Setenv("LOG_AGENT_INTENT_MODEL", "")
 	config, err := Load()
 	if err != nil {
 		t.Fatal(err)
@@ -35,6 +37,13 @@ func TestLoadDefaultsToOfflineMock(t *testing.T) {
 	if config.LLMQuota.Window != time.Hour || config.LLMQuota.MaxRequests != 100 || config.LLMQuota.MaxTokens != 409600 || config.LLMQuota.ReservedTokensPerRequest != 4096 {
 		t.Fatalf("unexpected LLM quota defaults: %#v", config.LLMQuota)
 	}
+	if config.Intent.Mode != "disabled" || config.Intent.MaxInputRunes != 500 || config.Intent.MaxOutputBytes != 16*1024 ||
+		config.Intent.MinConfidence != 0.80 || config.Intent.MaxTokens != 512 || config.Intent.ResolutionTTL != 15*time.Minute {
+		t.Fatalf("unexpected intent defaults: %#v", config.Intent)
+	}
+	if config.IntentQuota.Window != time.Hour || config.IntentQuota.MaxRequests != 100 || config.IntentQuota.MaxTokens != 51200 || config.IntentQuota.ReservedTokensPerRequest != 512 {
+		t.Fatalf("unexpected intent quota defaults: %#v", config.IntentQuota)
+	}
 	if config.Quota.Window != time.Hour || config.Quota.MaxObservations != 100 || config.Quota.MaxAPICalls != 400 ||
 		config.Quota.ReservedBytesPerObservation != config.SLS.MaxProcessedBytes || config.Quota.MaxProcessedBytes <= config.Quota.ReservedBytesPerObservation {
 		t.Fatalf("unexpected tenant quota defaults: %#v", config.Quota)
@@ -42,6 +51,38 @@ func TestLoadDefaultsToOfflineMock(t *testing.T) {
 	if config.Web.Address != "127.0.0.1:8080" || config.Web.DatabasePath != "./data/web-pilot.db" ||
 		config.Web.AppID != "local-web" || config.Web.TenantKey != "local-pilot" || config.Web.UserID != "operator" {
 		t.Fatalf("unexpected local Web defaults: %#v", config.Web)
+	}
+}
+
+func TestLoadRequiresIntentCredentialsOnlyWhenEnabled(t *testing.T) {
+	t.Setenv("LOG_AGENT_INTENT_MODE", "volcengine")
+	t.Setenv("ARK_API_KEY", "")
+	t.Setenv("LOG_AGENT_INTENT_MODEL", "")
+	t.Setenv("LOG_AGENT_ARK_MODEL", "")
+	if _, err := Load(); err == nil {
+		t.Fatal("want missing intent credentials error")
+	}
+	t.Setenv("ARK_API_KEY", "test-key")
+	t.Setenv("LOG_AGENT_INTENT_MODEL", "intent-model")
+	loaded, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Intent.Mode != "volcengine" || loaded.Intent.Model != "intent-model" {
+		t.Fatalf("unexpected intent config: %#v", loaded.Intent)
+	}
+}
+
+func TestLoadRejectsUnsafeIntentConfiguration(t *testing.T) {
+	t.Setenv("LOG_AGENT_INTENT_MIN_CONFIDENCE", "1.1")
+	if _, err := Load(); err == nil {
+		t.Fatal("want invalid intent confidence error")
+	}
+	t.Setenv("LOG_AGENT_INTENT_MIN_CONFIDENCE", "0.8")
+	t.Setenv("LOG_AGENT_INTENT_QUOTA_MAX_TOKENS", "100")
+	t.Setenv("LOG_AGENT_INTENT_QUOTA_RESERVED_TOKENS", "200")
+	if _, err := Load(); err == nil {
+		t.Fatal("want invalid intent quota reservation error")
 	}
 }
 

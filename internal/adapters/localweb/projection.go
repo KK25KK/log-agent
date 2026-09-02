@@ -70,6 +70,7 @@ type SummaryView struct {
 type InvestigationView struct {
 	ID        string           `json:"id"`
 	Status    domain.Status    `json:"status"`
+	Problem   string           `json:"problem,omitempty"`
 	Scope     ScopeView        `json:"scope"`
 	Report    *ReportView      `json:"report,omitempty"`
 	Delivery  DeliverySnapshot `json:"delivery"`
@@ -100,6 +101,9 @@ func (s *Server) loadView(ctx context.Context, investigationID string) (Investig
 			EndTime: investigation.Request.EndTime,
 		},
 		Delivery: delivery, CreatedAt: investigation.CreatedAt, UpdatedAt: investigation.UpdatedAt,
+	}
+	if investigation.Request.Problem != nil {
+		view.Problem = investigation.Request.Problem.Text
 	}
 	if investigation.Report != nil {
 		view.Report = projectReport(*investigation.Report)

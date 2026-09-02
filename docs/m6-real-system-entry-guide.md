@@ -161,6 +161,15 @@
 
 真实接入不得把模型调用放进 Eino Graph、Query Gateway 或飞书适配器，也不得让模型输出直接变成查询、权限或处置动作。完整清单见 [`llm-evidence-summary.md`](llm-evidence-summary.md)。
 
+### 3.8 自然语言意图解析
+
+- `internal/ports/intent.go`：意图解析、逻辑 Capability 和持久化接口。
+- `internal/application/intent.go`：脱敏、注入拦截、两阶段确认、ACL 复核、过期与独立额度治理。
+- `internal/adapters/volcark/intent.go`：火山方舟 Responses API 的严格 JSON 适配器；它与报告 Summarizer 是两个独立边界。
+- `cmd/logagent/intent.go`：`intent-check/intent-smoke` 与运行时装配。
+
+真实接入顺序是：配置已授权逻辑资源目录，运行零网络 `intent-check`，再用一条不含真实日志/隐私的描述执行单次 `intent-smoke`。Smoke 只验证解析，不确认、不访问 SLS；通过后才能在试点入口设置 `LOG_AGENT_INTENT_MODE=volcengine`。模型仍无权选择 Project/Logstore/SQL，也不能跳过用户确认。
+
 ## 四、按真实部署场景给你的“最小改动清单”
 
 ### 4.1 先切“真实查询”

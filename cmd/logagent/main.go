@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -32,7 +33,7 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: logagent <evaluate|summary-evaluate|replay|replay-compare|feedback-seed|rollout-rehearse|delivery-dlq-list|delivery-dlq-replay|mock-e2e|demo|worker|feishu|web|sls-check|sls-smoke|llm-check|llm-smoke>")
+		return errors.New("usage: logagent <evaluate|summary-evaluate|replay|replay-compare|feedback-seed|rollout-rehearse|delivery-dlq-list|delivery-dlq-replay|mock-e2e|demo|worker|feishu|web|sls-check|sls-smoke|llm-check|llm-smoke|intent-check|intent-smoke>")
 	}
 	switch args[0] {
 	case "evaluate":
@@ -128,8 +129,26 @@ func run(args []string) error {
 			return err
 		}
 		return runLLMSmoke(loaded)
+	case "intent-check":
+		if len(args) != 1 {
+			return errors.New("usage: logagent intent-check")
+		}
+		loaded, err := config.Load()
+		if err != nil {
+			return err
+		}
+		return runIntentCheck(loaded)
+	case "intent-smoke":
+		if len(args) < 2 {
+			return errors.New("usage: logagent intent-smoke <problem description>")
+		}
+		loaded, err := config.Load()
+		if err != nil {
+			return err
+		}
+		return runIntentSmoke(loaded, strings.Join(args[1:], " "))
 	default:
-		return fmt.Errorf("unknown command %q; use evaluate, summary-evaluate, replay, replay-compare, feedback-seed, rollout-rehearse, delivery-dlq-list, delivery-dlq-replay, mock-e2e, demo, worker, feishu, web, sls-check, sls-smoke, llm-check, or llm-smoke", args[0])
+		return fmt.Errorf("unknown command %q; use evaluate, summary-evaluate, replay, replay-compare, feedback-seed, rollout-rehearse, delivery-dlq-list, delivery-dlq-replay, mock-e2e, demo, worker, feishu, web, sls-check, sls-smoke, llm-check, llm-smoke, intent-check, or intent-smoke", args[0])
 	}
 }
 
@@ -329,6 +348,10 @@ func runFeishu(config config.Config) error {
 	}
 	defer store.Close()
 	intake := application.NewIntake(store)
+	intentService, err := buildIntentResolutionService(config, store, intake)
+	if err != nil {
+		return err
+	}
 	actions, err := application.NewActionService(store, intake, config.SLS.MaxWindow)
 	if err != nil {
 		return err
@@ -349,12 +372,18 @@ func runFeishu(config config.Config) error {
 	if err != nil {
 		return err
 	}
+	receiverOptions := []feishu.Option{
+		feishu.WithActionHandler(actions),
+		feishu.WithIngestionGrace(config.SLS.IngestionGrace),
+	}
+	if intentService != nil {
+		receiverOptions = append(receiverOptions, feishu.WithIntentResolution(intentService, sender))
+	}
 	receiver, err := feishu.New(
 		config.FeishuAppID,
 		config.FeishuAppSecret,
 		intake,
-		feishu.WithActionHandler(actions),
-		feishu.WithIngestionGrace(config.SLS.IngestionGrace),
+		receiverOptions...,
 	)
 	if err != nil {
 		return err

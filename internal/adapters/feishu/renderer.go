@@ -129,6 +129,44 @@ func renderActionCard(result domain.ActionResult) (cardDocument, error) {
 	}
 }
 
+func renderIntentPreviewCard(resolution domain.IntentResolution) (cardDocument, error) {
+	if resolution.ID == "" || resolution.Problem.Text == "" || resolution.Status == domain.IntentResolutionParsing {
+		return cardDocument{}, errors.New("intent resolution is not ready for card rendering")
+	}
+	elements := []any{
+		markdown("**用户描述（未验证）：** " + safeMarkdown(resolution.Problem.Text, maxStatementRunes)),
+		cardDivider{Tag: "hr"},
+		markdown(fmt.Sprintf(
+			"**解析状态：** %s\n\n**意图：** %s\n\n**逻辑范围：** %s / %s\n\n**时间窗口：** %s\n\n**固定模板：** %s\n\n**置信度：** %.0f%%",
+			safeMarkdown(string(resolution.Status), maxIdentifierRunes), safeMarkdown(string(resolution.Intent), maxIdentifierRunes),
+			safeMarkdown(resolution.Service, maxIdentifierRunes), safeMarkdown(resolution.Environment, maxIdentifierRunes),
+			time.Duration(resolution.DurationSeconds)*time.Second, safeMarkdown(resolution.TemplateID, maxIdentifierRunes), resolution.Confidence*100,
+		)),
+	}
+	if resolution.Status == domain.IntentResolutionResolved && resolution.Intent == domain.IntentErrorSpike && resolution.TemplateID == domain.ErrorCountTemplateID {
+		elements = append(elements,
+			markdown("当前尚未访问日志。只有点击确认后才会创建调查并执行受控只读查询。"),
+			intentConfirmButton(resolution.ID),
+		)
+	} else {
+		elements = append(elements, markdown("当前解析结果不能启动调查，请使用严格 `/investigate` 命令补充或修正范围。"))
+	}
+	return newCard("日志调查意图预览", "blue", elements), nil
+}
+
+func intentConfirmButton(resolutionID string) cardColumnSet {
+	return cardColumnSet{
+		Tag: "column_set", HorizontalSpacing: "8px",
+		Columns: []cardColumn{{
+			Tag: "column", Width: "weighted", Weight: 1,
+			Elements: []cardButton{{
+				Tag: "button", Text: cardText{Tag: "plain_text", Content: "确认并调查"}, Type: "primary", Width: "fill",
+				Behaviors: []cardBehavior{{Type: "callback", Value: map[string]string{"action": "confirm_intent", "resolution_id": resolutionID}}},
+			}},
+		}},
+	}
+}
+
 func renderQueuedCard(investigation domain.Investigation) cardDocument {
 	elements := summaryElements(investigation)
 	elements = append(elements,
@@ -607,13 +645,17 @@ func renderNeedsReviewCard(investigation domain.Investigation) cardDocument {
 
 func summaryElements(investigation domain.Investigation) []any {
 	request := investigation.Request
-	return []any{markdown(fmt.Sprintf(
+	elements := []any{markdown(fmt.Sprintf(
 		"**调查 ID：** %s\n\n**范围：** %s / %s\n\n**时间窗口：** %s",
 		safeMarkdown(investigation.ID, maxIdentifierRunes),
 		safeMarkdown(request.Service, maxAggregateRunes),
 		safeMarkdown(request.Environment, maxAggregateRunes),
 		formatRange(request.StartTime, request.EndTime),
 	))}
+	if request.Problem != nil && request.Problem.Text != "" {
+		elements = append(elements, markdown("**用户描述（未验证）：** "+safeMarkdown(request.Problem.Text, maxStatementRunes)))
+	}
+	return elements
 }
 
 type buttonSpec struct {

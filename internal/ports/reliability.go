@@ -15,6 +15,8 @@ var (
 	ErrQuotaUsageReplayed         = errors.New("query quota usage key was already reserved")
 	ErrTenantSummaryQuotaExceeded = errors.New("tenant summary quota exceeded")
 	ErrSummaryQuotaUsageReplayed  = errors.New("summary quota usage key was already reserved")
+	ErrTenantIntentQuotaExceeded  = errors.New("tenant intent quota exceeded")
+	ErrIntentQuotaUsageReplayed   = errors.New("intent quota usage key was already reserved")
 	ErrApprovalInvalid            = errors.New("approval transition is invalid")
 )
 
@@ -68,6 +70,12 @@ type SummaryQuotaStore interface {
 	ReserveSummaryQuota(ctx context.Context, reservation domain.SummaryQuotaReservation, policy domain.SummaryQuotaPolicy) error
 	SettleSummaryQuota(ctx context.Context, usageKey string, status domain.QuotaReservationStatus, inputTokens, outputTokens, totalTokens int64, reasonCode string, now time.Time) error
 	GetTenantSummaryQuotaUsage(ctx context.Context, tenantID string, windowStart, windowEnd time.Time, policy domain.SummaryQuotaPolicy) (domain.TenantSummaryQuotaUsage, error)
+}
+
+type IntentQuotaStore interface {
+	ReserveIntentQuota(ctx context.Context, reservation domain.IntentQuotaReservation, policy domain.IntentQuotaPolicy) error
+	SettleIntentQuota(ctx context.Context, usageKey string, status domain.QuotaReservationStatus, inputTokens, outputTokens, totalTokens int64, reasonCode string, now time.Time) error
+	GetTenantIntentQuotaUsage(ctx context.Context, tenantID string, windowStart, windowEnd time.Time, policy domain.IntentQuotaPolicy) (domain.TenantIntentQuotaUsage, error)
 }
 
 type ApprovalStore interface {

@@ -2,9 +2,9 @@
 
 | Metadata | Value |
 | --- | --- |
-| Version | 1.8 |
-| Status | Governed Mock-first SOP guidance and security hardening implemented; one bounded real Ark smoke passed on synthetic count-only input; real knowledge connectors, metric/Trace connectors, production LLM approvals/quality, M4-C infrastructure, and real gray rollout remain pending |
-| Date | 2026-09-01 |
+| Version | 1.9 |
+| Status | Governed natural-language intake Stage 1 is implemented and offline-validated; only explicit confirmation can create an existing count-only investigation. Multi-Logstore Trace, code evidence, production intent quality, real knowledge/metric connectors, M4-C infrastructure, and real gray rollout remain pending |
+| Date | 2026-09-02 |
 
 ## 1. Overview
 
@@ -14,11 +14,14 @@ Eino is an orchestration adapter, not the business system of record. Investigati
 
 ## 2. Goal
 
-Users can ask the bot to investigate an error spike for a known service, environment, and time range. The system resolves that logical scope to an administrator-managed SLS resource, applies authorization and query budgets before any cloud request, and produces a report whose facts reference explicit evidence.
+Users can either submit the strict investigation command or describe a suspected error spike in natural language. Natural language is parsed only into a logical, ACL-filtered preview; the system creates an investigation only after explicit confirmation. It then resolves that logical scope to an administrator-managed SLS resource, applies authorization and query budgets before any cloud request, and produces a report whose facts reference explicit evidence.
 
 ## 3. Scope
 
 - Feishu direct messages and group mentions through a replaceable inbound adapter.
+- A governed natural-language intake path for the closed `error_spike` intent. It exposes only principal-authorized logical service/environment/template capabilities, persists a redacted resolution before confirmation, and never accepts physical SLS coordinates or raw query text.
+- A two-step `resolve -> confirm` contract. Parsing or previewing never creates an investigation or issues an SLS request; confirmation rechecks identity, ACL, expiry, status, and template binding before reusing the existing durable Intake transaction.
+- An independent intent-parser request/Token quota ledger and a guarded Volcengine Ark parser adapter. Intent parsing is isolated from the report summarizer and has its own model, prompt, timeout, input/output and cost controls.
 - A credential-free local Feishu mock that exercises normalized intake and durable delivery semantics without importing the Feishu SDK.
 - Durable inbound deduplication and asynchronously claimed investigation jobs.
 - A trusted requester identity derived from the inbound adapter, never from message text.
@@ -58,6 +61,8 @@ Users can ask the bot to investigate an error spike for a known service, environ
 ## 4. Non-goals
 
 - Arbitrary model-generated SQL or SPL.
+- Treating a natural-language interpretation as permission to query. The model cannot create a job, choose a physical resource, bypass confirmation, or silently downgrade an unsupported Trace request to count-only analysis.
+- Claiming support for free-form root-cause questions, TraceID lookup, eight-Logstore timelines, repository analysis, or code-based fixes from the Stage 1 intake implementation.
 - User-selected Endpoint, Project, LogStore, field name, or unregistered query template. The command may request only a closed template ID already bound to the resolved operator-owned resource version.
 - Multi-Agent orchestration, DeepAgent, or Supervisor patterns.
 - SLS write operations, alert mutation, or automatic remediation.
@@ -211,6 +216,17 @@ High-risk approval is a separate closed state machine: `PENDING -> APPROVED | RE
 
 ## 6. User and system workflows
 
+### Resolve and confirm a natural-language request
+
+1. The Feishu or loopback-Web adapter derives the trusted app, tenant, user, chat, and source-message identity. Group bot-mention tokens are removed before storing the problem statement.
+2. The application validates length and Unicode, redacts common credentials and personal identifiers, blocks obvious instruction/query injection patterns, and persists a `PARSING` resolution keyed by `(app_id, tenant_key, source_message_id)`.
+3. The Resource Catalog returns only the current principal's logical capabilities. Endpoint, Project, LogStore, fields, selectors, SQL, and SPL never enter the parser input or preview.
+4. Under an independent fixed-window quota, the selected Mock or Volcengine parser returns strict JSON for a closed intent, logical service/environment, duration, and confidence. The application validates every field again.
+5. Only `error_spike + error_count_v1`, a complete authorized scope, an allowed duration, and policy confidence can become `RESOLVED`. Unsupported Trace requests are `REJECTED`; missing/low-confidence input is `INCOMPLETE`; unsafe or invalid provider output fails closed.
+6. The UI/card displays the redacted user description as unverified text and shows the proposed logical plan. No investigation, query, report, or delivery lifecycle event is created yet.
+7. Confirmation sends only the durable resolution ID. The application derives identity from the current adapter, loads the resolution, verifies ownership, expiry, ACL and template again, and then calls the existing `Intake` with a server-built request.
+8. Duplicate resolution and duplicate confirmation are idempotent. A changed message under the same source-message ID conflicts rather than replacing the prior interpretation.
+
 ### Submit an investigation
 
 1. The receiver normalizes an inbound message.
@@ -355,6 +371,15 @@ An explicit diagnostic command loads the same catalog and CLI Profile selection 
 
 ## 7. Behavioral contracts and lifecycle
 
+Natural-language resolution has a lifecycle separate from investigations:
+
+```text
+PARSING -> RESOLVED | UNKNOWN | INCOMPLETE | REJECTED | FALLBACK | OUTCOME_UNKNOWN
+RESOLVED --explicit confirm--> existing durable Intake -> QUEUED
+```
+
+No non-`RESOLVED` state is confirmable. A parser timeout or ambiguous provider outcome is not retried automatically because it may already have consumed tokens. Intent quota reservations and summary quota reservations use independent usage keys and policies. `ProblemStatement` is redacted before persistence; its fingerprint supports idempotency, while its text is always rendered as an unverified user assertion and never as Evidence.
+
 Investigation states are `QUEUED`, `RUNNING`, `SUCCEEDED`, `FAILED`, `CANCELLED`, and `NEEDS_REVIEW`.
 
 Allowed terminal states cannot transition back to running. Each claim increments the attempt count and binds a lease owner and expiry. Renewal and completion require both the active lease owner and the active attempt fencing token, so a stale process cannot submit through a newer claim that reused the same worker ID.
@@ -434,6 +459,16 @@ M5-C feedback uses a store separate from both the production investigation Store
 - [x] A long-running investigation renews its lease, and durable cancellation reaches the engine context.
 - [x] An incomplete result cannot produce a conclusive finding.
 - [x] Eino and Feishu SDK types do not escape their adapter packages.
+
+### Governed natural-language intake
+
+- [x] Ordinary text can produce a persisted, non-executing preview for one closed `error_spike` intent.
+- [x] Parser input contains only a redacted problem and ACL-filtered logical capabilities.
+- [x] Explicit confirmation is mandatory and rechecks identity, ACL, expiry and template before job creation.
+- [x] Duplicate parse/confirm operations are idempotent and parser quota is independent from summary quota.
+- [x] Loopback Web and Feishu adapters use the same application service; strict `/investigate` remains compatible.
+- [x] Mock parser unit/vertical tests and guarded Ark protocol tests are complete.
+- [ ] A real `intent-smoke` with an approved model/key and a real Feishu visual/callback test are still required.
 
 ### Read-only SLS query foundation
 

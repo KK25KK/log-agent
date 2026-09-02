@@ -269,3 +269,14 @@ M5-A 的指标只说明代码对受控合成样例没有回归，不是历史真
 - [ ] 获得飞书权限后回到真实 WebSocket、OpenID、Reply/Patch、卡片视觉和回调验收。
 
 该入口只减少飞书权限阻塞，不改变 C3 对真实身份、真实样本、阈值审批、持久化和灰度治理的要求。
+
+## 自然语言到联合根因分析的轻量演进（2026-09-02 启动）
+
+- [x] 阶段 1：受治理自然语言接单。只支持 `error_spike`，先生成授权范围内的 count-only 预览，确认后才创建原有调查；Mock 垂直链路和方舟协议测试完成，真实 intent smoke 待执行。
+- [ ] 阶段 2：DAM TraceID 多 Logstore 查询。管理员配置资源组与字段能力，固定并发/条数/字节预算，形成跨库脱敏时间线。
+- [ ] 阶段 3：从时间线提取错误文本、堆栈和函数符号等有界锚点；锚点只是检索线索，不是根因。
+- [ ] 阶段 4：接入部署版本与只读 `CodeEvidenceProvider`，仅在确认实际部署 Commit 后进行精确代码/变更检索。
+- [ ] 阶段 5：日志、代码和变更联合验证候选原因；证据不闭合时保持 `NEEDS_REVIEW`，不输出伪确定根因。
+- [ ] 阶段 6：脱敏历史样本、专家评审、真实 intent/Trace/code 试点与运行手册；任何 Mock 指标都不能替代真实审批。
+
+该路线保留固定 Graph 和 Query Gateway，不引入无限 Agent 循环，也不允许自然语言直接生成可执行 SLS 查询。完整设计见 [`natural-language-rca-and-code-evidence-spec.md`](natural-language-rca-and-code-evidence-spec.md)。

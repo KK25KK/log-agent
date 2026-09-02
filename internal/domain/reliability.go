@@ -144,6 +144,42 @@ type TenantSummaryQuotaUsage struct {
 	CircuitOpen bool      `json:"circuit_open"`
 }
 
+// IntentQuotaPolicy is independent from report-summary quota so natural
+// language parsing cannot consume or hide the budget reserved for reports.
+type IntentQuotaPolicy struct {
+	Version                  string        `json:"version"`
+	Window                   time.Duration `json:"window"`
+	MaxRequests              int64         `json:"max_requests"`
+	MaxTokens                int64         `json:"max_tokens"`
+	ReservedTokensPerRequest int64         `json:"reserved_tokens_per_request"`
+}
+
+type IntentQuotaReservation struct {
+	UsageKey           string                 `json:"usage_key"`
+	TenantID           string                 `json:"tenant_id"`
+	ResolutionID       string                 `json:"resolution_id"`
+	PromptVersion      string                 `json:"prompt_version"`
+	WindowStart        time.Time              `json:"window_start"`
+	WindowEnd          time.Time              `json:"window_end"`
+	ReservedTokens     int64                  `json:"reserved_tokens"`
+	Status             QuotaReservationStatus `json:"status"`
+	ActualInputTokens  int64                  `json:"actual_input_tokens"`
+	ActualOutputTokens int64                  `json:"actual_output_tokens"`
+	ActualTotalTokens  int64                  `json:"actual_total_tokens"`
+	ReasonCode         string                 `json:"reason_code,omitempty"`
+	CreatedAt          time.Time              `json:"created_at"`
+	UpdatedAt          time.Time              `json:"updated_at"`
+}
+
+type TenantIntentQuotaUsage struct {
+	TenantID    string    `json:"tenant_id"`
+	WindowStart time.Time `json:"window_start"`
+	WindowEnd   time.Time `json:"window_end"`
+	Requests    int64     `json:"requests"`
+	Tokens      int64     `json:"tokens"`
+	CircuitOpen bool      `json:"circuit_open"`
+}
+
 func TrustedTenantID(principal Principal) string {
 	digest := sha256.Sum256([]byte(principal.AppID + "\x00" + principal.TenantKey))
 	return hex.EncodeToString(digest[:])

@@ -22,6 +22,8 @@ type Config struct {
 	Quota             QuotaConfig
 	LLM               LLMConfig
 	LLMQuota          LLMQuotaConfig
+	Intent            IntentConfig
+	IntentQuota       IntentQuotaConfig
 	SmokePrincipal    SmokePrincipal
 	Web               WebConfig
 }
@@ -86,6 +88,26 @@ type LLMQuotaConfig struct {
 	ReservedTokensPerRequest int64
 }
 
+type IntentConfig struct {
+	Mode           string
+	APIKey         string
+	Model          string
+	BaseURL        string
+	Timeout        time.Duration
+	MaxInputRunes  int
+	MaxOutputBytes int64
+	MinConfidence  float64
+	MaxTokens      int
+	ResolutionTTL  time.Duration
+}
+
+type IntentQuotaConfig struct {
+	Window                   time.Duration
+	MaxRequests              int64
+	MaxTokens                int64
+	ReservedTokensPerRequest int64
+}
+
 type SmokePrincipal struct {
 	AppID     string
 	TenantKey string
@@ -114,6 +136,12 @@ func Load() (Config, error) {
 			Model:   os.Getenv("LOG_AGENT_ARK_MODEL"),
 			BaseURL: valueOrDefault("LOG_AGENT_ARK_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3"),
 		},
+		Intent: IntentConfig{
+			Mode:    valueOrDefault("LOG_AGENT_INTENT_MODE", "disabled"),
+			APIKey:  os.Getenv("ARK_API_KEY"),
+			Model:   valueOrDefault("LOG_AGENT_INTENT_MODEL", os.Getenv("LOG_AGENT_ARK_MODEL")),
+			BaseURL: valueOrDefault("LOG_AGENT_INTENT_BASE_URL", valueOrDefault("LOG_AGENT_ARK_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3")),
+		},
 		SmokePrincipal: SmokePrincipal{
 			AppID:     os.Getenv("LOG_AGENT_SMOKE_APP_ID"),
 			TenantKey: os.Getenv("LOG_AGENT_SMOKE_TENANT_KEY"),
@@ -133,6 +161,9 @@ func Load() (Config, error) {
 	}
 	if config.LLM.Mode != "disabled" && config.LLM.Mode != "mock" && config.LLM.Mode != "volcengine" {
 		return Config{}, fmt.Errorf("LOG_AGENT_LLM_MODE must be disabled, mock, or volcengine")
+	}
+	if config.Intent.Mode != "disabled" && config.Intent.Mode != "mock" && config.Intent.Mode != "volcengine" {
+		return Config{}, fmt.Errorf("LOG_AGENT_INTENT_MODE must be disabled, mock, or volcengine")
 	}
 	var err error
 	config.WorkerPoll, err = durationOrDefault("LOG_AGENT_POLL_INTERVAL", time.Second)
@@ -273,6 +304,70 @@ func Load() (Config, error) {
 	if config.LLM.Mode == "volcengine" && (config.LLM.APIKey == "" || config.LLM.Model == "") {
 		return Config{}, fmt.Errorf("ARK_API_KEY and LOG_AGENT_ARK_MODEL are required when LOG_AGENT_LLM_MODE=volcengine")
 	}
+	config.Intent.Timeout, err = durationOrDefault("LOG_AGENT_INTENT_TIMEOUT", 8*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
+	config.Intent.MaxInputRunes, err = intOrDefault("LOG_AGENT_INTENT_MAX_INPUT_CHARS", 500)
+	if err != nil {
+		return Config{}, err
+	}
+	if config.Intent.MaxInputRunes < 32 || config.Intent.MaxInputRunes > 2000 {
+		return Config{}, fmt.Errorf("LOG_AGENT_INTENT_MAX_INPUT_CHARS must be between 32 and 2000")
+	}
+	config.Intent.MaxOutputBytes, err = int64OrDefault("LOG_AGENT_INTENT_MAX_OUTPUT_BYTES", 16*1024)
+	if err != nil {
+		return Config{}, err
+	}
+	if config.Intent.MaxOutputBytes < 1024 || config.Intent.MaxOutputBytes > 128*1024 {
+		return Config{}, fmt.Errorf("LOG_AGENT_INTENT_MAX_OUTPUT_BYTES must be between 1024 and 131072")
+	}
+	config.Intent.MinConfidence, err = float64OrDefault("LOG_AGENT_INTENT_MIN_CONFIDENCE", 0.80)
+	if err != nil {
+		return Config{}, err
+	}
+	if config.Intent.MinConfidence <= 0 || config.Intent.MinConfidence > 1 {
+		return Config{}, fmt.Errorf("LOG_AGENT_INTENT_MIN_CONFIDENCE must be in (0, 1]")
+	}
+	config.Intent.MaxTokens, err = intOrDefault("LOG_AGENT_INTENT_MAX_TOKENS", 512)
+	if err != nil {
+		return Config{}, err
+	}
+	if config.Intent.MaxTokens > 2048 {
+		return Config{}, fmt.Errorf("LOG_AGENT_INTENT_MAX_TOKENS must not exceed 2048")
+	}
+	config.Intent.ResolutionTTL, err = durationOrDefault("LOG_AGENT_INTENT_RESOLUTION_TTL", 15*time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
+	if config.Intent.ResolutionTTL < time.Minute || config.Intent.ResolutionTTL > time.Hour {
+		return Config{}, fmt.Errorf("LOG_AGENT_INTENT_RESOLUTION_TTL must be between 1m and 1h")
+	}
+	if config.Intent.Mode == "volcengine" && (config.Intent.APIKey == "" || config.Intent.Model == "") {
+		return Config{}, fmt.Errorf("ARK_API_KEY and LOG_AGENT_INTENT_MODEL or LOG_AGENT_ARK_MODEL are required when LOG_AGENT_INTENT_MODE=volcengine")
+	}
+	config.IntentQuota.Window, err = durationOrDefault("LOG_AGENT_INTENT_QUOTA_WINDOW", time.Hour)
+	if err != nil {
+		return Config{}, err
+	}
+	if config.IntentQuota.Window < time.Minute || config.IntentQuota.Window > 24*time.Hour {
+		return Config{}, fmt.Errorf("LOG_AGENT_INTENT_QUOTA_WINDOW must be between 1m and 24h")
+	}
+	config.IntentQuota.MaxRequests, err = int64OrDefault("LOG_AGENT_INTENT_QUOTA_MAX_REQUESTS", 100)
+	if err != nil {
+		return Config{}, err
+	}
+	config.IntentQuota.MaxTokens, err = int64OrDefault("LOG_AGENT_INTENT_QUOTA_MAX_TOKENS", 51200)
+	if err != nil {
+		return Config{}, err
+	}
+	config.IntentQuota.ReservedTokensPerRequest, err = int64OrDefault("LOG_AGENT_INTENT_QUOTA_RESERVED_TOKENS", 512)
+	if err != nil {
+		return Config{}, err
+	}
+	if config.IntentQuota.ReservedTokensPerRequest > config.IntentQuota.MaxTokens {
+		return Config{}, fmt.Errorf("LOG_AGENT_INTENT_QUOTA_RESERVED_TOKENS cannot exceed LOG_AGENT_INTENT_QUOTA_MAX_TOKENS")
+	}
 	if config.Web.DatabasePath == "" || config.Web.AppID == "" || config.Web.TenantKey == "" || config.Web.UserID == "" || config.Web.ChatID == "" {
 		return Config{}, fmt.Errorf("local Web database path and fixed identity must be set")
 	}
@@ -318,6 +413,18 @@ func int64OrDefault(name string, fallback int64) (int64, error) {
 	parsed, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil || parsed <= 0 {
 		return 0, fmt.Errorf("%s must be a positive integer", name)
+	}
+	return parsed, nil
+}
+
+func float64OrDefault(name string, fallback float64) (float64, error) {
+	raw := os.Getenv(name)
+	if raw == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be a number", name)
 	}
 	return parsed, nil
 }

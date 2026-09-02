@@ -355,6 +355,37 @@ func (c *Catalog) Resources() []domain.LogResource {
 	return resources
 }
 
+// ListAllowedCapabilities returns only logical scopes that the trusted
+// principal may use. Provider-facing intent parsing must never see physical
+// SLS resource coordinates.
+func (c *Catalog) ListAllowedCapabilities(ctx context.Context, principal domain.Principal) ([]domain.InvestigationCapability, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if !principal.Complete() {
+		return nil, ports.ErrIntentForbidden
+	}
+	allowed, exists := c.allowed[principal]
+	if !exists {
+		return []domain.InvestigationCapability{}, nil
+	}
+	capabilities := make([]domain.InvestigationCapability, 0, len(allowed))
+	for _, resource := range c.resources {
+		if _, ok := allowed[resource.ID]; !ok {
+			continue
+		}
+		contract, ok := domain.QueryTemplateByVersion(resource.TemplateVersion)
+		if !ok || contract.ID != domain.ErrorCountTemplateID {
+			continue
+		}
+		capabilities = append(capabilities, domain.InvestigationCapability{
+			Service: resource.Service, Environment: resource.Environment,
+			Intent: domain.IntentErrorSpike, TemplateID: contract.ID,
+		})
+	}
+	return capabilities, nil
+}
+
 func scopeKey(service, environment string) logicalScope {
 	return logicalScope{service: service, environment: environment}
 }
@@ -365,3 +396,4 @@ func cloneResource(resource domain.LogResource) domain.LogResource {
 }
 
 var _ ports.ResourceCatalog = (*Catalog)(nil)
+var _ ports.IntentCapabilitySource = (*Catalog)(nil)
