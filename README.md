@@ -1,6 +1,6 @@
 # Log Agent
 
-这是一个用 Go 开发的“证据驱动”日志调查 Agent。除原有错误趋势、证据治理、恢复、评测和 LLM 摘要能力外，现已完成受治理自然语言接单、DAM TraceID 8 Logstore 脱敏时间线、运行时错误锚点，以及可信部署 Commit + 本地 Git 只读代码证据的前四阶段主体代码和离线验收。自然语言只生成 ACL 过滤后的逻辑调查预览，必须由用户确认后才创建任务，不能让模型直接生成或执行 SLS 查询。2026-09-01 已通过 DAM 单 Logstore 真实 SLS + 火山方舟摘要的本地 Web 联合运行；2026-09-02 新的 8 Logstore Schema 检查已 8/8 READY，真实 TraceID/代码联合 Smoke、联合根因候选、真实飞书与生产审批仍待验收。
+这是一个用 Go 开发的“证据驱动”日志调查 Agent。除原有错误趋势、证据治理、恢复、评测和 LLM 摘要能力外，现已完成受治理自然语言接单、DAM TraceID 8 Logstore 脱敏时间线、运行时错误锚点、可信部署 Commit + 本地 Git 只读代码证据，以及日志/代码/变更联合根因候选的前五阶段主体代码和离线验收。自然语言只生成 ACL 过滤后的逻辑调查预览，必须由用户确认后才创建任务，不能让模型直接生成或执行 SLS 查询。2026-09-01 已通过 DAM 单 Logstore 真实 SLS + 火山方舟摘要的本地 Web 联合运行；2026-09-02 新的 8 Logstore Schema 检查已 8/8 READY，真实 TraceID/代码联合 Smoke、联合候选专家评审、真实飞书与生产审批仍待验收。
 
 ```text
 飞书消息或本地 Web 问题描述
@@ -13,6 +13,7 @@
             -> 脱敏时间线与运行时锚点
             -> 事故时间部署 Commit
             -> 目标 Commit 的有界本地 Git 证据
+            -> 支持/反证/缺失账本 + 人工根因候选
   -> 受控查询网关
        -> 资源目录 + ACL
        -> 查询预算 + Schema 校验
@@ -43,7 +44,7 @@ Eino 只负责流程编排，不负责业务状态、权限、幂等、审计和
 - `resolve -> preview -> confirm` 两阶段持久化：预览不创建任务、不访问 SLS，确认时再次校验身份、ACL、过期时间与模板绑定。
 - 意图解析和报告摘要使用不同端口、Prompt、模型配置、超时与 SQLite 请求/Token 额度，互不挤占。
 - 本地 Web 已提供自然语言输入、预览与确认；飞书普通文本和确认卡代码已接入，严格 `/investigate` 命令继续兼容。
-- `error_spike` 进入原有 `error_count_v1`；`trace_search` 必须提供安全 TraceID，确认后进入 `trace_search_v1`。错误锚点、部署 Commit 和代码证据仍按后续阶段实现。
+- `error_spike` 进入原有 `error_count_v1`；`trace_search` 必须提供安全 TraceID，确认后进入 `trace_search_v1`，并在证据满足条件时继续生成运行时锚点、部署代码证据和人工根因候选。
 
 完整合同和命令见 [`docs/governed-natural-language-intake.md`](docs/governed-natural-language-intake.md)。
 
@@ -74,6 +75,16 @@ Eino 只负责流程编排，不负责业务状态、权限、幂等、审计和
 - 代码片段在持久化前检查强凭据并脱敏邮箱/IP；代码正文不进入方舟或飞书卡片。临时 Git 双 Commit 离线验收已通过，真实 DAM 部署目录待接。
 
 完整合同、配置和命令见 [`docs/deployment-and-code-evidence.md`](docs/deployment-and-code-evidence.md)。
+
+### 联合根因候选（第五阶段）
+
+- `joint-rca-v1` 只在完整 Trace 和代码证据之后运行，不调用 LLM 或额外外部工具。
+- 每个候选固定绑定运行时 Anchor、事故时部署 Commit、精确 Code Match 和可信 Diff，并记录支持、反证与缺失证据。
+- 固定分数最高 `0.75`，只表示规则化证据完备度，不是根因概率；自动 Verdict 最高为 `SUPPORTED_CANDIDATE`。
+- 无代码命中、结果截断、部署冲突或 Trace 不完整时分别降级为 `INCONCLUSIVE/NEEDS_REVIEW/SKIPPED`，不删除已有 Evidence。
+- 本地 Web 和飞书只提供有界候选与 `HUMAN_REVIEW_ONLY` 动作；不会自动改代码或操作生产。
+
+完整规则、调用链和验收边界见 [`docs/joint-root-cause-candidates.md`](docs/joint-root-cause-candidates.md)。
 
 ### 调查骨架
 

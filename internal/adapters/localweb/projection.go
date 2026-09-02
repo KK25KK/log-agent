@@ -64,6 +64,7 @@ type ReportView struct {
 	RunbookGuidance *domain.RunbookGuidance       `json:"runbook_guidance,omitempty"`
 	Trace           *TraceInvestigationView       `json:"trace,omitempty"`
 	Code            *domain.CodeInvestigation     `json:"code,omitempty"`
+	JointRCA        *domain.JointRCA              `json:"joint_rca,omitempty"`
 	Summary         *SummaryView                  `json:"summary,omitempty"`
 	GeneratedAt     time.Time                     `json:"generated_at"`
 }
@@ -197,6 +198,36 @@ func projectReport(report domain.Report) *ReportView {
 			copyCode.Deployment = &copyDeployment
 		}
 		view.Code = &copyCode
+	}
+	if report.JointRCA != nil {
+		copyRCA := *report.JointRCA
+		copyRCA.MissingInputs = append([]string(nil), report.JointRCA.MissingInputs...)
+		copyRCA.Limitations = append([]string(nil), report.JointRCA.Limitations...)
+		copyRCA.Candidates = make([]domain.JointRCACandidate, len(report.JointRCA.Candidates))
+		for index, candidate := range report.JointRCA.Candidates {
+			copyCandidate := candidate
+			copyCandidate.RuntimeAnchorIDs = append([]string(nil), candidate.RuntimeAnchorIDs...)
+			copyCandidate.CodeMatchIDs = append([]string(nil), candidate.CodeMatchIDs...)
+			copyCandidate.FactorIDs = append([]string(nil), candidate.FactorIDs...)
+			copyCandidate.MissingInputs = append([]string(nil), candidate.MissingInputs...)
+			copyCandidate.Limitations = append([]string(nil), candidate.Limitations...)
+			copyRCA.Candidates[index] = copyCandidate
+		}
+		copyRCA.Factors = make([]domain.JointRCAFactor, len(report.JointRCA.Factors))
+		for index, factor := range report.JointRCA.Factors {
+			copyFactor := factor
+			copyFactor.RuntimeAnchorIDs = append([]string(nil), factor.RuntimeAnchorIDs...)
+			copyFactor.CodeMatchIDs = append([]string(nil), factor.CodeMatchIDs...)
+			copyRCA.Factors[index] = copyFactor
+		}
+		copyRCA.Actions = make([]domain.JointRCAAction, len(report.JointRCA.Actions))
+		for index, action := range report.JointRCA.Actions {
+			copyAction := action
+			copyAction.RuntimeAnchorIDs = append([]string(nil), action.RuntimeAnchorIDs...)
+			copyAction.CodeMatchIDs = append([]string(nil), action.CodeMatchIDs...)
+			copyRCA.Actions[index] = copyAction
+		}
+		view.JointRCA = &copyRCA
 	}
 	if report.IncidentTimeline != nil {
 		view.TimelineStatus = report.IncidentTimeline.Status

@@ -3,8 +3,8 @@
 | 项目 | 内容 |
 | --- | --- |
 | 盘点日期 | 2026-09-02 |
-| 代码基线 | 当前仓库工作树（自然语言接单、DAM Trace、运行时锚点与本地 Git 代码证据前四阶段已加入） |
-| 当前结论 | 原有主体业务链保持不变；新增关闭的 `trace_search_v1`、DAM 8 成员时间线、`runtime-anchor-v1` 和事故时间部署 Commit + 本地 Git 有界证据。本地离线验收已通过，真实 intent/8 库 Trace/code smoke、联合根因候选、真实飞书和生产治理仍待完成 |
+| 代码基线 | 当前仓库工作树（自然语言接单、DAM Trace、运行时锚点、本地 Git 代码证据与联合根因候选前五阶段已加入） |
+| 当前结论 | 原有主体业务链保持不变；新增关闭的 `trace_search_v1`、DAM 8 成员时间线、`runtime-anchor-v1`、事故时间部署 Commit + 本地 Git 有界证据，以及 `joint-rca-v1` 确定性联合候选。本地离线验收已通过，真实 intent/8 库 Trace/code smoke、候选专家评审、真实飞书和生产治理仍待完成 |
 | 数据边界 | 当前自动化路径使用合成日志、合成飞书身份、合成变更、合成指标/Trace 聚合、确定性 Mock SOP 和合成标签，不代表真实生产效果或企业知识内容 |
 | 验证边界 | 第二轮严格门禁及两个 fail-closed 边界落地后的最终工作树已完成 `gofmt`、全仓测试、`go vet`、重点包乱序 20 轮、仓库链接/diff、`mock-e2e`、`demo`、两类评测与快照/replay/比较/反馈/灰度演练总检；Runbook 为 1 次调用/1 项/3 步，SLS 为 2 次观察/8 次 Provider 调用/0 次外部网络，安全复查未发现 P0–P3。race 因 `CGO_ENABLED=0` 且无 GCC 未执行 |
 
@@ -73,8 +73,9 @@ flowchart LR
 | 严格调查命令 | 已完成 | 解析 `/investigate <service> <environment> <duration>`，生成受控时间窗 | `internal/command`、`internal/adapters/feishu/receiver.go` | 用户不能直接提交 Project、LogStore、SQL 或 SPL |
 | 受治理自然语言接单 | 主体代码与离线验收完成 | 问题先脱敏并只在 ACL 逻辑 Capability 中解析；持久化预览后必须确认，确认时复核身份/ACL/过期与模板 | `internal/application/intent.go`、`internal/adapters/volcark/intent.go`、`internal/adapters/localweb` | Mock 垂直链路已跑通；不会直接执行模型查询，真实 intent smoke 与真实飞书视觉待验收 |
 | DAM TraceID 多库时间线 | 主体代码与 Mock E2E 完成；真实 Schema 检查通过 | 独立 Trace 目录/Gateway/Engine，主成员先查、其余并发 2，逐成员 Schema/审计/Checkpoint，事件出 Gateway 前脱敏并稳定排序 | `internal/application/trace`、`internal/application/trace_engine.go`、`internal/adapters/aliyuncli/trace.go`、`internal/adapters/traceresourcecatalog` | 真实 `trace-check` 为 8/8 READY、0 日志读取；真实 `trace-smoke` 尚未执行，不代表真实多库命中 |
-| 运行时错误锚点 | 主体代码与离线验收完成 | 对已脱敏事件确定性提取错误文本/类型、路由、符号及 Go/Java/Python 堆栈；限制路径、类型、每事件 4/全局 64，Worker 重算指纹和来源绑定 | `internal/application/anchors`、`internal/domain/anchors.go`、`internal/application/trace_validation.go` | 为下一阶段提供可审计的精确代码检索键；当前不读取仓库、不确认根因，真实日志召回率待 Trace smoke |
+| 运行时错误锚点 | 主体代码与离线验收完成 | 对已脱敏事件确定性提取错误文本/类型、路由、符号及 Go/Java/Python 堆栈；限制路径、类型、每事件 4/全局 64，Worker 重算指纹和来源绑定 | `internal/application/anchors`、`internal/domain/anchors.go`、`internal/application/trace_validation.go` | 为代码检索提供可审计键；锚点本身不读仓库、不确认根因，真实日志召回率待 Trace smoke |
 | 部署版本与只读代码证据 | 主体代码与临时 Git 离线验收完成；真实目录待接 | 管理员目录按事故时间解析唯一完整 SHA；本地 Git 固定参数精确检索目标 Blob 和可信变更文件，限制仓库/路径/锚点/文件/行/字节/命令并拦截秘密 | `internal/application/code_evidence.go`、`internal/adapters/codecatalog`、`internal/adapters/gitcode` | 未提交工作区不会污染 Evidence；代码不进方舟/飞书正文。尚未接 DAM 部署平台记录，也不构成根因 |
+| 日志/代码/变更联合候选 | 主体代码与离线集成验收完成；真实专家评审待做 | `joint-rca-v1` 将运行时 Anchor、事故部署指纹、精确 Code Match 和可信 Diff 投影为固定五项支持/反证/缺失账本；分数可重算，动作仅供人工 | `internal/domain/joint_rca.go`、`internal/application/joint_rca.go`、`internal/application/joint_rca_validation.go` | 8 成员 Mock Worker 已串到 `SUPPORTED_CANDIDATE`；代码截断/无命中/部署冲突保守降级。没有真实事故准确率或自动修复声明 |
 | 飞书消息接收 | 代码已具备，待真实联调 | 官方飞书 Go SDK WebSocket 接收消息和卡片回调，入口只做标准化与持久化 | `internal/adapters/feishu/receiver.go` | 真实应用接入后可从单聊或群聊命令创建调查 |
 | 入站幂等 | 已完成 | `(app_id, tenant_key, message_id)` 唯一接单，调查与 Job 在同一事务创建 | `internal/application/intake.go`、`internal/adapters/sqlite/store.go` | 飞书重复投递不会产生重复调查 |
 | 调查任务状态机 | 已完成 | `QUEUED -> RUNNING -> SUCCEEDED/FAILED/CANCELLED/NEEDS_REVIEW` | `internal/application/worker.go`、`internal/adapters/sqlite/store.go` | 调查过程可恢复、可审计，不靠内存保存状态 |

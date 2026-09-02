@@ -21,6 +21,7 @@ type Worker struct {
 	runbook       *RunbookService
 	summary       *SummaryService
 	codeEvidence  *CodeEvidenceService
+	jointRCA      *JointRCAService
 }
 
 type WorkerOption func(*Worker)
@@ -45,6 +46,14 @@ func WithWorkerSummary(service *SummaryService) WorkerOption {
 func WithWorkerCodeEvidence(service *CodeEvidenceService) WorkerOption {
 	return func(worker *Worker) {
 		worker.codeEvidence = service
+	}
+}
+
+// WithWorkerJointRCA enables deterministic post-code evidence joining. The
+// resulting candidates remain human-review-only and never execute a fix.
+func WithWorkerJointRCA(service *JointRCAService) WorkerOption {
+	return func(worker *Worker) {
+		worker.jointRCA = service
 	}
 }
 
@@ -94,12 +103,19 @@ func (w *Worker) RunOne(ctx context.Context) (bool, error) {
 	if runErr == nil && report.CodeInvestigation != nil {
 		runErr = errors.New("investigation engine returned code evidence before governed post-processing")
 	}
+	if runErr == nil && report.JointRCA != nil {
+		runErr = errors.New("investigation engine returned joint RCA before governed post-processing")
+	}
 	if runErr == nil {
 		runErr = validateEngineOutput(job, evidence, report)
 	}
 	isTraceInvestigation := job.Request.TemplateID == domain.TraceSearchTemplateID
 	if runErr == nil && w.codeEvidence != nil && isTraceInvestigation {
 		report = w.codeEvidence.Enrich(runCtx, job.Request, report)
+		runErr = validateEngineOutput(job, evidence, report)
+	}
+	if runErr == nil && w.jointRCA != nil && isTraceInvestigation {
+		report = w.jointRCA.Enrich(report)
 		runErr = validateEngineOutput(job, evidence, report)
 	}
 	if runErr == nil && w.runbook != nil && !isTraceInvestigation {
@@ -293,6 +309,9 @@ func ValidateEngineOutput(investigationID string, evidence []domain.Evidence, re
 	}
 	if err := validateCodeInvestigation(report.CodeInvestigation, report.TraceInvestigation); err != nil {
 		return fmt.Errorf("engine returned invalid code investigation: %w", err)
+	}
+	if err := validateJointRCA(report.JointRCA, report.TraceInvestigation, report.CodeInvestigation); err != nil {
+		return fmt.Errorf("engine returned invalid joint RCA: %w", err)
 	}
 	if report.Summary != nil {
 		if err := ValidateReportSummary(report, *report.Summary); err != nil {

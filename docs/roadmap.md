@@ -276,7 +276,7 @@ M5-A 的指标只说明代码对受控合成样例没有回归，不是历史真
 - [x] 阶段 2：DAM TraceID 多 Logstore 查询。`trace_search_v1`、管理员资源组、8 成员 Mock、主成员优先、并发/条数/字节预算、脱敏跨库时间线、独立审计与 Checkpoint 已完成离线验收；真实 `trace-check` 已 8/8 READY、日志读取为 0，真实 `trace-smoke` 待执行。
 - [x] 阶段 3：从已脱敏时间线确定性提取错误文本/类型、路由、Go/Java/Python 堆栈和函数符号；每事件最多 4 个、全局最多 64 个，Worker 可重算校验，Web/飞书有界展示并明确锚点不是根因。完整离线验收已完成，真实 DAM 锚点质量随真实 Trace smoke 一并待验收。
 - [x] 阶段 4：实现管理员部署/仓库目录、Provider-neutral 端口和本地 Git 只读适配器；只在事故时间解析到唯一完整 Commit 后消费最多 16 个锚点，限制匹配/文件/行/字节/命令，读取不可变 Blob 和可信部署变更文件列表。临时 Git 仓库离线验收完成，真实 DAM 部署目录与代表性 Trace 联调待完成。
-- [ ] 阶段 5：日志、代码和变更联合验证候选原因；证据不闭合时保持 `NEEDS_REVIEW`，不输出伪确定根因。
+- [x] 阶段 5：实现 `joint-rca-v1` 确定性联合投影，将运行时锚点、唯一部署 Commit、精确代码命中和可信 Diff 写入固定支持/反证/缺失账本；候选、分数和人工动作均可重算，代码截断/无命中/部署冲突时保守降级。全离线与 8 成员 Mock Worker 串联验收完成，真实候选质量待阶段 6 专家评审。
 - [ ] 阶段 6：脱敏历史样本、专家评审、真实 intent/Trace/code 试点与运行手册；任何 Mock 指标都不能替代真实审批。
 
 该路线保留固定 Graph 和 Query Gateway，不引入无限 Agent 循环，也不允许自然语言直接生成可执行 SLS 查询。完整设计见 [`natural-language-rca-and-code-evidence-spec.md`](natural-language-rca-and-code-evidence-spec.md)。

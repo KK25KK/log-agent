@@ -80,11 +80,15 @@ func TestSummaryInputExcludesCodeEvidence(t *testing.T) {
 		Deployment: &domain.DeploymentEvidence{RepositoryID: "dam", CommitSHA: strings.Repeat("a", 40)},
 		Matches:    []domain.CodeMatch{{File: "internal/private.go", Snippet: sentinel}},
 	}
+	report.JointRCA = &domain.JointRCA{
+		Version: domain.JointRCAVersion, Status: domain.JointRCAComplete, HumanReviewOnly: true,
+		Candidates: []domain.JointRCACandidate{{Statement: sentinel, File: "internal/private.go"}},
+	}
 	payload, err := json.Marshal(BuildSummaryInput(report))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(payload), sentinel) || strings.Contains(string(payload), "internal/private.go") || strings.Contains(string(payload), "commit_sha") {
+	if strings.Contains(string(payload), sentinel) || strings.Contains(string(payload), "internal/private.go") || strings.Contains(string(payload), "commit_sha") || strings.Contains(string(payload), "joint_rca") {
 		t.Fatalf("code evidence crossed the LLM input boundary: %s", payload)
 	}
 }

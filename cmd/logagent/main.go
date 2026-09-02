@@ -330,6 +330,7 @@ func buildInvestigationWorker(ctx context.Context, config config.Config, store *
 	}
 	if codeEvidence != nil {
 		options = append(options, application.WithWorkerCodeEvidence(codeEvidence))
+		options = append(options, application.WithWorkerJointRCA(application.NewJointRCAService(time.Now)))
 	}
 	if config.SLS.Mode == "mock" {
 		runbook, runbookErr := application.NewRunbookService(

@@ -27,6 +27,8 @@ const (
 	maxTraceEvents           = 12
 	maxRuntimeAnchors        = 8
 	maxCodeMatches           = 4
+	maxJointRCACandidates    = 4
+	maxJointRCAActions       = 6
 	maxAggregateItems        = 5
 	maxStatementRunes        = 480
 	maxAggregateRunes        = 96
@@ -225,6 +227,7 @@ func renderReportCard(investigation domain.Investigation) cardDocument {
 	elements = append(elements, markdown("**调查结果：** "+safeMarkdown(report.Outcome, maxAggregateRunes)))
 	elements = appendTraceSummary(elements, report.TraceInvestigation)
 	elements = appendCodeSummary(elements, report.CodeInvestigation)
+	elements = appendJointRCASummary(elements, report.JointRCA)
 	elements = appendReportSummary(elements, report.Summary)
 	for index, finding := range boundedFindings(report.Findings) {
 		conclusion := "非确定性"
@@ -367,6 +370,7 @@ func renderEvidenceCard(investigation domain.Investigation) (cardDocument, error
 	if investigation.Report.TraceInvestigation != nil {
 		elements = appendTraceEvidence(elements, investigation.Report.TraceInvestigation)
 		elements = appendCodeEvidence(elements, investigation.Report.CodeInvestigation)
+		elements = appendJointRCAEvidence(elements, investigation.Report.JointRCA)
 		elements = append(elements, buttonRow(investigation.ID,
 			buttonSpec{label: "返回报告", action: domain.ActionViewReport, style: "primary"},
 			buttonSpec{label: "扩大时间窗", action: domain.ActionExpandWindow},
@@ -465,6 +469,64 @@ func appendCodeEvidence(elements []any, code *domain.CodeInvestigation) []any {
 		elements = append(elements, markdown(fmt.Sprintf("已只读比较可信部署版本，允许范围内有 %d 个变更文件；重叠仅表示相关，不证明因果。", len(code.ChangedFiles))))
 	}
 	return elements
+}
+
+func appendJointRCASummary(elements []any, analysis *domain.JointRCA) []any {
+	if analysis == nil {
+		return elements
+	}
+	content := fmt.Sprintf("**联合根因候选：** %s｜候选 %d", safeMarkdown(string(analysis.Status), maxIdentifierRunes), len(analysis.Candidates))
+	if analysis.ReasonCode != "" {
+		content += "｜" + safeMarkdown(analysis.ReasonCode, maxIdentifierRunes)
+	}
+	limit := len(analysis.Candidates)
+	if limit > 2 {
+		limit = 2
+	}
+	for index, candidate := range analysis.Candidates[:limit] {
+		content += fmt.Sprintf(
+			"\n\n**候选 %d（%s，固定证据评分 %.0f%%）：** %s:%d｜%s",
+			index+1, safeMarkdown(string(candidate.Verdict), maxIdentifierRunes), candidate.Confidence*100,
+			safeMarkdown(candidate.File, maxStatementRunes), candidate.Line, safeMarkdown(string(candidate.ChangeRelation), maxIdentifierRunes),
+		)
+	}
+	content += "\n\n自动分析最高只到候选原因；必须由人工结合复现、输入和依赖状态确认。"
+	return append(elements, markdown(content))
+}
+
+func appendJointRCAEvidence(elements []any, analysis *domain.JointRCA) []any {
+	if analysis == nil {
+		return elements
+	}
+	elements = append(elements, cardDivider{Tag: "hr"})
+	elements = appendJointRCASummary(elements, analysis)
+	candidates := analysis.Candidates
+	if len(candidates) > maxJointRCACandidates {
+		candidates = candidates[:maxJointRCACandidates]
+	}
+	factorsByCandidate := make(map[string][]domain.JointRCAFactor, len(candidates))
+	for _, factor := range analysis.Factors {
+		factorsByCandidate[factor.CandidateID] = append(factorsByCandidate[factor.CandidateID], factor)
+	}
+	for index, candidate := range candidates {
+		content := fmt.Sprintf(
+			"**联合候选 %d：** %s\n\n位置：%s:%d｜判定：%s｜固定证据评分：%.0f%%",
+			index+1, safeMarkdown(candidate.Statement, maxStatementRunes), safeMarkdown(candidate.File, maxStatementRunes), candidate.Line,
+			safeMarkdown(string(candidate.Verdict), maxIdentifierRunes), candidate.Confidence*100,
+		)
+		for _, factor := range factorsByCandidate[candidate.ID] {
+			content += fmt.Sprintf("\n\n- [%s/%s] %s", safeMarkdown(string(factor.Role), maxIdentifierRunes), safeMarkdown(string(factor.Result), maxIdentifierRunes), safeMarkdown(factor.Statement, maxStatementRunes))
+		}
+		elements = append(elements, markdown(content))
+	}
+	actions := analysis.Actions
+	if len(actions) > maxJointRCAActions {
+		actions = actions[:maxJointRCAActions]
+	}
+	for index, action := range actions {
+		elements = append(elements, markdown(fmt.Sprintf("**人工验证 %d：** %s", index+1, safeMarkdown(action.Statement, maxStatementRunes))))
+	}
+	return append(elements, markdown("所有动作均为 HUMAN_REVIEW_ONLY；不会自动修改代码、配置或生产环境。"))
 }
 
 func appendTraceSummary(elements []any, trace *domain.TraceInvestigation) []any {

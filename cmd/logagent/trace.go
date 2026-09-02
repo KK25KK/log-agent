@@ -154,6 +154,7 @@ func runTraceSmoke(loaded config.Config, service, environment, rawWindow, traceI
 	}
 	if codeEvidence != nil {
 		workerOptions = append(workerOptions, application.WithWorkerCodeEvidence(codeEvidence))
+		workerOptions = append(workerOptions, application.WithWorkerJointRCA(application.NewJointRCAService(time.Now)))
 	}
 	worker, err := application.NewWorker(store, engine, "trace-smoke-worker", time.Minute, workerOptions...)
 	if err != nil {

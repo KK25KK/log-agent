@@ -217,6 +217,14 @@ Runtime anchors use `runtime-anchor-v1` and the closed kinds `ERROR_TEXT`, `ERRO
 
 Every code match binds an existing runtime Anchor ID, Repository ID, deployment Commit, safe file/line, Git Blob, query fingerprint, and content fingerprint. Worker validation recomputes these relationships before persistence. Code snippets are excluded from the existing LLM summary and Feishu cards; Web is loopback-only. `COMPLETE/NO_MATCH/PARTIAL/SKIPPED/UNAVAILABLE` describe collection state, not causal confidence. Local immutable Git reads have no remote side effect or metered outcome and may rerun after a Worker crash; any future network repository adapter must add durable audit, unknown-outcome handling, and provider-specific Checkpoints.
 
+### Joint root-cause candidate boundary
+
+`joint-rca-v1` runs only after Worker validation of a Trace report and its optional `code-evidence-v1` section. It deterministically joins runtime Anchor IDs, the unique deployment fingerprint, exact Code Match IDs, and trusted previous/current file overlap. It performs no LLM, network, repository, query, or write operation. The investigation engine cannot pre-populate this section; Worker validation rebuilds the entire projection from the stored inputs and rejects any difference.
+
+Each deployed-code-path candidate contains exactly five ledger factors: runtime anchor observed, deployment Commit bound, exact code match, recent change overlap, and missing runtime branch execution. A changed file is support, an unchanged file is soft counterevidence against a recent-source-change explanation, and no trusted previous Commit remains missing evidence. Fixed evidence scores are capped at 0.75 and are not probabilities. A partial code search caps the score at 0.45 and forces `INCONCLUSIVE`.
+
+The section is bounded to eight candidates, 40 factors, and 24 `HUMAN_REVIEW_ONLY` actions. Automatic output may use `SUPPORTED_CANDIDATE`, `INCONCLUSIVE`, or the section-level fail-closed states, but never `HUMAN_CONFIRMED` or a confirmed-root-cause statement. Code and joint-RCA content remain excluded from the existing external LLM summary. No action may modify code, data, configuration, a deployment, or a production system.
+
 Top-K is an intentional template result, not provider truncation. Pattern and instance shares are derived locally from aggregate counts. A current pattern absent from the baseline Top 5 is only a candidate-new pattern unless the baseline buckets account for the complete baseline error count and neither compared label was redacted. Only then may the report call it confirmed new relative to the selected baseline window.
 
 ### Policy boundary

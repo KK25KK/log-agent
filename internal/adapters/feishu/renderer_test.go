@@ -75,6 +75,15 @@ func TestRendererShowsBoundedGovernedTraceTimelineWithoutRawTraceID(t *testing.T
 		Matches:     []domain.CodeMatch{{AnchorID: "anchor-safe", File: "internal/payment/client.go", MatchLine: 87, Snippet: "private source must stay local", ChangedSincePrevious: true}},
 		DiffChecked: true, ChangedFiles: []string{"internal/payment/client.go"},
 	}
+	item.Report.JointRCA = &domain.JointRCA{
+		Version: domain.JointRCAVersion, Status: domain.JointRCAComplete, HumanReviewOnly: true,
+		Candidates: []domain.JointRCACandidate{{
+			ID: "candidate-safe", Verdict: domain.JointRCASupportedCandidate, Statement: "部署代码路径候选",
+			Confidence: .75, File: "internal/payment/client.go", Line: 87, ChangeRelation: domain.JointRCAChangeOverlap,
+		}},
+		Factors: []domain.JointRCAFactor{{CandidateID: "candidate-safe", Role: domain.JointRCAFactorSupport, Result: domain.JointRCAFactorPass, Statement: "运行时锚点与部署代码精确匹配"}},
+		Actions: []domain.JointRCAAction{{CandidateID: "candidate-safe", ExecutionMode: "HUMAN_REVIEW_ONLY", Statement: "人工核对分支前置条件"}},
+	}
 	card, err := renderActionCard(domain.ActionResult{View: domain.ActionViewEvidenceCard, Investigation: item})
 	if err != nil {
 		t.Fatal(err)
@@ -93,6 +102,9 @@ func TestRendererShowsBoundedGovernedTraceTimelineWithoutRawTraceID(t *testing.T
 	}
 	if !strings.Contains(value, "代码证据") || !strings.Contains(value, "dam") || !strings.Contains(value, "与上一部署版本有文件变更") || strings.Contains(value, "private source must stay local") {
 		t.Fatalf("code evidence projection is invalid: %s", value)
+	}
+	if !strings.Contains(value, "联合根因候选") || !strings.Contains(value, "SUPPORTED\\\\_CANDIDATE") || !strings.Contains(value, "HUMAN_REVIEW_ONLY") || !strings.Contains(value, "人工核对分支前置条件") {
+		t.Fatalf("joint RCA evidence projection is invalid: %s", value)
 	}
 }
 

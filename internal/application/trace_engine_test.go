@@ -2,6 +2,8 @@ package application_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -13,6 +15,7 @@ import (
 	"logagent/internal/application"
 	traceapp "logagent/internal/application/trace"
 	"logagent/internal/domain"
+	"logagent/internal/fingerprint"
 )
 
 type traceDeploymentSource struct{ deployment domain.DeploymentEvidence }
@@ -25,10 +28,33 @@ type traceCodeProvider struct{ calls int }
 
 func (provider *traceCodeProvider) SearchCode(_ context.Context, request domain.CodeSearchRequest) (domain.CodeSearchResult, error) {
 	provider.calls++
+	var stackAnchor *domain.RuntimeAnchor
+	for index := range request.Anchors {
+		if request.Anchors[index].Kind == domain.RuntimeAnchorStackFrame {
+			stackAnchor = &request.Anchors[index]
+			break
+		}
+	}
+	matches := []domain.CodeMatch{}
+	linesReturned, bytesReturned, filesRead := 0, 0, 0
+	if stackAnchor != nil {
+		match := domain.CodeMatch{
+			Kind: domain.CodeMatchStackFrame, AnchorID: stackAnchor.ID, RepositoryID: request.RepositoryID,
+			CommitSHA: request.CommitSHA, File: stackAnchor.File, StartLine: stackAnchor.Line, EndLine: stackAnchor.Line,
+			MatchLine: stackAnchor.Line, Symbol: stackAnchor.Symbol, Snippet: "return fmt.Errorf(\"payment timeout\")", BlobHash: strings.Repeat("c", 40),
+		}
+		match.QueryFingerprint, _ = fingerprint.JSON(struct{ AnchorID, RepositoryID, CommitSHA string }{stackAnchor.ID, request.RepositoryID, request.CommitSHA})
+		match.ContentFingerprint, _ = domain.CodeMatchFingerprint(match)
+		digest := sha256.Sum256([]byte(match.AnchorID + "|" + match.QueryFingerprint + "|" + match.ContentFingerprint))
+		match.ID = "code_" + hex.EncodeToString(digest[:12])
+		matches = append(matches, match)
+		linesReturned, bytesReturned, filesRead = 1, len(match.Snippet), 1
+	}
 	return domain.CodeSearchResult{
 		Version: domain.CodeEvidenceVersion, PolicyVersion: domain.CodeSearchPolicyVersion,
 		RepositoryID: request.RepositoryID, CommitSHA: request.CommitSHA, Complete: true,
-		AnchorsSearched: len(request.Anchors), CommandsRun: 2,
+		Matches: matches, AnchorsSearched: len(request.Anchors), FilesRead: filesRead,
+		LinesReturned: linesReturned, BytesReturned: bytesReturned, CommandsRun: 2,
 	}, nil
 }
 
@@ -88,6 +114,7 @@ func TestTraceWorkerBuildsEightMemberTimelinePrimaryFirstWithinConcurrencyBudget
 	worker, err := application.NewWorker(
 		store, engine, "trace-worker", time.Minute,
 		application.WithWorkerClock(func() time.Time { return now }), application.WithWorkerCodeEvidence(codeService),
+		application.WithWorkerJointRCA(application.NewJointRCAService(func() time.Time { return now })),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -102,8 +129,11 @@ func TestTraceWorkerBuildsEightMemberTimelinePrimaryFirstWithinConcurrencyBudget
 	if item.Status != domain.StatusSucceeded || item.Report == nil || item.Report.TraceInvestigation == nil {
 		t.Fatalf("Trace investigation did not succeed: %#v", item)
 	}
-	if codeProvider.calls != 1 || item.Report.CodeInvestigation == nil || item.Report.CodeInvestigation.Status != domain.CodeInvestigationNoMatch {
+	if codeProvider.calls != 1 || item.Report.CodeInvestigation == nil || item.Report.CodeInvestigation.Status != domain.CodeInvestigationComplete {
 		t.Fatalf("governed code evidence did not traverse the Worker: calls=%d value=%#v", codeProvider.calls, item.Report.CodeInvestigation)
+	}
+	if item.Report.JointRCA == nil || item.Report.JointRCA.Status != domain.JointRCAComplete || len(item.Report.JointRCA.Candidates) != 1 || item.Report.JointRCA.Candidates[0].Verdict != domain.JointRCASupportedCandidate {
+		t.Fatalf("joint RCA did not traverse the Worker: %#v", item.Report.JointRCA)
 	}
 	trace := item.Report.TraceInvestigation
 	if trace.Status != domain.TraceInvestigationComplete || len(trace.Members) != 8 || len(trace.Events) != 2 || len(item.Report.Evidence) != 8 ||
